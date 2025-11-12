@@ -1,0 +1,920 @@
+# 🌐 Web Migration Plan: Excel to Web Platform
+
+## Executive Summary
+
+This document outlines the complete migration plan from the current Excel-based Windows solution to a modern, web-based platform. The new system will eliminate Excel dependency while maintaining all existing functionality and adding enhanced features like Excel-like spreadsheet interface, query builder, and multi-level formula management.
+
+---
+
+## 📋 Table of Contents
+
+1. [Current System Overview](#current-system-overview)
+2. [Target Architecture](#target-architecture)
+3. [Technology Stack](#technology-stack)
+4. [Data Migration Strategy](#data-migration-strategy)
+5. [Backend API Design](#backend-api-design)
+6. [Frontend Architecture](#frontend-architecture)
+7. [Key Features Implementation](#key-features-implementation)
+8. [Migration Phases](#migration-phases)
+9. [Implementation Timeline](#implementation-timeline)
+10. [Risk Assessment & Mitigation](#risk-assessment--mitigation)
+
+---
+
+## Current System Overview
+
+### Existing Components
+
+1. **Data Layer**
+   - SQLite database (`screener_data.db`)
+   - Tables: `quarterly_data`, `sector_mappings`
+   - ~3.7MB database with historical quarterly data
+
+2. **Backend (Python)**
+   - `enhanced_screener_scraper.py` - Web scraping from Screener.in
+   - `database_handler.py` - Database operations
+   - `signal_evaluator.py` - Formula evaluation engine
+   - `settings_manager.py` - Configuration management
+   - `bulk_sector_scraper.py` - Bulk data scraping
+
+3. **Frontend (Excel)**
+   - Excel workbook with VBA macros
+   - Sector-based sheets
+   - Dashboard with signals
+   - Formula-based signal generation
+
+4. **Key Features**
+   - Sector organization
+   - Company-level data
+   - Custom formulas (global, sector, company)
+   - Signal generation (BUY/SELL/HOLD)
+   - Quarterly financial metrics
+
+---
+
+## Target Architecture
+
+### High-Level Architecture
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    Web Frontend (React)                     │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐     │
+│  │  Sector View │  │ Company View │  │ Query Builder│     │
+│  └──────────────┘  └──────────────┘  └──────────────┘     │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐     │
+│  │ Excel-like   │  │ Formula      │  │ Data Tables  │     │
+│  │ Spreadsheet  │  │ Manager      │  │              │     │
+│  └──────────────┘  └──────────────┘  └──────────────┘     │
+└─────────────────────────────────────────────────────────────┘
+                            │
+                            │ REST API
+                            ▼
+┌─────────────────────────────────────────────────────────────┐
+│              Backend API (FastAPI/Flask)                      │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐     │
+│  │ Data Service │  │ Formula     │  │ Scraper      │     │
+│  │              │  │ Engine      │  │ Service      │     │
+│  └──────────────┘  └──────────────┘  └──────────────┘     │
+└─────────────────────────────────────────────────────────────┘
+                            │
+                            │
+                            ▼
+┌─────────────────────────────────────────────────────────────┐
+│                    Database Layer                            │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐     │
+│  │ PostgreSQL/ │  │ Formulas    │  │ Sector       │     │
+│  │ MySQL       │  │ Tables      │  │ Mappings     │     │
+│  └──────────────┘  └──────────────┘  └──────────────┘     │
+└─────────────────────────────────────────────────────────────┘
+                            │
+                            │
+                            ▼
+┌─────────────────────────────────────────────────────────────┐
+│              External Data Sources                           │
+│  ┌──────────────┐  ┌──────────────┐                        │
+│  │ Screener.in  │  │ APIs        │                        │
+│  │ (Scraping)   │  │ (Future)     │                        │
+│  └──────────────┘  └──────────────┘                        │
+└─────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## Technology Stack
+
+### Frontend
+
+**Recommended: React + TypeScript**
+
+- **Framework**: React 18+ with TypeScript
+- **State Management**: Redux Toolkit or Zustand
+- **UI Components**: 
+  - Material-UI (MUI) or Ant Design for base components
+  - **Excel-like Spreadsheet**: 
+    - Option 1: Handsontable (commercial, feature-rich)
+    - Option 2: Luckysheet (open-source, Excel-like)
+    - Option 3: React Spreadsheet (lightweight)
+- **Query Builder**: React Query Builder or custom component
+- **Charts**: Recharts or Chart.js
+- **Routing**: React Router v6
+- **Build Tool**: Vite or Create React App
+
+**Alternative: Next.js**
+- If SSR/SSG needed
+- Better SEO (if required)
+- Built-in API routes
+
+### Backend
+
+**Recommended: FastAPI (Python)**
+
+- **Framework**: FastAPI (async, fast, modern)
+- **ORM**: SQLAlchemy 2.0
+- **Database**: PostgreSQL (production) / SQLite (development)
+- **Caching**: Redis (optional, for performance)
+- **Task Queue**: Celery + Redis (for background scraping)
+- **API Documentation**: Auto-generated with FastAPI
+- **Authentication**: JWT tokens (if multi-user needed)
+
+**Alternative: Flask**
+- Simpler, more familiar
+- Good for rapid development
+- Less async support
+
+### Database
+
+**Production: PostgreSQL**
+- Better for production workloads
+- Advanced features (JSON columns, full-text search)
+- Better concurrency
+
+**Development: SQLite**
+- Easy setup
+- Can migrate existing data easily
+
+### Infrastructure
+
+- **Deployment**: 
+  - Frontend: Vercel, Netlify, or AWS S3 + CloudFront
+  - Backend: AWS EC2, Heroku, Railway, or DigitalOcean
+- **Containerization**: Docker + Docker Compose
+- **CI/CD**: GitHub Actions
+
+---
+
+## Data Migration Strategy
+
+### Phase 1: Database Schema Enhancement
+
+#### Current Schema (SQLite)
+```sql
+-- quarterly_data table
+CREATE TABLE quarterly_data (
+    id INTEGER PRIMARY KEY,
+    ticker TEXT NOT NULL,
+    company_name TEXT,
+    sector TEXT,
+    quarter TEXT NOT NULL,
+    metric_name TEXT NOT NULL,
+    metric_value REAL,
+    scrape_timestamp DATETIME
+);
+
+-- sector_mappings table
+CREATE TABLE sector_mappings (
+    id INTEGER PRIMARY KEY,
+    screener_sector TEXT UNIQUE,
+    custom_sector TEXT
+);
+```
+
+#### Enhanced Schema (PostgreSQL/SQLite)
+```sql
+-- Companies table
+CREATE TABLE companies (
+    id SERIAL PRIMARY KEY,
+    ticker TEXT UNIQUE NOT NULL,
+    company_name TEXT NOT NULL,
+    screener_sector TEXT,
+    custom_sector TEXT,
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW()
+);
+
+-- Quarterly data (enhanced)
+CREATE TABLE quarterly_data (
+    id SERIAL PRIMARY KEY,
+    company_id INTEGER REFERENCES companies(id),
+    ticker TEXT NOT NULL,  -- Denormalized for quick access
+    quarter TEXT NOT NULL,
+    metric_name TEXT NOT NULL,
+    metric_value REAL,
+    scrape_timestamp TIMESTAMP,
+    created_at TIMESTAMP DEFAULT NOW(),
+    UNIQUE(ticker, quarter, metric_name, scrape_timestamp)
+);
+
+-- Formulas table (NEW)
+CREATE TABLE formulas (
+    id SERIAL PRIMARY KEY,
+    name TEXT NOT NULL,
+    scope TEXT NOT NULL,  -- 'global', 'sector', 'company'
+    scope_value TEXT,      -- sector name or ticker (if scope is sector/company)
+    condition TEXT NOT NULL,  -- Formula expression
+    signal_type TEXT NOT NULL, -- 'BUY', 'SELL', 'HOLD', 'OTHER'
+    description TEXT,
+    priority INTEGER DEFAULT 999,
+    enabled BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW()
+);
+
+-- User-defined tables (NEW - for Excel-like functionality)
+CREATE TABLE custom_tables (
+    id SERIAL PRIMARY KEY,
+    name TEXT NOT NULL,
+    sector_id TEXT,  -- Optional: link to sector
+    company_id INTEGER REFERENCES companies(id),  -- Optional: link to company
+    table_type TEXT NOT NULL,  -- 'sector', 'company', 'global'
+    columns JSONB,  -- Column definitions
+    data JSONB,     -- Table data
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW()
+);
+
+-- Query builder saved queries (NEW)
+CREATE TABLE saved_queries (
+    id SERIAL PRIMARY KEY,
+    name TEXT NOT NULL,
+    query_definition JSONB NOT NULL,  -- Query builder state
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW()
+);
+
+-- Sector mappings (keep existing)
+CREATE TABLE sector_mappings (
+    id SERIAL PRIMARY KEY,
+    screener_sector TEXT UNIQUE NOT NULL,
+    custom_sector TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW()
+);
+```
+
+### Phase 2: Data Migration Script
+
+```python
+# migrate_to_web_db.py
+"""
+Migration script to convert SQLite data to new schema
+"""
+import sqlite3
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+
+def migrate_data():
+    # 1. Connect to old SQLite
+    old_db = sqlite3.connect('screener_data.db')
+    
+    # 2. Connect to new database
+    new_engine = create_engine('postgresql://...')
+    Session = sessionmaker(bind=new_engine)
+    session = Session()
+    
+    # 3. Migrate companies
+    # 4. Migrate quarterly_data
+    # 5. Migrate sector_mappings
+    # 6. Migrate formulas from config/formulas.json
+    
+    session.commit()
+```
+
+---
+
+## Backend API Design
+
+### API Structure
+
+```
+/api/v1/
+├── /companies
+│   ├── GET /                    # List all companies
+│   ├── GET /{ticker}            # Get company details
+│   ├── GET /{ticker}/data       # Get company quarterly data
+│   └── GET /{ticker}/signals    # Get calculated signals
+│
+├── /sectors
+│   ├── GET /                    # List all sectors
+│   ├── GET /{sector}/companies  # Get companies in sector
+│   └── GET /{sector}/data        # Get sector aggregated data
+│
+├── /data
+│   ├── GET /quarterly           # Query quarterly data
+│   ├── GET /metrics             # List available metrics
+│   └── POST /query              # Execute custom query
+│
+├── /formulas
+│   ├── GET /                     # List all formulas
+│   ├── POST /                    # Create formula
+│   ├── PUT /{id}                 # Update formula
+│   ├── DELETE /{id}              # Delete formula
+│   ├── POST /{id}/test           # Test formula
+│   └── GET /scopes               # Get formulas by scope
+│
+├── /tables
+│   ├── GET /                     # List custom tables
+│   ├── POST /                    # Create table
+│   ├── PUT /{id}                 # Update table
+│   ├── DELETE /{id}              # Delete table
+│   └── POST /{id}/calculate      # Calculate formulas in table
+│
+├── /queries
+│   ├── GET /                     # List saved queries
+│   ├── POST /                    # Save query
+│   ├── POST /execute             # Execute query
+│   └── DELETE /{id}              # Delete query
+│
+└── /scraper
+    ├── POST /scrape              # Trigger scraping
+    ├── GET /status               # Get scraping status
+    └── GET /history               # Get scraping history
+```
+
+### Key API Endpoints
+
+#### 1. Get Company Data
+```python
+GET /api/v1/companies/{ticker}/data?quarters=12&metrics=Sales,EPS
+
+Response:
+{
+  "ticker": "TCS",
+  "company_name": "Tata Consultancy Services Ltd",
+  "sector": "IT-Software",
+  "quarters": ["Sep-22", "Dec-22", "Mar-23", ...],
+  "metrics": {
+    "Sales": [50591, 58229, 59162, ...],
+    "EPS in Rs": [25.50, 29.10, 27.90, ...],
+    ...
+  }
+}
+```
+
+#### 2. Evaluate Formulas
+```python
+POST /api/v1/formulas/evaluate
+
+Request:
+{
+  "ticker": "TCS",
+  "formulas": ["BUY", "SELL"]  // or all if empty
+}
+
+Response:
+{
+  "ticker": "TCS",
+  "signals": [
+    {
+      "type": "BUY",
+      "matched": true,
+      "reason": "Strong growth: Sales YoY > 15% AND EPS YoY > 10%",
+      "formula_id": 1
+    },
+    ...
+  ]
+}
+```
+
+#### 3. Query Builder
+```python
+POST /api/v1/queries/execute
+
+Request:
+{
+  "filters": [
+    {"field": "sector", "operator": "equals", "value": "IT-Software"},
+    {"field": "sales_yoy", "operator": "greater_than", "value": 15}
+  ],
+  "group_by": ["sector"],
+  "order_by": [{"field": "sales_yoy", "direction": "desc"}],
+  "limit": 50
+}
+
+Response:
+{
+  "results": [...],
+  "count": 25,
+  "execution_time": 0.123
+}
+```
+
+---
+
+## Frontend Architecture
+
+### Component Structure
+
+```
+src/
+├── components/
+│   ├── common/
+│   │   ├── Header.tsx
+│   │   ├── Sidebar.tsx
+│   │   └── Layout.tsx
+│   ├── sector/
+│   │   ├── SectorList.tsx
+│   │   ├── SectorView.tsx
+│   │   └── SectorCompanyCard.tsx
+│   ├── company/
+│   │   ├── CompanyDetail.tsx
+│   │   ├── CompanyMetrics.tsx
+│   │   └── CompanySignals.tsx
+│   ├── spreadsheet/
+│   │   ├── ExcelLikeTable.tsx
+│   │   ├── FormulaBar.tsx
+│   │   └── CellEditor.tsx
+│   ├── formulas/
+│   │   ├── FormulaManager.tsx
+│   │   ├── FormulaEditor.tsx
+│   │   └── FormulaTester.tsx
+│   ├── query-builder/
+│   │   ├── QueryBuilder.tsx
+│   │   ├── FilterBuilder.tsx
+│   │   └── QueryResults.tsx
+│   └── charts/
+│       ├── MetricChart.tsx
+│       └── ComparisonChart.tsx
+│
+├── pages/
+│   ├── Dashboard.tsx
+│   ├── Sectors.tsx
+│   ├── Companies.tsx
+│   ├── Formulas.tsx
+│   ├── QueryBuilder.tsx
+│   └── Settings.tsx
+│
+├── services/
+│   ├── api.ts
+│   ├── companies.ts
+│   ├── sectors.ts
+│   ├── formulas.ts
+│   └── queries.ts
+│
+├── store/
+│   ├── slices/
+│   │   ├── companiesSlice.ts
+│   │   ├── sectorsSlice.ts
+│   │   └── formulasSlice.ts
+│   └── store.ts
+│
+└── utils/
+    ├── formulaParser.ts
+    ├── dataTransformers.ts
+    └── helpers.ts
+```
+
+### Key Frontend Features
+
+#### 1. Excel-like Spreadsheet Component
+
+**Requirements:**
+- Cell editing
+- Formula support
+- Column/row selection
+- Copy/paste
+- Undo/redo
+- Cell formatting
+- Conditional formatting
+
+**Implementation Options:**
+
+**Option A: Handsontable (Recommended)**
+```tsx
+import Handsontable from 'handsontable';
+import 'handsontable/dist/handsontable.full.css';
+
+const ExcelLikeTable = ({ data, onCellChange }) => {
+  const hotRef = useRef(null);
+  
+  useEffect(() => {
+    const hot = new Handsontable(hotRef.current, {
+      data: data,
+      columns: columns,
+      formulas: true,  // Enable formulas
+      licenseKey: 'non-commercial-and-evaluation'
+    });
+    
+    hot.addHook('afterChange', (changes) => {
+      onCellChange(changes);
+    });
+    
+    return () => hot.destroy();
+  }, [data]);
+  
+  return <div ref={hotRef} />;
+};
+```
+
+**Option B: Luckysheet (Open Source)**
+- More Excel-like UI
+- Free and open-source
+- Good formula support
+
+#### 2. Formula Manager
+
+**Features:**
+- Create/edit formulas
+- Scope selection (Global/Sector/Company)
+- Formula testing
+- Priority management
+- Enable/disable formulas
+
+**Component:**
+```tsx
+const FormulaManager = () => {
+  const [formulas, setFormulas] = useState([]);
+  const [scope, setScope] = useState('global');
+  
+  return (
+    <div>
+      <ScopeSelector value={scope} onChange={setScope} />
+      <FormulaList formulas={formulas} />
+      <FormulaEditor onSave={handleSave} />
+      <FormulaTester />
+    </div>
+  );
+};
+```
+
+#### 3. Query Builder
+
+**Features:**
+- Visual filter builder
+- Field selection
+- Operator selection (equals, greater than, etc.)
+- Group by / Order by
+- Save/load queries
+
+**Component:**
+```tsx
+const QueryBuilder = () => {
+  const [filters, setFilters] = useState([]);
+  const [results, setResults] = useState([]);
+  
+  return (
+    <div>
+      <FilterBuilder 
+        fields={availableFields}
+        onFiltersChange={setFilters}
+      />
+      <GroupByBuilder />
+      <OrderByBuilder />
+      <button onClick={executeQuery}>Execute</button>
+      <QueryResults data={results} />
+    </div>
+  );
+};
+```
+
+---
+
+## Key Features Implementation
+
+### 1. Multi-Level Formula System
+
+#### Formula Hierarchy
+```
+Global Formulas (Lowest Priority)
+  ↓
+Sector Formulas (Medium Priority)
+  ↓
+Company Formulas (Highest Priority)
+```
+
+#### Implementation
+```python
+# Backend: Formula evaluation order
+def evaluate_signals(ticker: str, sector: str):
+    # 1. Get global formulas
+    global_formulas = get_formulas(scope='global')
+    
+    # 2. Get sector formulas
+    sector_formulas = get_formulas(scope='sector', scope_value=sector)
+    
+    # 3. Get company formulas
+    company_formulas = get_formulas(scope='company', scope_value=ticker)
+    
+    # 4. Evaluate in priority order
+    all_formulas = sorted(
+        global_formulas + sector_formulas + company_formulas,
+        key=lambda f: f.priority
+    )
+    
+    # 5. Return first matching signal
+    for formula in all_formulas:
+        if evaluate_formula(formula.condition, ticker):
+            return formula.signal_type
+```
+
+### 2. Excel-like Functionality
+
+#### Features to Implement:
+1. **Cell Editing**: Click to edit, formula bar
+2. **Formulas**: Support Excel-like formulas
+   - `=SUM(A1:A10)`
+   - `=AVERAGE(B2:B5)`
+   - `=IF(C1>100, "High", "Low")`
+3. **Column Operations**: Add/remove columns, resize
+4. **Row Operations**: Add/remove rows
+5. **Data Import**: Import from database
+6. **Export**: Export to CSV/Excel
+7. **Undo/Redo**: Action history
+8. **Conditional Formatting**: Color cells based on values
+
+#### Data Flow:
+```
+User edits cell → 
+  Update local state → 
+  Calculate dependent formulas → 
+  Save to backend (debounced) → 
+  Update UI
+```
+
+### 3. Query Builder
+
+#### Visual Interface:
+```
+┌─────────────────────────────────────┐
+│ Query Builder                       │
+├─────────────────────────────────────┤
+│ Filter:                             │
+│ [Field ▼] [Operator ▼] [Value] [×]  │
+│ [Add Filter]                        │
+│                                     │
+│ Group By: [Sector ▼]                │
+│ Order By: [Sales YoY ▼] [Desc ▼]   │
+│                                     │
+│ [Execute Query] [Save Query]       │
+└─────────────────────────────────────┘
+```
+
+#### Query Definition (JSON):
+```json
+{
+  "filters": [
+    {
+      "field": "sector",
+      "operator": "equals",
+      "value": "IT-Software"
+    },
+    {
+      "field": "sales_yoy",
+      "operator": "greater_than",
+      "value": 15
+    }
+  ],
+  "group_by": ["sector"],
+  "order_by": [
+    {"field": "sales_yoy", "direction": "desc"}
+  ],
+  "limit": 50
+}
+```
+
+---
+
+## Migration Phases
+
+### Phase 1: Foundation (Weeks 1-2)
+**Goal**: Set up basic web infrastructure
+
+**Tasks:**
+- [ ] Set up React project with TypeScript
+- [ ] Set up FastAPI backend
+- [ ] Migrate database schema
+- [ ] Create basic API endpoints (companies, sectors, data)
+- [ ] Set up authentication (if needed)
+- [ ] Deploy development environment
+
+**Deliverables:**
+- Working backend API
+- Basic frontend with routing
+- Database migration complete
+
+### Phase 2: Core Features (Weeks 3-4)
+**Goal**: Implement core data viewing features
+
+**Tasks:**
+- [ ] Sector list view
+- [ ] Company list view
+- [ ] Company detail view
+- [ ] Quarterly data display
+- [ ] Basic charts
+- [ ] Signal display
+
+**Deliverables:**
+- Users can view sectors and companies
+- Users can see company data and signals
+
+### Phase 3: Formula System (Weeks 5-6)
+**Goal**: Implement formula management
+
+**Tasks:**
+- [ ] Formula CRUD API
+- [ ] Formula manager UI
+- [ ] Formula evaluation engine (migrate from Python)
+- [ ] Multi-level formula support
+- [ ] Formula testing interface
+
+**Deliverables:**
+- Users can create/edit formulas
+- Formulas work at global/sector/company levels
+
+### Phase 4: Excel-like Spreadsheet (Weeks 7-9)
+**Goal**: Implement spreadsheet functionality
+
+**Tasks:**
+- [ ] Integrate spreadsheet library (Handsontable/Luckysheet)
+- [ ] Cell editing
+- [ ] Formula support in cells
+- [ ] Column/row operations
+- [ ] Data import/export
+- [ ] Save custom tables
+
+**Deliverables:**
+- Users can create Excel-like tables
+- Users can apply formulas to cells
+
+### Phase 5: Query Builder (Weeks 10-11)
+**Goal**: Implement query builder
+
+**Tasks:**
+- [ ] Visual query builder UI
+- [ ] Query execution API
+- [ ] Save/load queries
+- [ ] Query results display
+
+**Deliverables:**
+- Users can build and execute queries
+- Users can save queries for reuse
+
+### Phase 6: Scraper Integration (Week 12)
+**Goal**: Integrate data scraping
+
+**Tasks:**
+- [ ] Scraper API endpoints
+- [ ] Background job processing (Celery)
+- [ ] Scraping status UI
+- [ ] Manual trigger UI
+
+**Deliverables:**
+- Users can trigger data scraping
+- Scraping runs in background
+
+### Phase 7: Polish & Testing (Weeks 13-14)
+**Goal**: Finalize and test
+
+**Tasks:**
+- [ ] UI/UX improvements
+- [ ] Performance optimization
+- [ ] Comprehensive testing
+- [ ] Documentation
+- [ ] User training materials
+
+**Deliverables:**
+- Production-ready application
+- Complete documentation
+
+---
+
+## Implementation Timeline
+
+### 14-Week Timeline
+
+```
+Week 1-2:   Foundation Setup
+Week 3-4:   Core Features
+Week 5-6:   Formula System
+Week 7-9:   Excel-like Spreadsheet
+Week 10-11: Query Builder
+Week 12:    Scraper Integration
+Week 13-14: Polish & Testing
+```
+
+### Resource Requirements
+
+**Development Team:**
+- 1 Full-stack Developer (React + Python)
+- 1 Backend Developer (Python/FastAPI)
+- 1 Frontend Developer (React/TypeScript)
+- 1 UI/UX Designer (part-time)
+
+**Infrastructure:**
+- Development server
+- Staging server
+- Production server
+- Database hosting
+- CDN for frontend
+
+---
+
+## Risk Assessment & Mitigation
+
+### Technical Risks
+
+| Risk | Impact | Probability | Mitigation |
+|------|--------|-------------|------------|
+| Spreadsheet library limitations | High | Medium | Evaluate multiple libraries, have fallback plan |
+| Formula engine complexity | High | Medium | Reuse existing Python formula evaluator |
+| Performance with large datasets | Medium | High | Implement pagination, caching, lazy loading |
+| Data migration issues | High | Low | Thorough testing, backup strategy |
+| API rate limiting (Screener.in) | Medium | Medium | Implement rate limiting, caching |
+
+### Business Risks
+
+| Risk | Impact | Probability | Mitigation |
+|------|--------|-------------|------------|
+| User adoption | High | Medium | User training, gradual rollout |
+| Feature gaps vs Excel | Medium | Medium | User feedback sessions, iterative development |
+| Data accuracy | High | Low | Validation, testing, user verification |
+
+---
+
+## Success Criteria
+
+### Functional Requirements
+- ✅ All existing Excel features replicated
+- ✅ Excel-like spreadsheet functionality
+- ✅ Query builder working
+- ✅ Multi-level formulas working
+- ✅ Data scraping integrated
+
+### Performance Requirements
+- ✅ Page load time < 2 seconds
+- ✅ API response time < 500ms
+- ✅ Support 1000+ companies
+- ✅ Support 50+ concurrent users
+
+### User Experience
+- ✅ Intuitive UI/UX
+- ✅ Mobile responsive (optional)
+- ✅ Fast and responsive
+- ✅ Easy to learn
+
+---
+
+## Next Steps
+
+1. **Review & Approval**: Review this plan with stakeholders
+2. **Technology Selection**: Finalize technology stack
+3. **Team Setup**: Assemble development team
+4. **Environment Setup**: Set up development infrastructure
+5. **Kickoff Meeting**: Start Phase 1 development
+
+---
+
+## Appendix
+
+### A. Technology Comparison
+
+#### Spreadsheet Libraries
+
+| Library | Pros | Cons | Cost |
+|---------|------|------|------|
+| Handsontable | Feature-rich, Excel-like | Commercial license needed | Paid |
+| Luckysheet | Free, open-source, Excel-like | Less mature | Free |
+| React Spreadsheet | Lightweight, simple | Limited features | Free |
+| AG Grid | Enterprise-grade | Complex, expensive | Paid |
+
+**Recommendation**: Start with Luckysheet (free), upgrade to Handsontable if needed.
+
+#### Backend Framework
+
+| Framework | Pros | Cons |
+|-----------|------|------|
+| FastAPI | Modern, async, auto-docs | Newer, smaller community |
+| Flask | Simple, mature, large community | Less async support |
+| Django | Full-featured, ORM included | Heavier, more opinionated |
+
+**Recommendation**: FastAPI for modern async support and auto-generated docs.
+
+### B. Database Migration Script Example
+
+```python
+# See detailed migration script in migrate_to_web_db.py
+```
+
+### C. API Documentation Template
+
+```yaml
+# OpenAPI/Swagger spec will be auto-generated by FastAPI
+```
+
+---
+
+**Document Version**: 1.0  
+**Last Updated**: 2025-01-XX  
+**Author**: Development Team  
+**Status**: Draft - Pending Review
+

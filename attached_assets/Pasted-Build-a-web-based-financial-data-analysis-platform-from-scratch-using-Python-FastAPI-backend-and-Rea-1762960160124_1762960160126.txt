@@ -1,0 +1,54 @@
+Build a web-based financial data analysis platform from scratch using Python FastAPI backend and React TypeScript frontend.
+
+REQUIREMENTS:
+- Backend: FastAPI with SQLAlchemy, PostgreSQL/SQLite
+- Frontend: React 18+ with TypeScript, Material-UI, Luckysheet for Excel-like spreadsheet
+- Database: Create new schema with companies, quarterly_data, formulas, custom_tables, saved_queries, users, otp_codes, user_sessions, role_permissions tables
+- Build everything from scratch - no existing code to reuse
+
+KEY FEATURES:
+1. Authentication: Email/password login + Mobile OTP login (send OTP via SMS API like Twilio/AWS SNS)
+2. Role-Based Access Control (RBAC): Admin (full access), Analyst (view + create tables/queries), Viewer (read-only, see signals)
+3. Sector & Company Views: Browse sectors, view companies, see BUY/SELL/HOLD signals
+4. Multi-Level Formulas: Global/Sector/Company scope with priority-based evaluation (build formula evaluator using AST parsing)
+5. Excel-like Spreadsheet: Create custom tables, apply formulas, save/export
+6. Query Builder: Visual filter builder with save/load queries
+7. Data Scraping: Build web scraper for Screener.in from scratch (scrape quarterly financial data)
+
+API ENDPOINTS NEEDED:
+AUTHENTICATION:
+- POST /api/v1/auth/register (email/password signup)
+- POST /api/v1/auth/login (email/password login)
+- POST /api/v1/auth/login/otp/request (request OTP for mobile)
+- POST /api/v1/auth/login/otp/verify (verify OTP and login)
+- POST /api/v1/auth/logout, POST /api/v1/auth/refresh, GET /api/v1/auth/me
+
+USER MANAGEMENT (Admin only):
+- GET /api/v1/users, GET /api/v1/users/{id}, PUT /api/v1/users/{id}, DELETE /api/v1/users/{id}, PUT /api/v1/users/{id}/role
+
+DATA ENDPOINTS:
+- GET /api/v1/companies, /companies/{ticker}, /companies/{ticker}/data, /companies/{ticker}/signals
+- GET /api/v1/sectors, /sectors/{sector}/companies, /sectors/{sector}/data
+- CRUD /api/v1/formulas (Admin only for create/edit/delete, all can view)
+- CRUD /api/v1/tables (Admin & Analyst can create/edit, Viewer read-only)
+- POST /api/v1/queries/execute, CRUD /api/v1/queries (Admin & Analyst only)
+- POST /api/v1/scraper/scrape, GET /api/v1/scraper/status (Admin only)
+
+FRONTEND PAGES:
+- Login/Signup (Email/Password + Mobile OTP), Dashboard, Sectors List, Sector View, Company Detail, Formula Manager (Admin only), Query Builder (Admin & Analyst), Custom Tables, User Management (Admin only)
+
+ROLE PERMISSIONS:
+- Admin: Full access (create/edit formulas, manage users, trigger scraping, all features)
+- Analyst: View data, create/edit tables, use query builder (cannot create/edit formulas)
+- Viewer: Read-only (view dashboards, see signals, cannot create/edit anything)
+
+Start with: FastAPI setup, database schema creation (including users/roles tables), build authentication system (JWT + OTP), build RBAC middleware, build web scraper, build formula evaluator, basic React frontend with protected routes, then add features incrementally.
+
+BUILD FROM SCRATCH:
+- Authentication: JWT tokens, password hashing (bcrypt/argon2), OTP system (6-digit codes, 5-10 min expiry), SMS API integration (Twilio/AWS SNS)
+- RBAC: Permission-based access control, role middleware, frontend route guards
+- Web scraper: Use requests + BeautifulSoup to scrape https://www.screener.in/company/{TICKER}/consolidated/#quarters
+- Formula evaluator: Use Python AST module to safely parse and evaluate formulas (prevent code injection)
+- Database operations: Build all CRUD operations with SQLAlchemy
+- No existing code dependencies
+
