@@ -58,7 +58,7 @@ function AuthenticatedLayout() {
 
 function Router() {
   //todo: remove mock functionality - replace with real auth check
-  const [isAuthenticated] = useState(false);
+  const [isAuthenticated] = useState(true);
 
   return (
     <Switch>
