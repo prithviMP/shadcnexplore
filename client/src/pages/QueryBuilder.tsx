@@ -80,22 +80,24 @@ export default function QueryBuilder() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-semibold">Query Builder</h1>
-          <p className="text-sm text-muted-foreground mt-1">Build custom queries to filter financial data</p>
+          <h1 className="text-3xl font-bold bg-gradient-to-r from-slate-900 to-slate-700 dark:from-white dark:to-slate-300 bg-clip-text text-transparent">
+            Query Builder
+          </h1>
+          <p className="text-muted-foreground mt-1">Build custom queries to filter financial data</p>
         </div>
         <div className="flex gap-2">
           <Button variant="outline" onClick={saveQuery} data-testid="button-save-query">
             <Save className="h-4 w-4 mr-2" />
             Save Query
           </Button>
-          <Button onClick={executeQuery} data-testid="button-execute-query">
+          <Button onClick={executeQuery} className="bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 shadow-lg" data-testid="button-execute-query">
             <Play className="h-4 w-4 mr-2" />
             Execute
           </Button>
         </div>
       </div>
 
-      <Card>
+      <Card className="bg-gradient-to-br from-white to-slate-50/50 dark:from-slate-900 dark:to-slate-900/50 border-slate-200 dark:border-slate-800 shadow-lg">
         <CardHeader>
           <CardTitle>Build Query</CardTitle>
           <CardDescription>Add conditions to filter companies based on financial metrics</CardDescription>
@@ -105,17 +107,17 @@ export default function QueryBuilder() {
             <div key={condition.id} className="space-y-3">
               {index > 0 && (
                 <div className="flex items-center gap-2">
-                  <Badge variant="secondary" className="uppercase text-xs">
+                  <Badge variant="secondary" className="uppercase text-xs font-semibold bg-blue-100 dark:bg-blue-950 text-blue-700 dark:text-blue-300">
                     {condition.logic}
                   </Badge>
                 </div>
               )}
-              <div className="flex items-center gap-3 p-4 border rounded-md" data-testid={`condition-${index}`}>
+              <div className="flex items-center gap-3 p-4 border border-slate-200 dark:border-slate-800 rounded-lg bg-white/50 dark:bg-slate-800/30 backdrop-blur-sm" data-testid={`condition-${index}`}>
                 <Select
                   value={condition.field}
                   onValueChange={(value) => updateCondition(condition.id, "field", value)}
                 >
-                  <SelectTrigger className="w-[180px]" data-testid={`select-field-${index}`}>
+                  <SelectTrigger className="w-[180px] h-11" data-testid={`select-field-${index}`}>
                     <SelectValue placeholder="Select field" />
                   </SelectTrigger>
                   <SelectContent>
@@ -131,7 +133,7 @@ export default function QueryBuilder() {
                   value={condition.operator}
                   onValueChange={(value) => updateCondition(condition.id, "operator", value)}
                 >
-                  <SelectTrigger className="w-[160px]" data-testid={`select-operator-${index}`}>
+                  <SelectTrigger className="w-[160px] h-11" data-testid={`select-operator-${index}`}>
                     <SelectValue placeholder="Operator" />
                   </SelectTrigger>
                   <SelectContent>
@@ -147,7 +149,7 @@ export default function QueryBuilder() {
                   value={condition.value}
                   onChange={(e) => updateCondition(condition.id, "value", e.target.value)}
                   placeholder="Value"
-                  className="flex-1"
+                  className="flex-1 h-11"
                   data-testid={`input-value-${index}`}
                 />
 
@@ -156,7 +158,7 @@ export default function QueryBuilder() {
                     value={condition.logic}
                     onValueChange={(value) => updateCondition(condition.id, "logic", value as "AND" | "OR")}
                   >
-                    <SelectTrigger className="w-[100px]" data-testid={`select-logic-${index}`}>
+                    <SelectTrigger className="w-[100px] h-11" data-testid={`select-logic-${index}`}>
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
@@ -170,6 +172,7 @@ export default function QueryBuilder() {
                   size="icon"
                   variant="ghost"
                   onClick={() => removeCondition(condition.id)}
+                  className="h-11 w-11"
                   data-testid={`button-remove-${index}`}
                 >
                   <X className="h-4 w-4" />
@@ -178,7 +181,7 @@ export default function QueryBuilder() {
             </div>
           ))}
 
-          <Button variant="outline" onClick={addCondition} data-testid="button-add-condition">
+          <Button variant="outline" onClick={addCondition} className="w-full" data-testid="button-add-condition">
             <Plus className="h-4 w-4 mr-2" />
             Add Condition
           </Button>
@@ -186,42 +189,44 @@ export default function QueryBuilder() {
       </Card>
 
       {results.length > 0 && (
-        <Card>
+        <Card className="bg-gradient-to-br from-white to-slate-50/50 dark:from-slate-900 dark:to-slate-900/50 border-slate-200 dark:border-slate-800 shadow-lg">
           <CardHeader>
             <CardTitle>Query Results</CardTitle>
             <CardDescription>{results.length} companies match your criteria</CardDescription>
           </CardHeader>
           <CardContent>
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Ticker</TableHead>
-                  <TableHead>Company</TableHead>
-                  <TableHead>Sector</TableHead>
-                  <TableHead className="text-right font-mono">Revenue (B)</TableHead>
-                  <TableHead className="text-right font-mono">ROE %</TableHead>
-                  <TableHead className="text-right font-mono">P/E</TableHead>
-                  <TableHead>Signal</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {results.map((row) => (
-                  <TableRow key={row.ticker} data-testid={`result-${row.ticker.toLowerCase()}`}>
-                    <TableCell className="font-mono font-medium">{row.ticker}</TableCell>
-                    <TableCell>{row.company}</TableCell>
-                    <TableCell>{row.sector}</TableCell>
-                    <TableCell className="text-right font-mono">${row.revenue}</TableCell>
-                    <TableCell className="text-right font-mono">{row.roe}%</TableCell>
-                    <TableCell className="text-right font-mono">{row.pe}</TableCell>
-                    <TableCell>
-                      <Badge variant={row.signal === "BUY" ? "default" : "secondary"}>
-                        {row.signal}
-                      </Badge>
-                    </TableCell>
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow className="border-slate-200 dark:border-slate-800">
+                    <TableHead className="font-semibold">Ticker</TableHead>
+                    <TableHead className="font-semibold">Company</TableHead>
+                    <TableHead className="font-semibold">Sector</TableHead>
+                    <TableHead className="text-right font-mono font-semibold">Revenue (B)</TableHead>
+                    <TableHead className="text-right font-mono font-semibold">ROE %</TableHead>
+                    <TableHead className="text-right font-mono font-semibold">P/E</TableHead>
+                    <TableHead className="font-semibold">Signal</TableHead>
                   </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+                </TableHeader>
+                <TableBody>
+                  {results.map((row) => (
+                    <TableRow key={row.ticker} className="border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/50" data-testid={`result-${row.ticker.toLowerCase()}`}>
+                      <TableCell className="font-mono font-semibold">{row.ticker}</TableCell>
+                      <TableCell>{row.company}</TableCell>
+                      <TableCell>{row.sector}</TableCell>
+                      <TableCell className="text-right font-mono">${row.revenue}</TableCell>
+                      <TableCell className="text-right font-mono text-emerald-600 dark:text-emerald-400">{row.roe}%</TableCell>
+                      <TableCell className="text-right font-mono">{row.pe}</TableCell>
+                      <TableCell>
+                        <Badge variant={row.signal === "BUY" ? "default" : "secondary"} className="bg-blue-100 dark:bg-blue-950 text-blue-700 dark:text-blue-300">
+                          {row.signal}
+                        </Badge>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
           </CardContent>
         </Card>
       )}

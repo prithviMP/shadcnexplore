@@ -30,119 +30,145 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-background p-4">
-      <Card className="w-full max-w-md">
-        <CardHeader className="text-center space-y-2">
-          <div className="flex justify-center mb-2">
-            <div className="h-12 w-12 rounded-md bg-primary flex items-center justify-center">
-              <TrendingUp className="h-7 w-7 text-primary-foreground" />
-            </div>
-          </div>
-          <CardTitle className="text-2xl">Welcome to FinAnalytics</CardTitle>
-          <CardDescription>Sign in to access your financial dashboard</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <Tabs defaultValue="email" className="w-full">
-            <TabsList className="grid w-full grid-cols-2">
-              <TabsTrigger value="email" data-testid="tab-email-login">Email / Password</TabsTrigger>
-              <TabsTrigger value="otp" data-testid="tab-otp-login">Mobile OTP</TabsTrigger>
-            </TabsList>
-            <TabsContent value="email" className="space-y-4">
-              <form onSubmit={handleEmailLogin} className="space-y-4">
-                <div className="space-y-2">
-                  <Label htmlFor="email">Email</Label>
-                  <Input
-                    id="email"
-                    type="email"
-                    placeholder="you@example.com"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    data-testid="input-email"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="password">Password</Label>
-                  <Input
-                    id="password"
-                    type="password"
-                    placeholder="••••••••"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    data-testid="input-password"
-                  />
-                </div>
-                <Button type="submit" className="w-full" data-testid="button-email-login">
-                  Sign In
-                </Button>
-              </form>
-              <div className="text-center">
-                <a href="#" className="text-sm text-muted-foreground hover:text-foreground">
-                  Forgot password?
-                </a>
+    <div className="min-h-screen flex items-center justify-center relative overflow-hidden bg-gradient-to-br from-slate-50 via-white to-slate-100 dark:from-slate-950 dark:via-slate-900 dark:to-slate-950">
+      <div className="absolute inset-0 bg-grid-slate-200/50 dark:bg-grid-slate-800/50 [mask-image:radial-gradient(ellipse_at_center,transparent_20%,black)]" />
+      
+      <div className="relative z-10 w-full max-w-md p-4">
+        <div className="backdrop-blur-sm bg-white/80 dark:bg-slate-900/80 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xl">
+          <CardHeader className="text-center space-y-4 pb-8">
+            <div className="flex justify-center">
+              <div className="h-16 w-16 rounded-xl bg-gradient-to-br from-blue-600 to-purple-600 flex items-center justify-center shadow-lg">
+                <TrendingUp className="h-9 w-9 text-white" />
               </div>
-            </TabsContent>
-            <TabsContent value="otp" className="space-y-4">
-              {!otpSent ? (
-                <form onSubmit={handleRequestOtp} className="space-y-4">
+            </div>
+            <div>
+              <CardTitle className="text-3xl font-bold bg-gradient-to-r from-slate-900 to-slate-700 dark:from-white dark:to-slate-300 bg-clip-text text-transparent">
+                FinAnalytics
+              </CardTitle>
+              <CardDescription className="mt-2 text-base">
+                Professional Financial Screening Platform
+              </CardDescription>
+            </div>
+          </CardHeader>
+          <CardContent>
+            <Tabs defaultValue="email" className="w-full">
+              <TabsList className="grid w-full grid-cols-2 mb-6">
+                <TabsTrigger value="email" data-testid="tab-email-login">Email</TabsTrigger>
+                <TabsTrigger value="otp" data-testid="tab-otp-login">Mobile OTP</TabsTrigger>
+              </TabsList>
+              <TabsContent value="email" className="space-y-4">
+                <form onSubmit={handleEmailLogin} className="space-y-4">
                   <div className="space-y-2">
-                    <Label htmlFor="mobile">Mobile Number</Label>
+                    <Label htmlFor="email" className="text-sm font-medium">Email Address</Label>
                     <Input
-                      id="mobile"
-                      type="tel"
-                      placeholder="+1 (555) 123-4567"
-                      value={mobile}
-                      onChange={(e) => setMobile(e.target.value)}
-                      data-testid="input-mobile"
+                      id="email"
+                      type="email"
+                      placeholder="you@company.com"
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                      className="h-11"
+                      data-testid="input-email"
                     />
-                    <p className="text-xs text-muted-foreground">
-                      We'll send a 6-digit code to your mobile
-                    </p>
                   </div>
-                  <Button type="submit" className="w-full" data-testid="button-request-otp">
-                    Send OTP
-                  </Button>
-                </form>
-              ) : (
-                <form onSubmit={handleVerifyOtp} className="space-y-4">
                   <div className="space-y-2">
-                    <Label htmlFor="otp">Enter OTP</Label>
+                    <Label htmlFor="password" className="text-sm font-medium">Password</Label>
                     <Input
-                      id="otp"
-                      type="text"
-                      placeholder="123456"
-                      value={otp}
-                      onChange={(e) => setOtp(e.target.value)}
-                      maxLength={6}
-                      data-testid="input-otp"
+                      id="password"
+                      type="password"
+                      placeholder="••••••••"
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      className="h-11"
+                      data-testid="input-password"
                     />
-                    <p className="text-xs text-muted-foreground">
-                      Code sent to {mobile}
-                    </p>
                   </div>
-                  <Button type="submit" className="w-full" data-testid="button-verify-otp">
-                    Verify & Sign In
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    className="w-full"
-                    onClick={() => setOtpSent(false)}
-                    data-testid="button-back"
+                  <Button 
+                    type="submit" 
+                    className="w-full h-11 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white font-medium shadow-lg" 
+                    data-testid="button-email-login"
                   >
-                    Back
+                    Sign In
                   </Button>
                 </form>
-              )}
-            </TabsContent>
-          </Tabs>
-          <div className="mt-6 text-center text-sm text-muted-foreground">
-            Don't have an account?{" "}
-            <a href="#" className="text-primary hover:underline">
-              Sign up
-            </a>
-          </div>
-        </CardContent>
-      </Card>
+                <div className="text-center">
+                  <a href="#" className="text-sm text-muted-foreground hover:text-foreground transition-colors">
+                    Forgot password?
+                  </a>
+                </div>
+              </TabsContent>
+              <TabsContent value="otp" className="space-y-4">
+                {!otpSent ? (
+                  <form onSubmit={handleRequestOtp} className="space-y-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="mobile" className="text-sm font-medium">Mobile Number</Label>
+                      <Input
+                        id="mobile"
+                        type="tel"
+                        placeholder="+1 (555) 123-4567"
+                        value={mobile}
+                        onChange={(e) => setMobile(e.target.value)}
+                        className="h-11"
+                        data-testid="input-mobile"
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        We'll send a 6-digit verification code
+                      </p>
+                    </div>
+                    <Button 
+                      type="submit" 
+                      className="w-full h-11 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white font-medium shadow-lg" 
+                      data-testid="button-request-otp"
+                    >
+                      Send Verification Code
+                    </Button>
+                  </form>
+                ) : (
+                  <form onSubmit={handleVerifyOtp} className="space-y-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="otp" className="text-sm font-medium">Verification Code</Label>
+                      <Input
+                        id="otp"
+                        type="text"
+                        placeholder="000000"
+                        value={otp}
+                        onChange={(e) => setOtp(e.target.value)}
+                        maxLength={6}
+                        className="h-11 text-center text-2xl tracking-widest font-mono"
+                        data-testid="input-otp"
+                      />
+                      <p className="text-xs text-muted-foreground text-center">
+                        Code sent to {mobile}
+                      </p>
+                    </div>
+                    <Button 
+                      type="submit" 
+                      className="w-full h-11 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white font-medium shadow-lg" 
+                      data-testid="button-verify-otp"
+                    >
+                      Verify & Continue
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      className="w-full"
+                      onClick={() => setOtpSent(false)}
+                      data-testid="button-back"
+                    >
+                      ← Back
+                    </Button>
+                  </form>
+                )}
+              </TabsContent>
+            </Tabs>
+            <div className="mt-6 text-center text-sm text-muted-foreground">
+              Don't have an account?{" "}
+              <a href="#" className="text-blue-600 dark:text-blue-400 hover:underline font-medium">
+                Request Access
+              </a>
+            </div>
+          </CardContent>
+        </div>
+      </div>
     </div>
   );
 }

@@ -1,9 +1,12 @@
 import QueryBuilder from '../../pages/QueryBuilder';
+import { ThemeProvider } from '../ThemeProvider';
 
 export default function QueryBuilderExample() {
   return (
-    <div className="p-6">
-      <QueryBuilder />
-    </div>
+    <ThemeProvider>
+      <div className="p-6 bg-background min-h-screen">
+        <QueryBuilder />
+      </div>
+    </ThemeProvider>
   );
 }

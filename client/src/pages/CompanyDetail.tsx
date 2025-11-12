@@ -35,24 +35,26 @@ export default function CompanyDetail() {
     <div className="space-y-6">
       <div className="flex items-center gap-4">
         <Link href="/sectors">
-          <Button variant="ghost" size="icon" data-testid="button-back">
+          <Button variant="ghost" size="icon" data-testid="button-back" className="hover:bg-slate-100 dark:hover:bg-slate-800">
             <ArrowLeft className="h-5 w-5" />
           </Button>
         </Link>
         <div className="flex-1">
           <div className="flex items-center gap-3">
-            <h1 className="text-2xl font-semibold font-mono">{MOCK_COMPANY.ticker}</h1>
+            <h1 className="text-3xl font-bold font-mono bg-gradient-to-r from-slate-900 to-slate-700 dark:from-white dark:to-slate-300 bg-clip-text text-transparent">
+              {MOCK_COMPANY.ticker}
+            </h1>
             <SignalBadge signal={MOCK_COMPANY.signal} />
           </div>
           <div className="flex items-center gap-2 mt-1">
-            <p className="text-sm text-muted-foreground">{MOCK_COMPANY.name}</p>
-            <Badge variant="outline" className="text-xs">{MOCK_COMPANY.sector}</Badge>
+            <p className="text-muted-foreground">{MOCK_COMPANY.name}</p>
+            <Badge variant="outline" className="text-xs bg-slate-100 dark:bg-slate-800">{MOCK_COMPANY.sector}</Badge>
           </div>
         </div>
       </div>
 
       <div className="grid gap-6 md:grid-cols-2">
-        <Card>
+        <Card className="bg-gradient-to-br from-white to-slate-50/50 dark:from-slate-900 dark:to-slate-900/50 border-slate-200 dark:border-slate-800 shadow-lg">
           <CardHeader>
             <CardTitle>Quarterly Financial Data</CardTitle>
             <CardDescription>Latest 4 quarters performance metrics</CardDescription>
@@ -61,21 +63,25 @@ export default function CompanyDetail() {
             <div className="overflow-x-auto">
               <Table>
                 <TableHeader>
-                  <TableRow>
-                    <TableHead>Quarter</TableHead>
-                    <TableHead className="text-right font-mono">Revenue (B)</TableHead>
-                    <TableHead className="text-right font-mono">Net Income (B)</TableHead>
-                    <TableHead className="text-right font-mono">EPS</TableHead>
-                    <TableHead className="text-right font-mono">P/E</TableHead>
-                    <TableHead className="text-right font-mono">ROE %</TableHead>
-                    <TableHead className="text-right font-mono">Debt Ratio</TableHead>
+                  <TableRow className="border-slate-200 dark:border-slate-800">
+                    <TableHead className="font-semibold">Quarter</TableHead>
+                    <TableHead className="text-right font-mono font-semibold">Revenue (B)</TableHead>
+                    <TableHead className="text-right font-mono font-semibold">Net Income (B)</TableHead>
+                    <TableHead className="text-right font-mono font-semibold">EPS</TableHead>
+                    <TableHead className="text-right font-mono font-semibold">P/E</TableHead>
+                    <TableHead className="text-right font-mono font-semibold">ROE %</TableHead>
+                    <TableHead className="text-right font-mono font-semibold">Debt Ratio</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {MOCK_QUARTERLY_DATA.map((row) => (
                     <TableRow 
                       key={row.quarter} 
-                      className={`cursor-pointer ${selectedQuarter === row.quarter ? 'bg-muted' : ''}`}
+                      className={`cursor-pointer border-slate-200 dark:border-slate-800 ${
+                        selectedQuarter === row.quarter 
+                          ? 'bg-blue-50 dark:bg-blue-950/30' 
+                          : 'hover:bg-slate-50 dark:hover:bg-slate-800/50'
+                      }`}
                       onClick={() => setSelectedQuarter(row.quarter)}
                       data-testid={`row-quarter-${row.quarter.replace(' ', '-').toLowerCase()}`}
                     >
@@ -84,7 +90,7 @@ export default function CompanyDetail() {
                       <TableCell className="text-right font-mono">${row.netIncome}</TableCell>
                       <TableCell className="text-right font-mono">${row.eps}</TableCell>
                       <TableCell className="text-right font-mono">{row.pe}</TableCell>
-                      <TableCell className="text-right font-mono">{row.roe}%</TableCell>
+                      <TableCell className="text-right font-mono text-emerald-600 dark:text-emerald-400">{row.roe}%</TableCell>
                       <TableCell className="text-right font-mono">{row.debt}</TableCell>
                     </TableRow>
                   ))}
@@ -94,7 +100,7 @@ export default function CompanyDetail() {
           </CardContent>
         </Card>
 
-        <Card>
+        <Card className="bg-gradient-to-br from-white to-slate-50/50 dark:from-slate-900 dark:to-slate-900/50 border-slate-200 dark:border-slate-800 shadow-lg">
           <CardHeader>
             <CardTitle>Applied Signals</CardTitle>
             <CardDescription>Formulas evaluated for this company</CardDescription>
@@ -102,20 +108,24 @@ export default function CompanyDetail() {
           <CardContent>
             <div className="space-y-3">
               {MOCK_FORMULAS.map((formula) => (
-                <div key={formula.name} className="p-4 rounded-md border" data-testid={`formula-${formula.name.toLowerCase().replace(' ', '-')}`}>
-                  <div className="flex items-start justify-between mb-2">
+                <div 
+                  key={formula.name} 
+                  className="p-4 rounded-lg border border-slate-200 dark:border-slate-800 bg-white/50 dark:bg-slate-800/30 backdrop-blur-sm hover:shadow-md transition-shadow" 
+                  data-testid={`formula-${formula.name.toLowerCase().replace(' ', '-')}`}
+                >
+                  <div className="flex items-start justify-between mb-3">
                     <div>
-                      <h4 className="font-medium text-sm">{formula.name}</h4>
-                      <p className="text-xs text-muted-foreground">{formula.scope}</p>
+                      <h4 className="font-semibold">{formula.name}</h4>
+                      <p className="text-xs text-muted-foreground mt-0.5">{formula.scope}</p>
                     </div>
                     <SignalBadge signal={formula.signal} />
                   </div>
-                  <div className="mt-2 p-2 bg-muted rounded text-xs font-mono">
+                  <div className="mt-2 p-3 bg-slate-100 dark:bg-slate-900/50 rounded-md text-sm font-mono border border-slate-200 dark:border-slate-700">
                     {formula.formula}
                   </div>
-                  <div className="mt-2 flex items-center gap-2">
+                  <div className="mt-3 flex items-center gap-2">
                     <Badge variant={formula.result === "PASS" ? "default" : "destructive"} className="text-xs">
-                      {formula.result}
+                      ✓ {formula.result}
                     </Badge>
                   </div>
                 </div>

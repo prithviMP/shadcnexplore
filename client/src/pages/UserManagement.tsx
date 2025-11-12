@@ -34,9 +34,9 @@ export default function UserManagement() {
 
   const getRoleBadgeColor = (role: string) => {
     switch (role) {
-      case "admin": return "bg-primary/10 text-primary border-primary/20";
-      case "analyst": return "bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20";
-      case "viewer": return "bg-muted text-muted-foreground border-border";
+      case "admin": return "bg-purple-100 dark:bg-purple-950 text-purple-700 dark:text-purple-300 border-purple-200 dark:border-purple-800";
+      case "analyst": return "bg-blue-100 dark:bg-blue-950 text-blue-700 dark:text-blue-300 border-blue-200 dark:border-blue-800";
+      case "viewer": return "bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700";
       default: return "";
     }
   };
@@ -45,34 +45,36 @@ export default function UserManagement() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-semibold">User Management</h1>
-          <p className="text-sm text-muted-foreground mt-1">Manage users and their access permissions</p>
+          <h1 className="text-3xl font-bold bg-gradient-to-r from-slate-900 to-slate-700 dark:from-white dark:to-slate-300 bg-clip-text text-transparent">
+            User Management
+          </h1>
+          <p className="text-muted-foreground mt-1">Manage users and their access permissions</p>
         </div>
         <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
           <DialogTrigger asChild>
-            <Button data-testid="button-add-user">
+            <Button className="bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 shadow-lg" data-testid="button-add-user">
               <Plus className="h-4 w-4 mr-2" />
               Add User
             </Button>
           </DialogTrigger>
-          <DialogContent>
+          <DialogContent className="bg-white/95 dark:bg-slate-900/95 backdrop-blur-sm border-slate-200 dark:border-slate-800">
             <DialogHeader>
-              <DialogTitle>Add New User</DialogTitle>
+              <DialogTitle className="text-xl">Add New User</DialogTitle>
               <DialogDescription>Create a new user account with specific role permissions</DialogDescription>
             </DialogHeader>
             <div className="space-y-4 py-4">
               <div className="space-y-2">
-                <Label htmlFor="name">Full Name</Label>
-                <Input id="name" placeholder="John Doe" data-testid="input-name" />
+                <Label htmlFor="name" className="font-medium">Full Name</Label>
+                <Input id="name" placeholder="John Doe" className="h-11" data-testid="input-name" />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="email">Email</Label>
-                <Input id="email" type="email" placeholder="john@example.com" data-testid="input-email" />
+                <Label htmlFor="email" className="font-medium">Email</Label>
+                <Input id="email" type="email" placeholder="john@example.com" className="h-11" data-testid="input-email" />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="role">Role</Label>
+                <Label htmlFor="role" className="font-medium">Role</Label>
                 <Select defaultValue="viewer">
-                  <SelectTrigger id="role" data-testid="select-role">
+                  <SelectTrigger id="role" className="h-11" data-testid="select-role">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -85,76 +87,78 @@ export default function UserManagement() {
             </div>
             <DialogFooter>
               <Button variant="outline" onClick={() => setDialogOpen(false)}>Cancel</Button>
-              <Button onClick={() => setDialogOpen(false)} data-testid="button-save-user">Create User</Button>
+              <Button onClick={() => setDialogOpen(false)} className="bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700" data-testid="button-save-user">Create User</Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>
       </div>
 
-      <Card>
+      <Card className="bg-gradient-to-br from-white to-slate-50/50 dark:from-slate-900 dark:to-slate-900/50 border-slate-200 dark:border-slate-800 shadow-lg">
         <CardHeader>
           <CardTitle>Users</CardTitle>
           <CardDescription>Manage user accounts and role-based permissions</CardDescription>
         </CardHeader>
         <CardContent>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>User</TableHead>
-                <TableHead>Email</TableHead>
-                <TableHead>Role</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead className="text-right">Actions</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {users.map((user) => (
-                <TableRow key={user.id} data-testid={`row-user-${user.id}`}>
-                  <TableCell>
-                    <div className="flex items-center gap-3">
-                      <Avatar>
-                        <AvatarFallback>{user.name.split(" ").map(n => n[0]).join("")}</AvatarFallback>
-                      </Avatar>
-                      <span className="font-medium">{user.name}</span>
-                    </div>
-                  </TableCell>
-                  <TableCell className="text-muted-foreground">{user.email}</TableCell>
-                  <TableCell>
-                    <Select
-                      value={user.role}
-                      onValueChange={(value) => handleRoleChange(user.id, value)}
-                    >
-                      <SelectTrigger className="w-[140px]" data-testid={`select-role-${user.id}`}>
-                        <Badge variant="outline" className={`${getRoleBadgeColor(user.role)} capitalize`}>
-                          {user.role}
-                        </Badge>
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="admin">Admin</SelectItem>
-                        <SelectItem value="analyst">Analyst</SelectItem>
-                        <SelectItem value="viewer">Viewer</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </TableCell>
-                  <TableCell>
-                    <Badge variant={user.active ? "default" : "secondary"}>
-                      {user.active ? "Active" : "Inactive"}
-                    </Badge>
-                  </TableCell>
-                  <TableCell className="text-right">
-                    <div className="flex justify-end gap-2">
-                      <Button size="icon" variant="ghost" data-testid={`button-edit-${user.id}`}>
-                        <Pencil className="h-4 w-4" />
-                      </Button>
-                      <Button size="icon" variant="ghost" onClick={() => handleDelete(user.id)} data-testid={`button-delete-${user.id}`}>
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
-                    </div>
-                  </TableCell>
+          <div className="overflow-x-auto">
+            <Table>
+              <TableHeader>
+                <TableRow className="border-slate-200 dark:border-slate-800">
+                  <TableHead className="font-semibold">User</TableHead>
+                  <TableHead className="font-semibold">Email</TableHead>
+                  <TableHead className="font-semibold">Role</TableHead>
+                  <TableHead className="font-semibold">Status</TableHead>
+                  <TableHead className="text-right font-semibold">Actions</TableHead>
                 </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+              </TableHeader>
+              <TableBody>
+                {users.map((user) => (
+                  <TableRow key={user.id} className="border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/50" data-testid={`row-user-${user.id}`}>
+                    <TableCell>
+                      <div className="flex items-center gap-3">
+                        <Avatar className="h-9 w-9">
+                          <AvatarFallback className="text-sm font-medium">{user.name.split(" ").map(n => n[0]).join("")}</AvatarFallback>
+                        </Avatar>
+                        <span className="font-medium">{user.name}</span>
+                      </div>
+                    </TableCell>
+                    <TableCell className="text-muted-foreground">{user.email}</TableCell>
+                    <TableCell>
+                      <Select
+                        value={user.role}
+                        onValueChange={(value) => handleRoleChange(user.id, value)}
+                      >
+                        <SelectTrigger className="w-[140px] h-9 border-0 focus:ring-0" data-testid={`select-role-${user.id}`}>
+                          <Badge variant="outline" className={`${getRoleBadgeColor(user.role)} capitalize font-medium`}>
+                            {user.role}
+                          </Badge>
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="admin">Admin</SelectItem>
+                          <SelectItem value="analyst">Analyst</SelectItem>
+                          <SelectItem value="viewer">Viewer</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </TableCell>
+                    <TableCell>
+                      <Badge variant={user.active ? "default" : "secondary"} className={user.active ? "bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300" : ""}>
+                        {user.active ? "Active" : "Inactive"}
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <div className="flex justify-end gap-2">
+                        <Button size="icon" variant="ghost" className="h-8 w-8" data-testid={`button-edit-${user.id}`}>
+                          <Pencil className="h-4 w-4" />
+                        </Button>
+                        <Button size="icon" variant="ghost" className="h-8 w-8 text-red-600 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-950/30" onClick={() => handleDelete(user.id)} data-testid={`button-delete-${user.id}`}>
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
         </CardContent>
       </Card>
     </div>

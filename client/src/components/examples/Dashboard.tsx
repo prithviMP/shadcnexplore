@@ -1,9 +1,12 @@
 import Dashboard from '../../pages/Dashboard';
+import { ThemeProvider } from '../ThemeProvider';
 
 export default function DashboardExample() {
   return (
-    <div className="p-6">
-      <Dashboard />
-    </div>
+    <ThemeProvider>
+      <div className="p-6 bg-background min-h-screen">
+        <Dashboard />
+      </div>
+    </ThemeProvider>
   );
 }
