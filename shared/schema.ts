@@ -9,7 +9,7 @@ export const users = pgTable("users", {
   password: text("password").notNull(),
   name: text("name").notNull(),
   role: text("role").notNull().default("viewer"),
-  otpSecret: text("otp_secret"),
+  otpSecret: text("otp_secret").default(sql`NULL`),
   otpEnabled: boolean("otp_enabled").notNull().default(false),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
