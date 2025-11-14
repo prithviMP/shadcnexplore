@@ -11,6 +11,8 @@ import NotFound from "@/pages/not-found";
 import LoginPage from "@/pages/LoginPage";
 import Dashboard from "@/pages/Dashboard";
 import SectorsList from "@/pages/SectorsList";
+import SectorManager from "@/pages/SectorManager";
+import CompanyManager from "@/pages/CompanyManager";
 import CompanyDetail from "@/pages/CompanyDetail";
 import FormulaManager from "@/pages/FormulaManager";
 import QueryBuilder from "@/pages/QueryBuilder";
@@ -41,6 +43,8 @@ function AuthenticatedLayout() {
                 <Route path="/" component={Dashboard} />
                 <Route path="/sectors" component={SectorsList} />
                 <Route path="/sectors/:sector" component={SectorsList} />
+                <Route path="/sector-manager" component={SectorManager} />
+                <Route path="/company-manager" component={CompanyManager} />
                 <Route path="/company/:ticker" component={CompanyDetail} />
                 <Route path="/query-builder" component={QueryBuilder} />
                 <Route path="/formulas" component={FormulaManager} />

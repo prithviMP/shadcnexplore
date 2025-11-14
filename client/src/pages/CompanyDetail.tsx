@@ -1,139 +1,236 @@
-import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import SignalBadge from "@/components/SignalBadge";
-import { ArrowLeft } from "lucide-react";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import { Link } from "wouter";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import SignalBadge from "@/components/SignalBadge";
+import { ArrowLeft, AlertCircle } from "lucide-react";
+import { Link, useRoute } from "wouter";
+import type { Company, Sector, Signal } from "@shared/schema";
+import { format } from "date-fns";
 
-//todo: remove mock functionality
-const MOCK_COMPANY = {
-  ticker: "AAPL",
-  name: "Apple Inc.",
-  sector: "Technology",
-  signal: "BUY" as const
+const formatCurrency = (value: number): string => {
+  if (value >= 1e12) return `$${(value / 1e12).toFixed(2)}T`;
+  if (value >= 1e9) return `$${(value / 1e9).toFixed(2)}B`;
+  if (value >= 1e6) return `$${(value / 1e6).toFixed(2)}M`;
+  return `$${value.toFixed(2)}`;
 };
 
-const MOCK_QUARTERLY_DATA = [
-  { quarter: "Q4 2024", revenue: 123.95, netIncome: 34.63, eps: 2.18, pe: 28.5, roe: 48.2, debt: 0.65 },
-  { quarter: "Q3 2024", revenue: 117.15, netIncome: 29.99, eps: 1.89, pe: 29.1, roe: 46.8, debt: 0.67 },
-  { quarter: "Q2 2024", revenue: 111.44, netIncome: 26.04, eps: 1.64, pe: 30.2, roe: 44.5, debt: 0.70 },
-  { quarter: "Q1 2024", revenue: 119.58, netIncome: 33.92, eps: 2.14, pe: 27.8, roe: 47.1, debt: 0.68 },
-];
+const formatPercent = (value: number): string => `${value.toFixed(2)}%`;
 
-const MOCK_FORMULAS = [
-  { name: "High ROE", scope: "Global", formula: "ROE > 20%", result: "PASS", signal: "BUY" as const },
-  { name: "Low PEG", scope: "Global", formula: "PEG < 1.5", result: "PASS", signal: "BUY" as const },
-  { name: "Tech Growth", scope: "Sector: Technology", formula: "Revenue Growth > 10%", result: "PASS", signal: "BUY" as const },
+const FINANCIAL_FIELDS = [
+  { key: "revenue", label: "Revenue", formatter: formatCurrency },
+  { key: "netIncome", label: "Net Income", formatter: formatCurrency },
+  { key: "roe", label: "ROE", formatter: formatPercent },
+  { key: "pe", label: "P/E Ratio", formatter: (v: number) => v.toFixed(2) },
+  { key: "debt", label: "Debt Ratio", formatter: (v: number) => v.toFixed(2) },
+  { key: "marketCap", label: "Market Cap", formatter: formatCurrency }
 ];
 
 export default function CompanyDetail() {
-  const [selectedQuarter, setSelectedQuarter] = useState("Q4 2024");
+  const [match, params] = useRoute("/company/:ticker");
+  const ticker = params?.ticker?.toUpperCase();
+
+  const { data: company, isLoading: companyLoading, error: companyError } = useQuery<Company>({
+    queryKey: ["/api/companies/ticker", ticker],
+    enabled: !!ticker
+  });
+
+  const { data: sectors } = useQuery<Sector[]>({
+    queryKey: ["/api/sectors"]
+  });
+
+  const { data: signals, isLoading: signalsLoading } = useQuery<Signal[]>({
+    queryKey: ["/api/signals", { companyId: company?.id }],
+    enabled: !!company?.id
+  });
+
+  if (!match || !ticker) {
+    return (
+      <Alert variant="destructive">
+        <AlertCircle className="h-4 w-4" />
+        <AlertDescription>Invalid company ticker</AlertDescription>
+      </Alert>
+    );
+  }
+
+  if (companyLoading) {
+    return (
+      <div className="space-y-6">
+        <div className="flex items-center gap-4">
+          <Skeleton className="h-10 w-10" />
+          <div className="flex-1 space-y-2">
+            <Skeleton className="h-8 w-48" />
+            <Skeleton className="h-4 w-96" />
+          </div>
+        </div>
+        <div className="grid gap-6 md:grid-cols-2">
+          <Skeleton className="h-[400px]" />
+          <Skeleton className="h-[400px]" />
+        </div>
+      </div>
+    );
+  }
+
+  if (companyError || !company) {
+    return (
+      <Alert variant="destructive">
+        <AlertCircle className="h-4 w-4" />
+        <AlertDescription>
+          Failed to load company data. {companyError instanceof Error ? companyError.message : ""}
+        </AlertDescription>
+        <Button variant="outline" className="mt-4" asChild>
+          <Link href="/company-manager">Back to Company Manager</Link>
+        </Button>
+      </Alert>
+    );
+  }
+
+  const sectorName = sectors?.find(s => s.id === company.sectorId)?.name || "Unknown";
+  const sortedSignals = signals ? [...signals].sort((a, b) => 
+    new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+  ) : [];
+  const latestSignal = sortedSignals[0];
+  const financialData = company.financialData as Record<string, number> | null;
+
+  const getFinancialValue = (key: string): number | null => {
+    if (!financialData) return null;
+    if (key === "marketCap" && company.marketCap) return parseFloat(company.marketCap);
+    return financialData[key] !== undefined ? Number(financialData[key]) : null;
+  };
 
   return (
     <div className="space-y-6">
       <div className="flex items-center gap-4">
-        <Link href="/sectors">
-          <Button variant="ghost" size="icon" data-testid="button-back" className="hover:bg-slate-100 dark:hover:bg-slate-800">
+        <Link href="/company-manager">
+          <Button variant="ghost" size="icon" data-testid="button-back">
             <ArrowLeft className="h-5 w-5" />
           </Button>
         </Link>
         <div className="flex-1">
           <div className="flex items-center gap-3">
-            <h1 className="text-3xl font-bold font-mono bg-gradient-to-r from-slate-900 to-slate-700 dark:from-white dark:to-slate-300 bg-clip-text text-transparent">
-              {MOCK_COMPANY.ticker}
+            <h1 className="text-3xl font-bold font-mono" data-testid="text-ticker">
+              {company.ticker}
             </h1>
-            <SignalBadge signal={MOCK_COMPANY.signal} />
+            {latestSignal && <SignalBadge signal={latestSignal.signal as "BUY" | "SELL" | "HOLD"} />}
           </div>
           <div className="flex items-center gap-2 mt-1">
-            <p className="text-muted-foreground">{MOCK_COMPANY.name}</p>
-            <Badge variant="outline" className="text-xs bg-slate-100 dark:bg-slate-800">{MOCK_COMPANY.sector}</Badge>
+            <p className="text-muted-foreground" data-testid="text-company-name">{company.name}</p>
+            <Badge variant="outline" data-testid="badge-sector">{sectorName}</Badge>
           </div>
         </div>
       </div>
 
+      <div className="grid gap-4 md:grid-cols-3 lg:grid-cols-6">
+        {FINANCIAL_FIELDS.map(({ key, label, formatter }) => {
+          const value = getFinancialValue(key);
+          return (
+            <Card key={key} data-testid={`card-${key}`}>
+              <CardHeader className="pb-2">
+                <CardDescription className="text-xs">{label}</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold font-mono">
+                  {value !== null ? formatter(value) : "—"}
+                </div>
+              </CardContent>
+            </Card>
+          );
+        })}
+      </div>
+
       <div className="grid gap-6 md:grid-cols-2">
-        <Card className="bg-gradient-to-br from-white to-slate-50/50 dark:from-slate-900 dark:to-slate-900/50 border-slate-200 dark:border-slate-800 shadow-lg">
+        <Card>
           <CardHeader>
-            <CardTitle>Quarterly Financial Data</CardTitle>
-            <CardDescription>Latest 4 quarters performance metrics</CardDescription>
+            <CardTitle>Latest Signal</CardTitle>
+            <CardDescription>Most recent signal evaluation</CardDescription>
           </CardHeader>
           <CardContent>
-            <div className="overflow-x-auto">
-              <Table>
-                <TableHeader>
-                  <TableRow className="border-slate-200 dark:border-slate-800">
-                    <TableHead className="font-semibold">Quarter</TableHead>
-                    <TableHead className="text-right font-mono font-semibold">Revenue (B)</TableHead>
-                    <TableHead className="text-right font-mono font-semibold">Net Income (B)</TableHead>
-                    <TableHead className="text-right font-mono font-semibold">EPS</TableHead>
-                    <TableHead className="text-right font-mono font-semibold">P/E</TableHead>
-                    <TableHead className="text-right font-mono font-semibold">ROE %</TableHead>
-                    <TableHead className="text-right font-mono font-semibold">Debt Ratio</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {MOCK_QUARTERLY_DATA.map((row) => (
-                    <TableRow 
-                      key={row.quarter} 
-                      className={`cursor-pointer border-slate-200 dark:border-slate-800 ${
-                        selectedQuarter === row.quarter 
-                          ? 'bg-blue-50 dark:bg-blue-950/30' 
-                          : 'hover:bg-slate-50 dark:hover:bg-slate-800/50'
-                      }`}
-                      onClick={() => setSelectedQuarter(row.quarter)}
-                      data-testid={`row-quarter-${row.quarter.replace(' ', '-').toLowerCase()}`}
-                    >
-                      <TableCell className="font-medium">{row.quarter}</TableCell>
-                      <TableCell className="text-right font-mono">${row.revenue}</TableCell>
-                      <TableCell className="text-right font-mono">${row.netIncome}</TableCell>
-                      <TableCell className="text-right font-mono">${row.eps}</TableCell>
-                      <TableCell className="text-right font-mono">{row.pe}</TableCell>
-                      <TableCell className="text-right font-mono text-emerald-600 dark:text-emerald-400">{row.roe}%</TableCell>
-                      <TableCell className="text-right font-mono">{row.debt}</TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
+            {signalsLoading ? (
+              <div className="space-y-2">
+                <Skeleton className="h-4 w-full" />
+                <Skeleton className="h-4 w-3/4" />
+              </div>
+            ) : !latestSignal ? (
+              <p className="text-muted-foreground text-sm">No signals generated yet</p>
+            ) : (
+              <div className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <SignalBadge signal={latestSignal.signal as "BUY" | "SELL" | "HOLD"} />
+                  <span className="text-sm text-muted-foreground" data-testid="text-signal-date">
+                    {format(new Date(latestSignal.createdAt), "MMM d, yyyy HH:mm")}
+                  </span>
+                </div>
+                {latestSignal.value !== null && latestSignal.value !== undefined && (
+                  <div className="p-3 bg-muted rounded-md">
+                    <p className="text-sm font-medium">Value: {String(latestSignal.value)}</p>
+                  </div>
+                )}
+                {latestSignal.metadata && typeof latestSignal.metadata === 'object' && (
+                  <div className="p-3 bg-muted rounded-md">
+                    <pre className="text-xs overflow-auto">
+                      {JSON.stringify(latestSignal.metadata, null, 2)}
+                    </pre>
+                  </div>
+                )}
+              </div>
+            )}
           </CardContent>
         </Card>
 
-        <Card className="bg-gradient-to-br from-white to-slate-50/50 dark:from-slate-900 dark:to-slate-900/50 border-slate-200 dark:border-slate-800 shadow-lg">
+        <Card>
           <CardHeader>
-            <CardTitle>Applied Signals</CardTitle>
-            <CardDescription>Formulas evaluated for this company</CardDescription>
+            <CardTitle>Signal History</CardTitle>
+            <CardDescription>
+              {sortedSignals.length > 0 ? `${sortedSignals.length} signal${sortedSignals.length !== 1 ? 's' : ''}` : "No history"}
+            </CardDescription>
           </CardHeader>
           <CardContent>
-            <div className="space-y-3">
-              {MOCK_FORMULAS.map((formula) => (
-                <div 
-                  key={formula.name} 
-                  className="p-4 rounded-lg border border-slate-200 dark:border-slate-800 bg-white/50 dark:bg-slate-800/30 backdrop-blur-sm hover:shadow-md transition-shadow" 
-                  data-testid={`formula-${formula.name.toLowerCase().replace(' ', '-')}`}
-                >
-                  <div className="flex items-start justify-between mb-3">
-                    <div>
-                      <h4 className="font-semibold">{formula.name}</h4>
-                      <p className="text-xs text-muted-foreground mt-0.5">{formula.scope}</p>
+            {signalsLoading ? (
+              <div className="space-y-2">
+                <Skeleton className="h-16 w-full" />
+                <Skeleton className="h-16 w-full" />
+                <Skeleton className="h-16 w-full" />
+              </div>
+            ) : sortedSignals.length === 0 ? (
+              <p className="text-muted-foreground text-sm">No signal history available</p>
+            ) : (
+              <ScrollArea className="h-[300px] pr-4">
+                <div className="space-y-3">
+                  {sortedSignals.map((signal, index) => (
+                    <div 
+                      key={signal.id} 
+                      className="p-3 border rounded-lg hover-elevate"
+                      data-testid={`signal-history-${index}`}
+                    >
+                      <div className="flex items-center justify-between mb-2">
+                        <SignalBadge signal={signal.signal as "BUY" | "SELL" | "HOLD"} />
+                        <span className="text-xs text-muted-foreground">
+                          {format(new Date(signal.createdAt), "MMM d, yyyy HH:mm")}
+                        </span>
+                      </div>
+                      {signal.value && (
+                        <p className="text-sm text-muted-foreground">Value: {String(signal.value)}</p>
+                      )}
                     </div>
-                    <SignalBadge signal={formula.signal} />
-                  </div>
-                  <div className="mt-2 p-3 bg-slate-100 dark:bg-slate-900/50 rounded-md text-sm font-mono border border-slate-200 dark:border-slate-700">
-                    {formula.formula}
-                  </div>
-                  <div className="mt-3 flex items-center gap-2">
-                    <Badge variant={formula.result === "PASS" ? "default" : "destructive"} className="text-xs">
-                      ✓ {formula.result}
-                    </Badge>
-                  </div>
+                  ))}
                 </div>
-              ))}
-            </div>
+              </ScrollArea>
+            )}
           </CardContent>
         </Card>
       </div>
+
+      {!financialData && (
+        <Alert>
+          <AlertCircle className="h-4 w-4" />
+          <AlertDescription>
+            No financial data available for this company. Update the company in the Company Manager to add financial metrics.
+          </AlertDescription>
+        </Alert>
+      )}
     </div>
   );
 }
