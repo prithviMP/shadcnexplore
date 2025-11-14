@@ -24,6 +24,7 @@ import {
 import { db } from "./db";
 import { eq } from "drizzle-orm";
 import { z } from "zod";
+import { queryExecutor, type QueryCondition } from "./queryExecutor";
 
 export async function registerRoutes(app: Express): Promise<Server> {
   // Authentication routes
@@ -439,6 +440,37 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       await storage.deleteQuery(req.params.id);
       res.json({ success: true });
+    } catch (error: any) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
+  const executeQuerySchema = z.object({
+    conditions: z.array(z.object({
+      id: z.string(),
+      field: z.string().min(1),
+      operator: z.enum(["=", ">", "<", ">=", "<=", "contains"]),
+      value: z.string(),
+      logic: z.enum(["AND", "OR"]).optional(),
+    })),
+    limit: z.number().int().positive().max(1000).optional(),
+    offset: z.number().int().nonnegative().optional(),
+  });
+
+  app.post("/api/queries/execute", requireAuth, async (req, res) => {
+    try {
+      const validated = executeQuerySchema.parse(req.body);
+      
+      const queryLimit = validated.limit || 100;
+      const queryOffset = validated.offset || 0;
+
+      const result = await queryExecutor.executeQuery(
+        validated.conditions as QueryCondition[],
+        queryLimit,
+        queryOffset
+      );
+      
+      res.json(result);
     } catch (error: any) {
       res.status(400).json({ error: error.message });
     }

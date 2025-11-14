@@ -1,19 +1,35 @@
 import { useState } from "react";
+import { useMutation, useQuery } from "@tanstack/react-query";
+import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { Plus, X, Play, Save } from "lucide-react";
+import { Plus, X, Play, Save, Loader2 } from "lucide-react";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { useToast } from "@/hooks/use-toast";
 
-//todo: remove mock functionality
 interface QueryCondition {
   id: string;
   field: string;
   operator: string;
   value: string;
   logic: "AND" | "OR";
+}
+
+interface QueryExecutionResult {
+  ticker: string;
+  name: string;
+  sectorName: string;
+  revenue: number | null;
+  netIncome: number | null;
+  roe: number | null;
+  pe: number | null;
+  debt: number | null;
+  marketCap: string | null;
+  latestSignal: string | null;
+  latestSignalDate: string | null;
 }
 
 const AVAILABLE_FIELDS = [
@@ -36,17 +52,64 @@ const OPERATORS = [
   { value: "contains", label: "Contains" },
 ];
 
-const MOCK_RESULTS = [
-  { ticker: "AAPL", company: "Apple Inc.", sector: "Technology", revenue: 123.95, roe: 48.2, pe: 28.5, signal: "BUY" },
-  { ticker: "MSFT", company: "Microsoft Corp.", sector: "Technology", revenue: 211.92, roe: 42.3, pe: 32.1, signal: "BUY" },
-  { ticker: "GOOGL", company: "Alphabet Inc.", sector: "Technology", revenue: 307.39, roe: 28.4, pe: 24.7, signal: "HOLD" },
-];
-
 export default function QueryBuilder() {
+  const { toast } = useToast();
   const [conditions, setConditions] = useState<QueryCondition[]>([
     { id: "1", field: "roe", operator: ">", value: "20", logic: "AND" }
   ]);
-  const [results, setResults] = useState<typeof MOCK_RESULTS>([]);
+  const [results, setResults] = useState<QueryExecutionResult[]>([]);
+  const [queryName, setQueryName] = useState("");
+  const [totalResults, setTotalResults] = useState(0);
+
+  const executeMutation = useMutation({
+    mutationFn: async (conditions: QueryCondition[]) => {
+      const res = await apiRequest("POST", "/api/queries/execute", { conditions });
+      return res.json();
+    },
+    onSuccess: (data) => {
+      setResults(data.results);
+      setTotalResults(data.total);
+      toast({
+        title: "Query executed",
+        description: `Found ${data.total} matching companies`,
+      });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Execution failed",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  const saveMutation = useMutation({
+    mutationFn: async () => {
+      if (!queryName.trim()) {
+        throw new Error("Please enter a query name");
+      }
+      const res = await apiRequest("POST", "/api/queries", {
+        name: queryName,
+        description: `Query with ${conditions.length} conditions`,
+        criteria: conditions,
+      });
+      return res.json();
+    },
+    onSuccess: () => {
+      toast({
+        title: "Query saved",
+        description: "Your query has been saved successfully",
+      });
+      setQueryName("");
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Save failed",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
 
   const addCondition = () => {
     const newCondition: QueryCondition = {
@@ -68,12 +131,11 @@ export default function QueryBuilder() {
   };
 
   const executeQuery = () => {
-    console.log("Executing query with conditions:", conditions);
-    setResults(MOCK_RESULTS);
+    executeMutation.mutate(conditions);
   };
 
   const saveQuery = () => {
-    console.log("Saving query:", conditions);
+    saveMutation.mutate();
   };
 
   return (
@@ -86,12 +148,29 @@ export default function QueryBuilder() {
           <p className="text-muted-foreground mt-1">Build custom queries to filter financial data</p>
         </div>
         <div className="flex gap-2">
-          <Button variant="outline" onClick={saveQuery} data-testid="button-save-query">
-            <Save className="h-4 w-4 mr-2" />
+          <Input
+            placeholder="Query name..."
+            value={queryName}
+            onChange={(e) => setQueryName(e.target.value)}
+            className="w-48"
+            data-testid="input-query-name"
+          />
+          <Button 
+            variant="outline" 
+            onClick={saveQuery} 
+            disabled={saveMutation.isPending || !queryName.trim()}
+            data-testid="button-save-query"
+          >
+            {saveMutation.isPending ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Save className="h-4 w-4 mr-2" />}
             Save Query
           </Button>
-          <Button onClick={executeQuery} className="bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 shadow-lg" data-testid="button-execute-query">
-            <Play className="h-4 w-4 mr-2" />
+          <Button 
+            onClick={executeQuery} 
+            disabled={executeMutation.isPending}
+            className="bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 shadow-lg" 
+            data-testid="button-execute-query"
+          >
+            {executeMutation.isPending ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Play className="h-4 w-4 mr-2" />}
             Execute
           </Button>
         </div>
@@ -192,7 +271,9 @@ export default function QueryBuilder() {
         <Card className="bg-gradient-to-br from-white to-slate-50/50 dark:from-slate-900 dark:to-slate-900/50 border-slate-200 dark:border-slate-800 shadow-lg">
           <CardHeader>
             <CardTitle>Query Results</CardTitle>
-            <CardDescription>{results.length} companies match your criteria</CardDescription>
+            <CardDescription>
+              {results.length} of {totalResults} companies match your criteria
+            </CardDescription>
           </CardHeader>
           <CardContent>
             <div className="overflow-x-auto">
@@ -212,15 +293,28 @@ export default function QueryBuilder() {
                   {results.map((row) => (
                     <TableRow key={row.ticker} className="border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/50" data-testid={`result-${row.ticker.toLowerCase()}`}>
                       <TableCell className="font-mono font-semibold">{row.ticker}</TableCell>
-                      <TableCell>{row.company}</TableCell>
-                      <TableCell>{row.sector}</TableCell>
-                      <TableCell className="text-right font-mono">${row.revenue}</TableCell>
-                      <TableCell className="text-right font-mono text-emerald-600 dark:text-emerald-400">{row.roe}%</TableCell>
-                      <TableCell className="text-right font-mono">{row.pe}</TableCell>
+                      <TableCell>{row.name}</TableCell>
+                      <TableCell>{row.sectorName}</TableCell>
+                      <TableCell className="text-right font-mono">
+                        {row.revenue !== null ? `$${row.revenue.toFixed(2)}` : "N/A"}
+                      </TableCell>
+                      <TableCell className="text-right font-mono text-emerald-600 dark:text-emerald-400">
+                        {row.roe !== null ? `${row.roe.toFixed(1)}%` : "N/A"}
+                      </TableCell>
+                      <TableCell className="text-right font-mono">
+                        {row.pe !== null ? row.pe.toFixed(1) : "N/A"}
+                      </TableCell>
                       <TableCell>
-                        <Badge variant={row.signal === "BUY" ? "default" : "secondary"} className="bg-blue-100 dark:bg-blue-950 text-blue-700 dark:text-blue-300">
-                          {row.signal}
-                        </Badge>
+                        {row.latestSignal ? (
+                          <Badge 
+                            variant={row.latestSignal === "BUY" ? "default" : "secondary"} 
+                            className="bg-blue-100 dark:bg-blue-950 text-blue-700 dark:text-blue-300"
+                          >
+                            {row.latestSignal}
+                          </Badge>
+                        ) : (
+                          <span className="text-muted-foreground text-sm">No signal</span>
+                        )}
                       </TableCell>
                     </TableRow>
                   ))}
