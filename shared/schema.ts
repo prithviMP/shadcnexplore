@@ -43,11 +43,12 @@ export const companies = pgTable("companies", {
 export const formulas = pgTable("formulas", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   name: text("name").notNull().unique(),
-  description: text("description"),
-  expression: text("expression").notNull(),
-  level: integer("level").notNull().default(1),
-  dependencies: text("dependencies").array(),
-  createdBy: varchar("created_by").notNull().references(() => users.id),
+  scope: text("scope").notNull().default("global"),
+  scopeValue: text("scope_value"),
+  condition: text("condition").notNull(),
+  signal: text("signal").notNull(),
+  priority: integer("priority").notNull().default(999),
+  enabled: boolean("enabled").notNull().default(true),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });

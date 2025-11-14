@@ -177,43 +177,48 @@ async function seed() {
   const formulaData = [
     {
       name: "High ROE",
-      description: "Companies with Return on Equity > 20%",
-      expression: "ROE > 0.20",
-      level: 1,
-      dependencies: [],
-      createdBy: admin.id
+      scope: "global",
+      scopeValue: null,
+      condition: "roe > 0.20",
+      signal: "BUY",
+      priority: 1,
+      enabled: true
     },
     {
       name: "Low Debt",
-      description: "Companies with Debt to Equity < 0.5",
-      expression: "debtToEquity < 0.5",
-      level: 1,
-      dependencies: [],
-      createdBy: admin.id
+      scope: "global",
+      scopeValue: null,
+      condition: "debtToEquity < 0.5",
+      signal: "BUY",
+      priority: 2,
+      enabled: true
     },
     {
       name: "Value Stock",
-      description: "Low P/E ratio stocks (< 15)",
-      expression: "peRatio < 15",
-      level: 1,
-      dependencies: [],
-      createdBy: admin.id
+      scope: "global",
+      scopeValue: null,
+      condition: "peRatio < 15",
+      signal: "BUY",
+      priority: 3,
+      enabled: true
     },
     {
-      name: "Growth Stock",
-      description: "High growth potential (P/E > 25 and ROE > 20%)",
-      expression: "peRatio > 25 AND roe > 0.20",
-      level: 2,
-      dependencies: ["High ROE"],
-      createdBy: admin.id
+      name: "Overvalued Stock",
+      scope: "global",
+      scopeValue: null,
+      condition: "peRatio > 40",
+      signal: "SELL",
+      priority: 4,
+      enabled: true
     },
     {
-      name: "Strong Buy",
-      description: "High ROE with low debt",
-      expression: "roe > 0.20 AND debtToEquity < 0.5",
-      level: 2,
-      dependencies: ["High ROE", "Low Debt"],
-      createdBy: admin.id
+      name: "Tech Growth",
+      scope: "sector",
+      scopeValue: "Technology",
+      condition: "roe > 0.25 AND peRatio > 20",
+      signal: "BUY",
+      priority: 10,
+      enabled: true
     }
   ];
 

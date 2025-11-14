@@ -7,7 +7,8 @@ import {
   createUserSession, 
   deleteUserSession,
   generateOTPSecret,
-  verifyOTP 
+  verifyOTP,
+  generateOTPAuthURL
 } from "./auth";
 import { requireAuth, requireRole, type AuthRequest } from "./middleware";
 import { sanitizeUser } from "./utils";
@@ -43,7 +44,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
 
       const token = await createUserSession(user.id);
-      res.json({ user: sanitizeUser(user), token });
+      res.cookie("auth_token", token, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === "production",
+        sameSite: "lax",
+        maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
+      });
+      res.json({ user: sanitizeUser(user) });
     } catch (error: any) {
       res.status(400).json({ error: error.message });
     }
@@ -74,7 +81,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const token = await createUserSession(user.id);
-      res.json({ user: sanitizeUser(user), token });
+      res.cookie("auth_token", token, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === "production",
+        sameSite: "lax",
+        maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
+      });
+      res.json({ user: sanitizeUser(user) });
     } catch (error: any) {
       res.status(400).json({ error: error.message });
     }
@@ -82,10 +95,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post("/api/auth/logout", requireAuth, async (req: AuthRequest, res) => {
     try {
-      const token = req.headers.authorization?.replace("Bearer ", "");
+      const token = req.cookies?.auth_token || req.headers.authorization?.replace("Bearer ", "");
       if (token) {
         await deleteUserSession(token);
       }
+      res.clearCookie("auth_token");
       res.json({ success: true });
     } catch (error: any) {
       res.status(400).json({ error: error.message });
@@ -100,14 +114,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const secret = generateOTPSecret();
       await storage.updateUser(req.user!.id, { otpSecret: secret });
-      
-      const otpauth = authenticator.keyuri(
-        req.user!.email,
-        "FinAnalytics",
-        secret
-      );
-      
-      res.json({ otpauthUrl: otpauth });
+      const otpauthUrl = generateOTPAuthURL(req.user!.email, secret);
+      res.json({ otpauthUrl });
     } catch (error: any) {
       res.status(400).json({ error: error.message });
     }
