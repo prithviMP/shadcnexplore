@@ -331,6 +331,33 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  app.post("/api/companies/bulk", requireAuth, requireRole("admin", "analyst"), async (req, res) => {
+    try {
+      const schema = z.object({
+        companies: z.array(insertCompanySchema)
+      });
+      const { companies: companiesData } = schema.parse(req.body);
+
+      if (companiesData.length === 0) {
+        return res.status(400).json({ error: "No companies provided" });
+      }
+
+      if (companiesData.length > 1000) {
+        return res.status(400).json({ error: "Maximum 1000 companies allowed per bulk import" });
+      }
+
+      const results = await storage.bulkCreateCompanies(companiesData);
+
+      res.json({ 
+        success: true, 
+        count: results.length,
+        companies: results
+      });
+    } catch (error: any) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
   // Formula routes
   app.get("/api/formulas", requireAuth, async (req, res) => {
     try {

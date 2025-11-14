@@ -52,6 +52,7 @@ export interface IStorage {
   getAllCompanies(): Promise<Company[]>;
   getCompaniesBySector(sectorId: string): Promise<Company[]>;
   createCompany(company: InsertCompany): Promise<Company>;
+  bulkCreateCompanies(companies: InsertCompany[]): Promise<Company[]>;
   updateCompany(id: string, data: Partial<InsertCompany>): Promise<Company | undefined>;
   deleteCompany(id: string): Promise<void>;
 
@@ -179,6 +180,12 @@ export class DbStorage implements IStorage {
   async createCompany(company: InsertCompany): Promise<Company> {
     const result = await db.insert(companies).values(company).returning();
     return result[0];
+  }
+
+  async bulkCreateCompanies(companiesData: InsertCompany[]): Promise<Company[]> {
+    if (companiesData.length === 0) return [];
+    const result = await db.insert(companies).values(companiesData).returning();
+    return result;
   }
 
   async updateCompany(id: string, data: Partial<InsertCompany>): Promise<Company | undefined> {
