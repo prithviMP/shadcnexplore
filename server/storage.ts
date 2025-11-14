@@ -58,7 +58,7 @@ export interface IStorage {
   // Formula operations
   getFormula(id: string): Promise<Formula | undefined>;
   getAllFormulas(): Promise<Formula[]>;
-  getFormulasByLevel(level: number): Promise<Formula[]>;
+  getFormulasByScope(scope: string): Promise<Formula[]>;
   createFormula(formula: InsertFormula): Promise<Formula>;
   updateFormula(id: string, data: Partial<InsertFormula>): Promise<Formula | undefined>;
   deleteFormula(id: string): Promise<void>;
@@ -197,11 +197,11 @@ export class DbStorage implements IStorage {
   }
 
   async getAllFormulas(): Promise<Formula[]> {
-    return await db.select().from(formulas).orderBy(formulas.level, formulas.name);
+    return await db.select().from(formulas).orderBy(formulas.priority, formulas.name);
   }
 
-  async getFormulasByLevel(level: number): Promise<Formula[]> {
-    return await db.select().from(formulas).where(eq(formulas.level, level));
+  async getFormulasByScope(scope: string): Promise<Formula[]> {
+    return await db.select().from(formulas).where(eq(formulas.scope, scope)).orderBy(formulas.priority, formulas.name);
   }
 
   async createFormula(formula: InsertFormula): Promise<Formula> {
