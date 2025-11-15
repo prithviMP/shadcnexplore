@@ -13,7 +13,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
-import { Plus, Pencil, Trash2, TestTube, Loader2 } from "lucide-react";
+import { Plus, Pencil, Trash2, TestTube, Loader2, Play } from "lucide-react";
 import SignalBadge from "@/components/SignalBadge";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { insertFormulaSchema, type Formula } from "@shared/schema";
@@ -99,6 +99,27 @@ export default function FormulaManager() {
     },
   });
 
+  const calculateSignals = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/signals/calculate", {});
+      return res.json();
+    },
+    onSuccess: (data: { signalsGenerated: number }) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/signals"] });
+      toast({ 
+        title: "Signals calculated successfully",
+        description: `Generated ${data.signalsGenerated} signal${data.signalsGenerated !== 1 ? 's' : ''}`
+      });
+    },
+    onError: (error: any) => {
+      toast({ 
+        title: "Failed to calculate signals", 
+        description: error.message,
+        variant: "destructive" 
+      });
+    },
+  });
+
   const handleToggle = (formula: Formula) => {
     updateFormula.mutate({ 
       id: formula.id, 
@@ -151,13 +172,28 @@ export default function FormulaManager() {
           </h1>
           <p className="text-muted-foreground mt-1">Define and manage signal generation formulas</p>
         </div>
-        <Dialog open={dialogOpen} onOpenChange={handleOpenChange}>
-          <DialogTrigger asChild>
-            <Button onClick={() => { setEditingFormula(null); form.reset(); }} className="bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 shadow-lg" data-testid="button-add-formula">
-              <Plus className="h-4 w-4 mr-2" />
-              Add Formula
-            </Button>
-          </DialogTrigger>
+        <div className="flex gap-2">
+          <Button 
+            onClick={() => calculateSignals.mutate()} 
+            disabled={calculateSignals.isPending}
+            variant="outline"
+            className="border-emerald-600 text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/30"
+            data-testid="button-calculate-signals"
+          >
+            {calculateSignals.isPending ? (
+              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+            ) : (
+              <Play className="h-4 w-4 mr-2" />
+            )}
+            Calculate Signals
+          </Button>
+          <Dialog open={dialogOpen} onOpenChange={handleOpenChange}>
+            <DialogTrigger asChild>
+              <Button onClick={() => { setEditingFormula(null); form.reset(); }} className="bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 shadow-lg" data-testid="button-add-formula">
+                <Plus className="h-4 w-4 mr-2" />
+                Add Formula
+              </Button>
+            </DialogTrigger>
           <DialogContent className="max-w-2xl bg-white/95 dark:bg-slate-900/95 backdrop-blur-sm border-slate-200 dark:border-slate-800">
             <DialogHeader>
               <DialogTitle className="text-xl">{editingFormula ? "Edit Formula" : "Create New Formula"}</DialogTitle>
@@ -291,6 +327,7 @@ export default function FormulaManager() {
             </Form>
           </DialogContent>
         </Dialog>
+        </div>
       </div>
 
       <Card className="bg-gradient-to-br from-white to-slate-50/50 dark:from-slate-900 dark:to-slate-900/50 border-slate-200 dark:border-slate-800 shadow-lg">
