@@ -1,7 +1,7 @@
 import type { Company, Formula, Signal } from "@shared/schema";
 import { db } from "./db";
 import { signals } from "@shared/schema";
-import { eq, inArray } from "drizzle-orm";
+import { eq, inArray, and } from "drizzle-orm";
 
 type ComparisonOperator = ">" | "<" | ">=" | "<=" | "=" | "!=";
 
@@ -132,8 +132,9 @@ export class FormulaEvaluator {
       .filter(f => f.enabled)
       .filter(f => {
         if (f.scope === "global") return true;
-        if (f.scope === "sector") return f.scopeValue === company.sectorId;
-        if (f.scope === "company") return f.scopeValue === company.id;
+        // For sector/company scopes, scopeValue must be populated
+        if (f.scope === "sector" && f.scopeValue) return f.scopeValue === company.sectorId;
+        if (f.scope === "company" && f.scopeValue) return f.scopeValue === company.id;
         return false;
       })
       .sort((a, b) => a.priority - b.priority);
@@ -166,6 +167,13 @@ export class FormulaEvaluator {
         .select()
         .from(companies)
         .where(inArray(companies.id, companyIds));
+      
+      // Validate all company IDs exist
+      if (companiesToProcess.length !== companyIds.length) {
+        const foundIds = companiesToProcess.map(c => c.id);
+        const missingIds = companyIds.filter(id => !foundIds.includes(id));
+        throw new Error(`Companies not found: ${missingIds.join(', ')}`);
+      }
     } else {
       companiesToProcess = await db.select().from(companies);
     }
@@ -175,16 +183,23 @@ export class FormulaEvaluator {
     for (const company of companiesToProcess) {
       const result = await this.generateSignalForCompany(company, allFormulas);
       
-      if (result) {
-        await db.insert(signals).values({
-          companyId: company.id,
-          formulaId: result.formulaId,
-          signal: result.signal,
-          value: null,
-          metadata: { condition: result.value }
-        });
-        signalsGenerated++;
-      }
+      // Always reconcile signals in a transaction for data integrity
+      await db.transaction(async (tx) => {
+        // Always delete existing signals to clear stale data
+        await tx.delete(signals).where(eq(signals.companyId, company.id));
+        
+        // Insert new signal only if a formula matched
+        if (result) {
+          await tx.insert(signals).values({
+            companyId: company.id,
+            formulaId: result.formulaId,
+            signal: result.signal,
+            value: null,
+            metadata: { condition: result.value, formulaName: result.formulaId }
+          });
+          signalsGenerated++;
+        }
+      });
     }
 
     return signalsGenerated;

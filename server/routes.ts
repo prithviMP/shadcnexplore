@@ -573,8 +573,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post("/api/signals/calculate/:companyId", requireAuth, requireRole("admin", "analyst"), async (req, res) => {
     try {
+      const company = await storage.getCompany(req.params.companyId);
+      if (!company) {
+        return res.status(404).json({ error: "Company not found" });
+      }
+      
       const count = await FormulaEvaluator.calculateAndStoreSignals([req.params.companyId]);
-      res.json({ success: true, signalsGenerated: count });
+      res.json({ success: true, signalsGenerated: count, companyId: req.params.companyId });
     } catch (error: any) {
       res.status(400).json({ error: error.message });
     }
