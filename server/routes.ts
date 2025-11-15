@@ -25,6 +25,7 @@ import { db } from "./db";
 import { eq } from "drizzle-orm";
 import { z } from "zod";
 import { queryExecutor, type QueryCondition } from "./queryExecutor";
+import { FormulaEvaluator } from "./formulaEvaluator";
 
 export async function registerRoutes(app: Express): Promise<Server> {
   // Authentication routes
@@ -549,6 +550,31 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       await storage.deleteSignal(req.params.id);
       res.json({ success: true });
+    } catch (error: any) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
+  // Signal calculation routes
+  app.post("/api/signals/calculate", requireAuth, requireRole("admin", "analyst"), async (req, res) => {
+    try {
+      const { companyIds } = req.body;
+      
+      if (companyIds && !Array.isArray(companyIds)) {
+        return res.status(400).json({ error: "companyIds must be an array" });
+      }
+      
+      const count = await FormulaEvaluator.calculateAndStoreSignals(companyIds);
+      res.json({ success: true, signalsGenerated: count });
+    } catch (error: any) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/signals/calculate/:companyId", requireAuth, requireRole("admin", "analyst"), async (req, res) => {
+    try {
+      const count = await FormulaEvaluator.calculateAndStoreSignals([req.params.companyId]);
+      res.json({ success: true, signalsGenerated: count });
     } catch (error: any) {
       res.status(400).json({ error: error.message });
     }
