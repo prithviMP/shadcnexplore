@@ -29,6 +29,7 @@ export default function AppSidebar({ userRole = "admin", userName = "Admin User"
     { title: "Sectors", url: "/sectors", icon: Building2, roles: ["admin", "analyst", "viewer"] },
     { title: "Sector Manager", url: "/sector-manager", icon: Building, roles: ["admin", "analyst"] },
     { title: "Company Manager", url: "/company-manager", icon: Briefcase, roles: ["admin", "analyst"] },
+    { title: "Data Spreadsheet", url: "/data-spreadsheet", icon: Table, roles: ["admin", "analyst"] },
     { title: "Query Builder", url: "/query-builder", icon: Search, roles: ["admin", "analyst"] },
     { title: "Formulas", url: "/formulas", icon: Settings, roles: ["admin"] },
     { title: "Users", url: "/users", icon: Users, roles: ["admin"] },

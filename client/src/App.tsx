@@ -17,6 +17,7 @@ import CompanyDetail from "@/pages/CompanyDetail";
 import FormulaManager from "@/pages/FormulaManager";
 import QueryBuilder from "@/pages/QueryBuilder";
 import UserManagement from "@/pages/UserManagement";
+import FinancialDataSpreadsheet from "@/pages/FinancialDataSpreadsheet";
 import { useState } from "react";
 
 function AuthenticatedLayout() {
@@ -49,6 +50,7 @@ function AuthenticatedLayout() {
                 <Route path="/query-builder" component={QueryBuilder} />
                 <Route path="/formulas" component={FormulaManager} />
                 <Route path="/users" component={UserManagement} />
+                <Route path="/data-spreadsheet" component={FinancialDataSpreadsheet} />
                 <Route component={NotFound} />
               </Switch>
             </div>

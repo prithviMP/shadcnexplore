@@ -168,13 +168,13 @@ export default function CompanyDetail() {
                     <p className="text-sm font-medium">Value: {String(latestSignal.value)}</p>
                   </div>
                 )}
-                {latestSignal.metadata && typeof latestSignal.metadata === 'object' && (
+                {latestSignal.metadata && typeof latestSignal.metadata === 'object' ? (
                   <div className="p-3 bg-muted rounded-md">
                     <pre className="text-xs overflow-auto">
                       {JSON.stringify(latestSignal.metadata, null, 2)}
                     </pre>
                   </div>
-                )}
+                ) : null}
               </div>
             )}
           </CardContent>
