@@ -182,6 +182,36 @@ Preferred communication style: Simple, everyday language.
 - `server/routes.ts` - API endpoints for signal calculation
 - `client/src/pages/FormulaManager.tsx` - UI for triggering calculations
 
+### Excel-like Spreadsheet Interface (Task 7) - November 17, 2025
+
+**Implemented:**
+- FinancialDataSpreadsheet page using ReactGrid library
+- Excel-like grid interface for viewing/editing company financial data
+- Route: `/data-spreadsheet` (accessible to Admin & Analyst roles)
+- Editable columns: Revenue, Net Income, ROE, P/E Ratio, Debt Ratio
+- Read-only columns: Ticker, Company Name
+
+**Key Features:**
+- Real-time change tracking with visual highlighting (blue tint + border)
+- Save/Discard buttons appear when changes exist
+- Batch updates - saves all changed companies at once
+- Input normalization: empty cells → null, invalid values → null
+- Null-safe: handles companies with no financial data
+- Sticky header row for better UX when scrolling
+- Loading states and error handling with toast notifications
+
+**Technical Implementation:**
+- Library: @silevis/reactgrid (open-source, Excel-like React component)
+- State management: Local Map<companyId, financialData> for tracking edits
+- API integration: PATCH /api/companies/:id for updates
+- React Query cache invalidation on successful save
+- Number input normalization prevents string/NaN corruption
+
+**Files Modified:**
+- `client/src/pages/FinancialDataSpreadsheet.tsx` - Main spreadsheet component
+- `client/src/App.tsx` - Added route
+- `client/src/components/AppSidebar.tsx` - Added navigation link
+
 ## External Dependencies
 
 ### Third-Party UI Libraries

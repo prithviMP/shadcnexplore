@@ -200,6 +200,29 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  app.post("/api/users", requireAuth, requireRole("admin"), async (req, res) => {
+    try {
+      const data = insertUserSchema.parse(req.body);
+      
+      // Check if email already exists
+      const existing = await storage.getUserByEmail(data.email);
+      if (existing) {
+        return res.status(409).json({ error: "Email already exists" });
+      }
+
+      const hashedPassword = await hashPassword(data.password);
+      const user = await storage.createUser({
+        ...data,
+        password: hashedPassword,
+        role: data.role || "viewer"
+      });
+
+      res.status(201).json(sanitizeUser(user));
+    } catch (error: any) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
   app.delete("/api/users/:id", requireAuth, requireRole("admin"), async (req, res) => {
     try {
       await storage.deleteUser(req.params.id);
