@@ -1,4 +1,4 @@
-import { Switch, Route, Redirect } from "wouter";
+import { Switch, Route } from "wouter";
 import { queryClient } from "@/lib/queryClient";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
@@ -64,39 +64,24 @@ function AuthenticatedLayout() {
 function Router() {
   const [isAuthenticated] = useState(true);
 
-  return (
-    <Switch>
-      <Route path="/login">
-        {isAuthenticated ? <Redirect to="/" /> : <LoginPage />}
-      </Route>
-      <Route path="/:rest*">
-        {isAuthenticated ? <AuthenticatedLayout /> : <Redirect to="/login" />}
-      </Route>
-    </Switch>
-  );
+  if (!isAuthenticated) {
+    return <LoginPage />;
+  }
+
+  return <AuthenticatedLayout />;
 }
 
 function App() {
-  console.log('App component rendering...');
-  
   return (
-    <div style={{ padding: '20px', fontSize: '24px' }}>
-      <h1>TEST: Financial Data Analysis Platform</h1>
-      <p>If you see this, React is working!</p>
-    </div>
+    <QueryClientProvider client={queryClient}>
+      <ThemeProvider defaultTheme="light">
+        <TooltipProvider>
+          <Router />
+          <Toaster />
+        </TooltipProvider>
+      </ThemeProvider>
+    </QueryClientProvider>
   );
-  
-  // Original code commented for testing
-  // return (
-  //   <QueryClientProvider client={queryClient}>
-  //     <ThemeProvider defaultTheme="light">
-  //       <TooltipProvider>
-  //         <Router />
-  //         <Toaster />
-  //       </TooltipProvider>
-  //     </ThemeProvider>
-  //   </QueryClientProvider>
-  // );
 }
 
 export default App;
