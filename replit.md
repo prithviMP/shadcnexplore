@@ -139,6 +139,49 @@ Preferred communication style: Simple, everyday language.
 - User-created tables for custom analysis
 - Planned Excel-like spreadsheet functionality (mentioned Luckysheet in requirements)
 
+## Recent Changes
+
+### Signal Calculation Engine (Task 6) - November 17, 2025
+
+**Implemented:**
+- FormulaEvaluator service with condition parsing and evaluation logic
+- Bulk and single-company signal calculation endpoints: 
+  - POST `/api/signals/calculate` (bulk - all companies or selected subset)
+  - POST `/api/signals/calculate/:companyId` (single company)
+- Transaction-based signal reconciliation for data integrity
+- Scope filtering: Global, Sector-specific, Company-specific formulas
+- Priority-based evaluation (lowest number = highest priority)
+- Error handling: Preserves existing signals when evaluation fails
+- Frontend "Calculate Signals" button in FormulaManager with loading states
+
+**Key Features:**
+- Atomic signal updates using database transactions
+- Always clears stale signals when evaluation succeeds
+- Preserves valid signals when evaluation errors occur
+- Validates company IDs before processing
+- Requires scopeValue for sector/company scoped formulas
+
+**Known Limitations (Future Enhancement Opportunities):**
+1. **scopeValue Validation**: Not enforced at schema/API level during formula creation
+   - Manual ID entry required for sector/company scopes
+   - Future: Add dropdown selectors populated from `/api/sectors` and `/api/companies`
+   - Future: Add schema-level validation (scope≠global ⇒ scopeValue required)
+
+2. **Diagnostics & Observability**: Limited feedback on evaluation results
+   - Current: Returns only `signalsGenerated` count
+   - Future: Return detailed diagnostics per company (which formula matched, which were skipped, evaluation errors)
+   - Future: Add logging for misconfigured formulas (blank scopeValue for sector/company scopes)
+
+3. **Evaluation Robustness**: Basic error handling
+   - Current: Catches errors and preserves signals, logs to console
+   - Future: Two-phase evaluation (compute all results first, then reconcile)
+   - Future: Structured error reporting in API responses
+
+**Files Modified:**
+- `server/formulaEvaluator.ts` - Core evaluation logic
+- `server/routes.ts` - API endpoints for signal calculation
+- `client/src/pages/FormulaManager.tsx` - UI for triggering calculations
+
 ## External Dependencies
 
 ### Third-Party UI Libraries

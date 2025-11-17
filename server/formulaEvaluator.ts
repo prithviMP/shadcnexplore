@@ -181,25 +181,32 @@ export class FormulaEvaluator {
     let signalsGenerated = 0;
 
     for (const company of companiesToProcess) {
-      const result = await this.generateSignalForCompany(company, allFormulas);
-      
-      // Always reconcile signals in a transaction for data integrity
-      await db.transaction(async (tx) => {
-        // Always delete existing signals to clear stale data
-        await tx.delete(signals).where(eq(signals.companyId, company.id));
+      try {
+        // Evaluate formula first (outside transaction to preserve signals on error)
+        const result = await this.generateSignalForCompany(company, allFormulas);
         
-        // Insert new signal only if a formula matched
-        if (result) {
-          await tx.insert(signals).values({
-            companyId: company.id,
-            formulaId: result.formulaId,
-            signal: result.signal,
-            value: null,
-            metadata: { condition: result.value, formulaName: result.formulaId }
-          });
-          signalsGenerated++;
-        }
-      });
+        // Only reconcile if evaluation succeeded
+        await db.transaction(async (tx) => {
+          // Always delete existing signals to clear stale data
+          await tx.delete(signals).where(eq(signals.companyId, company.id));
+          
+          // Insert new signal only if a formula matched
+          if (result) {
+            await tx.insert(signals).values({
+              companyId: company.id,
+              formulaId: result.formulaId,
+              signal: result.signal,
+              value: null,
+              metadata: { condition: result.value, formulaName: result.formulaId }
+            });
+            signalsGenerated++;
+          }
+        });
+      } catch (error) {
+        // Preserve existing signals on evaluation error
+        console.error(`Failed to evaluate signals for company ${company.id}:`, error);
+        // Continue processing other companies
+      }
     }
 
     return signalsGenerated;
