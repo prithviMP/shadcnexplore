@@ -212,6 +212,47 @@ Preferred communication style: Simple, everyday language.
 - `client/src/App.tsx` - Added route
 - `client/src/components/AppSidebar.tsx` - Added navigation link
 
+### Backend API Integration (Task 8) - November 17, 2025
+
+**Implemented:**
+- Removed all mock data from frontend pages
+- Connected Dashboard to real backend APIs (companies, sectors, signals)
+- Added POST /api/users endpoint for user creation
+- Implemented data guards for navigation (prevents 404s)
+- Fixed routing bugs (sector links use IDs, company links use tickers)
+- Full end-to-end integration testing completed
+
+**Pages Connected to Real APIs:**
+- **Dashboard**: Real-time stats, sector overview, recent signals
+- **UserManagement**: Full CRUD operations (create, read, update, delete users)
+- **FinancialDataSpreadsheet**: Batch editing with backend persistence
+- **FormulaManager**: Formula CRUD and signal calculation
+- **CompanyManager/CompanyDetail**: Company data management
+- **SectorManager/SectorsList**: Sector management
+- **QueryBuilder**: Query creation and execution
+
+**Backend Endpoints Added:**
+- POST /api/users - Create new user with password hashing and duplicate email validation
+- All pages now use React Query for data fetching with proper cache invalidation
+
+**Navigation & Data Guards:**
+- Dashboard sector cards link to `/sectors/${sectorId}` (UUID-based)
+- Dashboard recent signals link to `/company/${ticker}` (ticker-based)
+- Recent signals filter out entries with missing companies (prevents broken links)
+- Proper loading states and error handling throughout
+
+**Key Features:**
+- Zero mock data in production code paths
+- Consistent use of React Query across all pages
+- Toast notifications for all mutations
+- Cache invalidation after create/update/delete operations
+- Null-safe rendering with proper fallbacks
+
+**Files Modified:**
+- `client/src/pages/Dashboard.tsx` - Connected to real APIs with data guards
+- `client/src/pages/UserManagement.tsx` - Full CRUD with backend integration
+- `server/routes.ts` - Added POST /api/users endpoint
+
 ## External Dependencies
 
 ### Third-Party UI Libraries
