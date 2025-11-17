@@ -77,16 +77,26 @@ function Router() {
 }
 
 function App() {
+  console.log('App component rendering...');
+  
   return (
-    <QueryClientProvider client={queryClient}>
-      <ThemeProvider defaultTheme="light">
-        <TooltipProvider>
-          <Router />
-          <Toaster />
-        </TooltipProvider>
-      </ThemeProvider>
-    </QueryClientProvider>
+    <div style={{ padding: '20px', fontSize: '24px' }}>
+      <h1>TEST: Financial Data Analysis Platform</h1>
+      <p>If you see this, React is working!</p>
+    </div>
   );
+  
+  // Original code commented for testing
+  // return (
+  //   <QueryClientProvider client={queryClient}>
+  //     <ThemeProvider defaultTheme="light">
+  //       <TooltipProvider>
+  //         <Router />
+  //         <Toaster />
+  //       </TooltipProvider>
+  //     </ThemeProvider>
+  //   </QueryClientProvider>
+  // );
 }
 
 export default App;
