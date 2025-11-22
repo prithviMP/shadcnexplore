@@ -20,8 +20,8 @@ import CompanyDetail from "@/pages/CompanyDetail";
 import FormulaManager from "@/pages/FormulaManager";
 import QueryBuilder from "@/pages/QueryBuilder";
 import UserManagement from "@/pages/UserManagement";
-import FinancialDataSpreadsheet from "@/pages/FinancialDataSpreadsheet";
-import CustomTables from "@/pages/CustomTables";
+// import FinancialDataSpreadsheet from "@/pages/FinancialDataSpreadsheet";
+// import CustomTables from "@/pages/CustomTables";
 
 function AuthenticatedLayout() {
   const { user } = useAuth();
@@ -95,7 +95,7 @@ function AuthenticatedLayout() {
                     <UserManagement />
                   </ProtectedRoute>
                 </Route>
-                <Route path="/data-spreadsheet">
+                {/* <Route path="/data-spreadsheet">
                   <ProtectedRoute requiredRole="analyst">
                     <FinancialDataSpreadsheet />
                   </ProtectedRoute>
@@ -104,7 +104,7 @@ function AuthenticatedLayout() {
               <ProtectedRoute requiredRole="analyst">
                 <CustomTables />
               </ProtectedRoute>
-            </Route>
+            </Route> */}
             <Route path="/scheduler">
               <ProtectedRoute requiredRole="admin">
                 <SchedulerSettings />
