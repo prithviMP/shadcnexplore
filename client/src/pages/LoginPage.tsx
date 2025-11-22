@@ -4,7 +4,10 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
-import { TrendingUp } from "lucide-react";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { useToast } from "@/hooks/use-toast";
+import { useAuth } from "@/contexts/AuthContext";
+import { TrendingUp, AlertCircle, Loader2 } from "lucide-react";
 
 export default function LoginPage() {
   const [email, setEmail] = useState("");
@@ -12,21 +15,81 @@ export default function LoginPage() {
   const [mobile, setMobile] = useState("");
   const [otp, setOtp] = useState("");
   const [otpSent, setOtpSent] = useState(false);
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [isSignup, setIsSignup] = useState(false);
+  const [name, setName] = useState("");
+  const { login, register, loginWithOTP, requestOTP } = useAuth();
+  const { toast } = useToast();
 
-  const handleEmailLogin = (e: React.FormEvent) => {
+  const handleEmailLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    console.log("Email login:", { email, password });
+    setError("");
+    setLoading(true);
+
+    try {
+      await login(email, password);
+      toast({
+        title: "Welcome back!",
+        description: "You have been successfully logged in.",
+      });
+    } catch (err: any) {
+      setError(err.message || "Login failed. Please check your credentials.");
+      toast({
+        title: "Login failed",
+        description: err.message || "Please check your credentials.",
+        variant: "destructive",
+      });
+    } finally {
+      setLoading(false);
+    }
   };
 
-  const handleRequestOtp = (e: React.FormEvent) => {
+  const handleRequestOtp = async (e: React.FormEvent) => {
     e.preventDefault();
-    console.log("Requesting OTP for:", mobile);
+    setError("");
+    setLoading(true);
+
+    try {
+      await requestOTP(mobile);
     setOtpSent(true);
+      toast({
+        title: "OTP sent",
+        description: "Please check your phone for the verification code.",
+      });
+    } catch (err: any) {
+      setError(err.message || "Failed to send OTP. Please try again.");
+      toast({
+        title: "Failed to send OTP",
+        description: err.message || "Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setLoading(false);
+    }
   };
 
-  const handleVerifyOtp = (e: React.FormEvent) => {
+  const handleVerifyOtp = async (e: React.FormEvent) => {
     e.preventDefault();
-    console.log("Verifying OTP:", { mobile, otp });
+    setError("");
+    setLoading(true);
+
+    try {
+      await loginWithOTP(mobile, otp);
+      toast({
+        title: "Welcome!",
+        description: "You have been successfully logged in.",
+      });
+    } catch (err: any) {
+      setError(err.message || "Invalid OTP. Please try again.");
+      toast({
+        title: "OTP verification failed",
+        description: err.message || "Invalid OTP. Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -51,12 +114,19 @@ export default function LoginPage() {
             </div>
           </CardHeader>
           <CardContent>
+            {error && (
+              <Alert variant="destructive" className="mb-4">
+                <AlertCircle className="h-4 w-4" />
+                <AlertDescription>{error}</AlertDescription>
+              </Alert>
+            )}
             <Tabs defaultValue="email" className="w-full">
               <TabsList className="grid w-full grid-cols-2 mb-6">
                 <TabsTrigger value="email" data-testid="tab-email-login">Email</TabsTrigger>
                 <TabsTrigger value="otp" data-testid="tab-otp-login">Mobile OTP</TabsTrigger>
               </TabsList>
               <TabsContent value="email" className="space-y-4">
+                {!isSignup ? (
                 <form onSubmit={handleEmailLogin} className="space-y-4">
                   <div className="space-y-2">
                     <Label htmlFor="email" className="text-sm font-medium">Email Address</Label>
@@ -86,14 +156,122 @@ export default function LoginPage() {
                     type="submit" 
                     className="w-full h-11 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white font-medium shadow-lg" 
                     data-testid="button-email-login"
-                  >
-                    Sign In
+                      disabled={loading}
+                    >
+                      {loading ? (
+                        <>
+                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                          Signing in...
+                        </>
+                      ) : (
+                        "Sign In"
+                      )}
+                    </Button>
+                  </form>
+                ) : (
+                  <form onSubmit={async (e) => {
+                    e.preventDefault();
+                    setError("");
+                    setLoading(true);
+                    try {
+                      await register(email, password, name, "viewer");
+                      toast({
+                        title: "Account created!",
+                        description: "You have been successfully registered.",
+                      });
+                    } catch (err: any) {
+                      setError(err.message || "Registration failed. Please try again.");
+                      toast({
+                        title: "Registration failed",
+                        description: err.message || "Please try again.",
+                        variant: "destructive",
+                      });
+                    } finally {
+                      setLoading(false);
+                    }
+                  }} className="space-y-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="signup-name" className="text-sm font-medium">Full Name</Label>
+                      <Input
+                        id="signup-name"
+                        type="text"
+                        placeholder="John Doe"
+                        value={name}
+                        onChange={(e) => setName(e.target.value)}
+                        className="h-11"
+                        required
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="signup-email" className="text-sm font-medium">Email Address</Label>
+                      <Input
+                        id="signup-email"
+                        type="email"
+                        placeholder="you@company.com"
+                        value={email}
+                        onChange={(e) => setEmail(e.target.value)}
+                        className="h-11"
+                        required
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="signup-password" className="text-sm font-medium">Password</Label>
+                      <Input
+                        id="signup-password"
+                        type="password"
+                        placeholder="••••••••"
+                        value={password}
+                        onChange={(e) => setPassword(e.target.value)}
+                        className="h-11"
+                        required
+                        minLength={6}
+                      />
+                    </div>
+                    <Button 
+                      type="submit" 
+                      className="w-full h-11 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white font-medium shadow-lg" 
+                      disabled={loading}
+                    >
+                      {loading ? (
+                        <>
+                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                          Creating account...
+                        </>
+                      ) : (
+                        "Create Account"
+                      )}
                   </Button>
                 </form>
-                <div className="text-center">
+                )}
+                <div className="text-center space-y-2">
+                  {!isSignup ? (
+                    <>
                   <a href="#" className="text-sm text-muted-foreground hover:text-foreground transition-colors">
                     Forgot password?
                   </a>
+                      <div className="text-sm text-muted-foreground">
+                        Don't have an account?{" "}
+                        <button
+                          type="button"
+                          onClick={() => setIsSignup(true)}
+                          className="text-blue-600 dark:text-blue-400 hover:underline font-medium"
+                        >
+                          Sign up
+                        </button>
+                      </div>
+                    </>
+                  ) : (
+                    <div className="text-sm text-muted-foreground">
+                      Already have an account?{" "}
+                      <button
+                        type="button"
+                        onClick={() => setIsSignup(false)}
+                        className="text-blue-600 dark:text-blue-400 hover:underline font-medium"
+                      >
+                        Sign in
+                      </button>
+                    </div>
+                  )}
                 </div>
               </TabsContent>
               <TabsContent value="otp" className="space-y-4">
@@ -118,8 +296,16 @@ export default function LoginPage() {
                       type="submit" 
                       className="w-full h-11 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white font-medium shadow-lg" 
                       data-testid="button-request-otp"
+                      disabled={loading}
                     >
-                      Send Verification Code
+                      {loading ? (
+                        <>
+                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                          Sending...
+                        </>
+                      ) : (
+                        "Send Verification Code"
+                      )}
                     </Button>
                   </form>
                 ) : (
@@ -144,8 +330,16 @@ export default function LoginPage() {
                       type="submit" 
                       className="w-full h-11 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white font-medium shadow-lg" 
                       data-testid="button-verify-otp"
+                      disabled={loading}
                     >
-                      Verify & Continue
+                      {loading ? (
+                        <>
+                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                          Verifying...
+                        </>
+                      ) : (
+                        "Verify & Continue"
+                      )}
                     </Button>
                     <Button
                       type="button"
@@ -160,12 +354,6 @@ export default function LoginPage() {
                 )}
               </TabsContent>
             </Tabs>
-            <div className="mt-6 text-center text-sm text-muted-foreground">
-              Don't have an account?{" "}
-              <a href="#" className="text-blue-600 dark:text-blue-400 hover:underline font-medium">
-                Request Access
-              </a>
-            </div>
           </CardContent>
         </div>
       </div>

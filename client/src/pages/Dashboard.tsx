@@ -6,6 +6,9 @@ import SignalBadge from "@/components/SignalBadge";
 import { Link } from "wouter";
 import type { Company, Sector, Signal } from "@shared/schema";
 import { formatDistanceToNow } from "date-fns";
+import { ChartContainer, ChartTooltip, ChartTooltipContent } from "@/components/ui/chart";
+import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, CartesianGrid, Legend } from "recharts";
+import { useMemo } from "react";
 
 export default function Dashboard() {
   const { data: companies, isLoading: companiesLoading } = useQuery<Company[]>({
@@ -68,6 +71,59 @@ export default function Dashboard() {
     .filter((item): item is NonNullable<typeof item> => item !== null) // Remove null entries
     .slice(0, 5) || [];
 
+  // Calculate signal distribution for charts
+  const signalDistribution = useMemo(() => {
+    if (!allSignals) return { buy: 0, sell: 0, hold: 0 };
+    
+    return {
+      buy: allSignals.filter(s => s.signal === "BUY").length,
+      sell: allSignals.filter(s => s.signal === "SELL").length,
+      hold: allSignals.filter(s => s.signal === "HOLD").length,
+    };
+  }, [allSignals]);
+
+  // Chart data for signal distribution
+  const signalPieData = [
+    { name: "BUY", value: signalDistribution.buy, color: "hsl(142, 76%, 36%)" },
+    { name: "SELL", value: signalDistribution.sell, color: "hsl(0, 84%, 60%)" },
+    { name: "HOLD", value: signalDistribution.hold, color: "hsl(38, 92%, 50%)" },
+  ].filter(item => item.value > 0);
+
+  const signalBarData = [
+    { signal: "BUY", count: signalDistribution.buy },
+    { signal: "SELL", count: signalDistribution.sell },
+    { signal: "HOLD", count: signalDistribution.hold },
+  ];
+
+  // Top sectors by company count
+  const topSectorsData = useMemo(() => {
+    return sectorOverview
+      .sort((a, b) => b.companies - a.companies)
+      .slice(0, 10)
+      .map(sector => ({
+        name: sector.name.length > 15 ? sector.name.substring(0, 15) + "..." : sector.name,
+        fullName: sector.name,
+        companies: sector.companies,
+        buy: sector.buySignals,
+        sell: sector.sellSignals,
+        hold: sector.holdSignals,
+      }));
+  }, [sectorOverview]);
+
+  // Sector signal distribution (stacked bar)
+  const sectorSignalData = useMemo(() => {
+    return sectorOverview
+      .sort((a, b) => (b.buySignals + b.sellSignals + b.holdSignals) - (a.buySignals + a.sellSignals + a.holdSignals))
+      .slice(0, 8)
+      .map(sector => ({
+        name: sector.name.length > 12 ? sector.name.substring(0, 12) + "..." : sector.name,
+        fullName: sector.name,
+        BUY: sector.buySignals,
+        SELL: sector.sellSignals,
+        HOLD: sector.holdSignals,
+      }));
+  }, [sectorOverview]);
+
   if (isLoading) {
     return (
       <div className="space-y-6">
@@ -87,7 +143,7 @@ export default function Dashboard() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 w-full min-w-0">
       <div>
         <h1 className="text-3xl font-bold">
           Dashboard
@@ -140,6 +196,145 @@ export default function Dashboard() {
           </CardContent>
         </Card>
       </div>
+
+      {/* Charts Section */}
+      <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3 w-full min-w-0">
+        {/* Signal Distribution Pie Chart */}
+        <Card className="w-full min-w-0 overflow-hidden">
+          <CardHeader>
+            <CardTitle>Signal Distribution</CardTitle>
+            <CardDescription>Overall signal breakdown</CardDescription>
+          </CardHeader>
+          <CardContent className="w-full min-w-0">
+            {signalPieData.length > 0 ? (
+              <ChartContainer
+                config={{
+                  BUY: { label: "BUY", color: "hsl(142, 76%, 36%)" },
+                  SELL: { label: "SELL", color: "hsl(0, 84%, 60%)" },
+                  HOLD: { label: "HOLD", color: "hsl(38, 92%, 50%)" },
+                }}
+                className="h-[300px] w-full min-w-0"
+              >
+                <PieChart>
+                  <Pie
+                    data={signalPieData}
+                    cx="50%"
+                    cy="50%"
+                    labelLine={false}
+                    label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
+                    outerRadius={100}
+                    fill="#8884d8"
+                    dataKey="value"
+                  >
+                    {signalPieData.map((entry, index) => (
+                      <Cell key={`cell-${index}`} fill={entry.color} />
+                    ))}
+                  </Pie>
+                  <ChartTooltip content={<ChartTooltipContent />} />
+                </PieChart>
+              </ChartContainer>
+            ) : (
+              <div className="h-[300px] flex items-center justify-center text-muted-foreground">
+                No signal data available
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Signal Count Bar Chart */}
+        <Card className="w-full min-w-0 overflow-hidden">
+          <CardHeader>
+            <CardTitle>Signal Count</CardTitle>
+            <CardDescription>Number of companies by signal type</CardDescription>
+          </CardHeader>
+          <CardContent className="w-full min-w-0">
+            <ChartContainer
+              config={{
+                count: { label: "Companies", color: "hsl(var(--primary))" },
+              }}
+              className="h-[300px] w-full min-w-0"
+            >
+              <BarChart data={signalBarData}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="signal" />
+                <YAxis />
+                <ChartTooltip content={<ChartTooltipContent />} />
+                <Bar dataKey="count" fill="hsl(var(--primary))" radius={[8, 8, 0, 0]} />
+              </BarChart>
+            </ChartContainer>
+          </CardContent>
+        </Card>
+
+        {/* Top Sectors by Companies */}
+        <Card className="w-full min-w-0 overflow-hidden">
+          <CardHeader>
+            <CardTitle>Top Sectors</CardTitle>
+            <CardDescription>Largest sectors by company count</CardDescription>
+          </CardHeader>
+          <CardContent className="w-full min-w-0">
+            {topSectorsData.length > 0 ? (
+              <ChartContainer
+                config={{
+                  companies: { label: "Companies", color: "hsl(217, 91%, 60%)" },
+                }}
+                className="h-[300px] w-full min-w-0"
+              >
+                <BarChart data={topSectorsData} layout="vertical" margin={{ left: 5, right: 5, top: 5, bottom: 5 }}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis type="number" />
+                  <YAxis dataKey="name" type="category" width={80} />
+                  <ChartTooltip 
+                    content={<ChartTooltipContent />}
+                    formatter={(value: any, name: string) => [value, "Companies"]}
+                  />
+                  <Bar dataKey="companies" fill="hsl(217, 91%, 60%)" radius={[0, 8, 8, 0]} />
+                </BarChart>
+              </ChartContainer>
+            ) : (
+              <div className="h-[300px] flex items-center justify-center text-muted-foreground">
+                No sector data available
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Sector Signal Distribution */}
+      <Card className="w-full min-w-0 overflow-hidden">
+        <CardHeader>
+          <CardTitle>Sector Signal Distribution</CardTitle>
+          <CardDescription>Signal breakdown across top sectors</CardDescription>
+        </CardHeader>
+        <CardContent className="w-full min-w-0 overflow-x-auto">
+          {sectorSignalData.length > 0 ? (
+            <div className="w-full min-w-[600px]">
+              <ChartContainer
+                config={{
+                  BUY: { label: "BUY", color: "hsl(142, 76%, 36%)" },
+                  SELL: { label: "SELL", color: "hsl(0, 84%, 60%)" },
+                  HOLD: { label: "HOLD", color: "hsl(38, 92%, 50%)" },
+                }}
+                className="h-[400px] w-full"
+              >
+                <BarChart data={sectorSignalData} margin={{ left: 10, right: 10, top: 10, bottom: 80 }}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="name" angle={-45} textAnchor="end" height={80} />
+                <YAxis />
+                <ChartTooltip content={<ChartTooltipContent />} />
+                <Legend />
+                <Bar dataKey="BUY" stackId="a" fill="hsl(142, 76%, 36%)" />
+                <Bar dataKey="SELL" stackId="a" fill="hsl(0, 84%, 60%)" />
+                <Bar dataKey="HOLD" stackId="a" fill="hsl(38, 92%, 50%)" />
+              </BarChart>
+            </ChartContainer>
+            </div>
+          ) : (
+            <div className="h-[400px] flex items-center justify-center text-muted-foreground">
+              No sector signal data available
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       <div className="grid gap-6 md:grid-cols-2">
         <Card>

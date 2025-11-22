@@ -1,0 +1,385 @@
+/**
+ * Email Service for sending notifications
+ * Supports SMTP (Gmail, custom SMTP) and mock for development
+ */
+
+import nodemailer, { type Transporter } from "nodemailer";
+
+interface EmailProvider {
+  sendEmail(to: string, subject: string, html: string, text?: string): Promise<void>;
+}
+
+class SmtpProvider implements EmailProvider {
+  private transporter: Transporter;
+
+  constructor() {
+    const smtpHost = process.env.SMTP_HOST || "smtp.gmail.com";
+    const smtpPort = parseInt(process.env.SMTP_PORT || "587", 10);
+    const smtpUser = process.env.SMTP_USER || "";
+    const smtpPassword = process.env.SMTP_PASSWORD || "";
+    const smtpSecure = process.env.SMTP_SECURE === "true";
+
+    if (!smtpUser || !smtpPassword) {
+      throw new Error("SMTP credentials not configured");
+    }
+
+    this.transporter = nodemailer.createTransport({
+      host: smtpHost,
+      port: smtpPort,
+      secure: smtpSecure, // true for 465, false for other ports
+      auth: {
+        user: smtpUser,
+        pass: smtpPassword,
+      },
+    });
+  }
+
+  async sendEmail(to: string, subject: string, html: string, text?: string): Promise<void> {
+    const from = process.env.SMTP_FROM || process.env.SMTP_USER || "noreply@finanalytics.com";
+
+    await this.transporter.sendMail({
+      from,
+      to,
+      subject,
+      text: text || html.replace(/<[^>]*>/g, ""), // Strip HTML for text version
+      html,
+    });
+  }
+}
+
+class MockEmailProvider implements EmailProvider {
+  async sendEmail(to: string, subject: string, html: string, text?: string): Promise<void> {
+    // Mock provider for development/testing
+    console.log(`[MOCK EMAIL] To: ${to}`);
+    console.log(`[MOCK EMAIL] Subject: ${subject}`);
+    console.log(`[MOCK EMAIL] Body: ${text || html.replace(/<[^>]*>/g, "")}`);
+    // In development, you might want to store this in a file or database for testing
+  }
+}
+
+let emailProvider: EmailProvider;
+
+export function getEmailProvider(): EmailProvider {
+  if (emailProvider) {
+    return emailProvider;
+  }
+
+  const provider = process.env.EMAIL_PROVIDER || "mock";
+
+  switch (provider.toLowerCase()) {
+    case "smtp":
+      try {
+        emailProvider = new SmtpProvider();
+      } catch (error) {
+        console.warn("SMTP provider failed to initialize, falling back to mock:", error);
+        emailProvider = new MockEmailProvider();
+      }
+      break;
+    case "mock":
+    default:
+      emailProvider = new MockEmailProvider();
+      break;
+  }
+
+  return emailProvider;
+}
+
+export async function sendEmail(to: string, subject: string, html: string, text?: string): Promise<void> {
+  const provider = getEmailProvider();
+  await provider.sendEmail(to, subject, html, text);
+}
+
+/**
+ * Send welcome email to new user with login credentials
+ */
+export async function sendWelcomeEmail(
+  userEmail: string,
+  userName: string,
+  userPassword: string,
+  userRole: string
+): Promise<void> {
+  const loginUrl = process.env.APP_URL || "http://localhost:5000";
+  
+  const html = `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <style>
+        body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+        .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+        .header { background-color: #2563eb; color: white; padding: 20px; text-align: center; border-radius: 5px 5px 0 0; }
+        .content { background-color: #f9fafb; padding: 30px; border-radius: 0 0 5px 5px; }
+        .credentials { background-color: white; padding: 20px; border-radius: 5px; margin: 20px 0; border-left: 4px solid #2563eb; }
+        .credential-item { margin: 10px 0; }
+        .label { font-weight: bold; color: #666; }
+        .value { color: #333; font-family: monospace; }
+        .button { display: inline-block; padding: 12px 24px; background-color: #2563eb; color: white; text-decoration: none; border-radius: 5px; margin-top: 20px; }
+        .footer { text-align: center; margin-top: 30px; color: #666; font-size: 12px; }
+        .warning { background-color: #fef3c7; padding: 15px; border-radius: 5px; margin: 20px 0; border-left: 4px solid #f59e0b; }
+      </style>
+    </head>
+    <body>
+      <div class="container">
+        <div class="header">
+          <h1>Welcome to FinAnalytics</h1>
+        </div>
+        <div class="content">
+          <p>Hello ${userName},</p>
+          <p>Your account has been successfully created. Below are your login credentials:</p>
+          
+          <div class="credentials">
+            <div class="credential-item">
+              <span class="label">Email:</span>
+              <div class="value">${userEmail}</div>
+            </div>
+            <div class="credential-item">
+              <span class="label">Password:</span>
+              <div class="value">${userPassword}</div>
+            </div>
+            <div class="credential-item">
+              <span class="label">Role:</span>
+              <div class="value">${userRole}</div>
+            </div>
+          </div>
+
+          <div class="warning">
+            <strong>⚠️ Important:</strong> Please change your password after your first login for security purposes.
+          </div>
+
+          <a href="${loginUrl}" class="button">Login to Your Account</a>
+
+          <div class="footer">
+            <p>If you have any questions, please contact your administrator.</p>
+            <p>This is an automated message. Please do not reply to this email.</p>
+          </div>
+        </div>
+      </div>
+    </body>
+    </html>
+  `;
+
+  const text = `
+Welcome to FinAnalytics
+
+Hello ${userName},
+
+Your account has been successfully created. Below are your login credentials:
+
+Email: ${userEmail}
+Password: ${userPassword}
+Role: ${userRole}
+
+⚠️ Important: Please change your password after your first login for security purposes.
+
+Login URL: ${loginUrl}
+
+If you have any questions, please contact your administrator.
+
+This is an automated message. Please do not reply to this email.
+  `;
+
+  await sendEmail(userEmail, "Welcome to FinAnalytics - Your Account Credentials", html, text);
+}
+
+/**
+ * Send notification email to admin when a new user is added
+ */
+export async function sendAdminNotificationEmail(
+  adminEmail: string,
+  newUserName: string,
+  newUserEmail: string,
+  newUserRole: string,
+  createdBy: string
+): Promise<void> {
+  const html = `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <style>
+        body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+        .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+        .header { background-color: #059669; color: white; padding: 20px; text-align: center; border-radius: 5px 5px 0 0; }
+        .content { background-color: #f9fafb; padding: 30px; border-radius: 0 0 5px 5px; }
+        .user-info { background-color: white; padding: 20px; border-radius: 5px; margin: 20px 0; border-left: 4px solid #059669; }
+        .info-item { margin: 10px 0; }
+        .label { font-weight: bold; color: #666; }
+        .value { color: #333; }
+        .footer { text-align: center; margin-top: 30px; color: #666; font-size: 12px; }
+      </style>
+    </head>
+    <body>
+      <div class="container">
+        <div class="header">
+          <h1>New User Added</h1>
+        </div>
+        <div class="content">
+          <p>Hello Admin,</p>
+          <p>A new user has been added to the FinAnalytics platform:</p>
+          
+          <div class="user-info">
+            <div class="info-item">
+              <span class="label">Name:</span>
+              <span class="value">${newUserName}</span>
+            </div>
+            <div class="info-item">
+              <span class="label">Email:</span>
+              <span class="value">${newUserEmail}</span>
+            </div>
+            <div class="info-item">
+              <span class="label">Role:</span>
+              <span class="value">${newUserRole}</span>
+            </div>
+            <div class="info-item">
+              <span class="label">Created By:</span>
+              <span class="value">${createdBy}</span>
+            </div>
+          </div>
+
+          <p>The new user has been sent their login credentials via email.</p>
+
+          <div class="footer">
+            <p>This is an automated notification from FinAnalytics.</p>
+          </div>
+        </div>
+      </div>
+    </body>
+    </html>
+  `;
+
+  const text = `
+New User Added
+
+Hello Admin,
+
+A new user has been added to the FinAnalytics platform:
+
+Name: ${newUserName}
+Email: ${newUserEmail}
+Role: ${newUserRole}
+Created By: ${createdBy}
+
+The new user has been sent their login credentials via email.
+
+This is an automated notification from FinAnalytics.
+  `;
+
+  await sendEmail(adminEmail, "New User Added to FinAnalytics", html, text);
+}
+
+/**
+ * Send notification email to admin when all sectors update is completed
+ */
+export async function sendSectorUpdateCompleteEmail(
+  adminEmail: string,
+  totalSectors: number,
+  successfulSectors: number,
+  failedSectors: number,
+  duration?: string,
+  failedSectorDetails?: Array<{ sectorName: string; error: string }>
+): Promise<void> {
+  const successRate = totalSectors > 0 ? ((successfulSectors / totalSectors) * 100).toFixed(1) : '0';
+  const hasErrors = failedSectors > 0;
+
+  const html = `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <style>
+        body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+        .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+        .header { background-color: ${hasErrors ? '#dc2626' : '#059669'}; color: white; padding: 20px; text-align: center; border-radius: 5px 5px 0 0; }
+        .content { background-color: #f9fafb; padding: 30px; border-radius: 0 0 5px 5px; }
+        .stats { background-color: white; padding: 20px; border-radius: 5px; margin: 20px 0; }
+        .stat-row { display: flex; justify-content: space-between; margin: 10px 0; padding: 10px; border-bottom: 1px solid #e5e7eb; }
+        .stat-label { font-weight: bold; color: #666; }
+        .stat-value { color: #333; font-size: 18px; font-weight: bold; }
+        .success { color: #059669; }
+        .error { color: #dc2626; }
+        .failed-sectors { background-color: #fef2f2; padding: 15px; border-radius: 5px; margin: 20px 0; border-left: 4px solid #dc2626; }
+        .failed-item { margin: 10px 0; padding: 10px; background-color: white; border-radius: 3px; }
+        .footer { text-align: center; margin-top: 30px; color: #666; font-size: 12px; }
+      </style>
+    </head>
+    <body>
+      <div class="container">
+        <div class="header">
+          <h1>${hasErrors ? '⚠️ Sector Update Completed with Errors' : '✅ All Sectors Update Completed'}</h1>
+        </div>
+        <div class="content">
+          <p>Hello Admin,</p>
+          <p>The scheduled update for all sectors has been completed.</p>
+          
+          <div class="stats">
+            <div class="stat-row">
+              <span class="stat-label">Total Sectors:</span>
+              <span class="stat-value">${totalSectors}</span>
+            </div>
+            <div class="stat-row">
+              <span class="stat-label">Successful:</span>
+              <span class="stat-value success">${successfulSectors}</span>
+            </div>
+            <div class="stat-row">
+              <span class="stat-label">Failed:</span>
+              <span class="stat-value error">${failedSectors}</span>
+            </div>
+            <div class="stat-row">
+              <span class="stat-label">Success Rate:</span>
+              <span class="stat-value">${successRate}%</span>
+            </div>
+            ${duration ? `
+            <div class="stat-row">
+              <span class="stat-label">Duration:</span>
+              <span class="stat-value">${duration}</span>
+            </div>
+            ` : ''}
+          </div>
+
+          ${hasErrors && failedSectorDetails && failedSectorDetails.length > 0 ? `
+          <div class="failed-sectors">
+            <h3>Failed Sectors (${failedSectors}):</h3>
+            ${failedSectorDetails.slice(0, 10).map(item => `
+              <div class="failed-item">
+                <strong>${item.sectorName}</strong><br>
+                <span style="color: #dc2626; font-size: 12px;">${item.error}</span>
+              </div>
+            `).join('')}
+            ${failedSectorDetails.length > 10 ? `<p style="margin-top: 10px; font-size: 12px; color: #666;">... and ${failedSectorDetails.length - 10} more failed sectors</p>` : ''}
+          </div>
+          ` : ''}
+
+          <div class="footer">
+            <p>This is an automated notification from FinAnalytics.</p>
+            <p>You can view detailed results in the Scheduler page.</p>
+          </div>
+        </div>
+      </div>
+    </body>
+    </html>
+  `;
+
+  const text = `
+${hasErrors ? '⚠️ Sector Update Completed with Errors' : '✅ All Sectors Update Completed'}
+
+Hello Admin,
+
+The scheduled update for all sectors has been completed.
+
+Total Sectors: ${totalSectors}
+Successful: ${successfulSectors}
+Failed: ${failedSectors}
+Success Rate: ${successRate}%
+${duration ? `Duration: ${duration}` : ''}
+
+${hasErrors && failedSectorDetails && failedSectorDetails.length > 0 ? `
+Failed Sectors (${failedSectors}):
+${failedSectorDetails.slice(0, 10).map(item => `- ${item.sectorName}: ${item.error}`).join('\n')}
+${failedSectorDetails.length > 10 ? `... and ${failedSectorDetails.length - 10} more failed sectors` : ''}
+` : ''}
+
+This is an automated notification from FinAnalytics.
+You can view detailed results in the Scheduler page.
+  `;
+
+  await sendEmail(adminEmail, `${hasErrors ? '⚠️ ' : '✅ '}All Sectors Update Completed - ${successfulSectors}/${totalSectors} Successful`, html, text);
+}
+

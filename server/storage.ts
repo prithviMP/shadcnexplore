@@ -1,12 +1,19 @@
 import { db } from "./db";
-import { 
-  users, 
-  sectors, 
-  companies, 
-  formulas, 
-  queries, 
+import {
+  users,
+  sectors,
+  companies,
+  formulas,
+  queries,
   signals,
   sessions,
+  otpCodes,
+  rolePermissions,
+  quarterlyData,
+  customTables,
+  sectorMappings,
+  scrapingLogs,
+  sectorUpdateHistory,
   type User,
   type InsertUser,
   type Sector,
@@ -19,24 +26,59 @@ import {
   type InsertQuery,
   type Signal,
   type InsertSignal,
-  type Session
+  type Session,
+  type OtpCode,
+  type InsertOtpCode,
+  type RolePermission,
+  type InsertRolePermission,
+  type QuarterlyData,
+  type InsertQuarterlyData,
+  type CustomTable,
+  type InsertCustomTable,
+  type SectorMapping,
+  type InsertSectorMapping,
+  type ScrapingLog,
+  type InsertScrapingLog,
+  type SectorUpdateHistory,
+  type InsertSectorUpdateHistory
 } from "@shared/schema";
-import { eq, and, inArray, desc } from "drizzle-orm";
+import { eq, and, inArray, desc, sql, gte, lte } from "drizzle-orm";
 import { randomBytes } from "crypto";
 
 export interface IStorage {
   // User operations
   getUser(id: string): Promise<User | undefined>;
   getUserByEmail(email: string): Promise<User | undefined>;
+  getUserByPhone(phone: string): Promise<User | undefined>;
   createUser(user: InsertUser): Promise<User>;
   updateUser(id: string, data: Partial<InsertUser>): Promise<User | undefined>;
   getAllUsers(): Promise<User[]>;
+  getAdminUsers(): Promise<User[]>;
   deleteUser(id: string): Promise<void>;
 
   // Session operations
   createSession(userId: string): Promise<Session>;
   getSession(token: string): Promise<Session | undefined>;
   deleteSession(token: string): Promise<void>;
+
+  // OTP operations
+  createOtpCode(otp: InsertOtpCode): Promise<OtpCode>;
+  getOtpCode(phone: string, code: string): Promise<OtpCode | undefined>;
+  markOtpCodeAsUsed(id: string): Promise<void>;
+  deleteExpiredOtpCodes(): Promise<void>;
+
+  // Role Permissions operations
+  getRolePermissions(role: string): Promise<RolePermission | undefined>;
+  getAllRolePermissions(): Promise<RolePermission[]>;
+  upsertRolePermissions(role: string, permissions: any): Promise<RolePermission>;
+
+  // Quarterly Data operations
+  getQuarterlyDataByTicker(ticker: string): Promise<QuarterlyData[]>;
+  getQuarterlyDataByCompany(companyId: string): Promise<QuarterlyData[]>;
+  getQuarterlyDataBySector(sectorId: string): Promise<QuarterlyData[]>;
+  createQuarterlyData(data: InsertQuarterlyData): Promise<QuarterlyData>;
+  bulkCreateQuarterlyData(data: InsertQuarterlyData[]): Promise<QuarterlyData[]>;
+  deleteQuarterlyDataByTicker(ticker: string): Promise<void>;
 
   // Sector operations
   getSector(id: string): Promise<Sector | undefined>;
@@ -49,12 +91,15 @@ export interface IStorage {
   // Company operations
   getCompany(id: string): Promise<Company | undefined>;
   getCompanyByTicker(ticker: string): Promise<Company | undefined>;
+  getCompanyByTickerAndSector(ticker: string, sectorId: string): Promise<Company | undefined>;
   getAllCompanies(): Promise<Company[]>;
   getCompaniesBySector(sectorId: string): Promise<Company[]>;
+  getCompaniesBySectorAndMarketCap(sectorId: string, minCap?: number, maxCap?: number): Promise<Company[]>;
   createCompany(company: InsertCompany): Promise<Company>;
   bulkCreateCompanies(companies: InsertCompany[]): Promise<Company[]>;
   updateCompany(id: string, data: Partial<InsertCompany>): Promise<Company | undefined>;
   deleteCompany(id: string): Promise<void>;
+  bulkDeleteCompanies(ids: string[]): Promise<void>;
 
   // Formula operations
   getFormula(id: string): Promise<Formula | undefined>;
@@ -80,6 +125,39 @@ export interface IStorage {
   createSignal(signal: InsertSignal): Promise<Signal>;
   deleteSignal(id: string): Promise<void>;
   deleteSignalsByCompany(companyId: string): Promise<void>;
+
+  // Custom Table operations
+  getCustomTable(id: string): Promise<CustomTable | undefined>;
+  getAllCustomTables(): Promise<CustomTable[]>;
+  getCustomTablesByUser(userId: string): Promise<CustomTable[]>;
+  getCustomTablesByType(tableType: string): Promise<CustomTable[]>;
+  getCustomTablesBySector(sectorId: string): Promise<CustomTable[]>;
+  getCustomTablesByCompany(companyId: string): Promise<CustomTable[]>;
+  createCustomTable(table: InsertCustomTable): Promise<CustomTable>;
+  updateCustomTable(id: string, data: Partial<InsertCustomTable>): Promise<CustomTable | undefined>;
+  deleteCustomTable(id: string): Promise<void>;
+
+  // Sector Mapping operations
+  getSectorMappingsByCustomSector(sectorId: string): Promise<SectorMapping[]>;
+  getSectorMappingsByScreenerSector(screenerSector: string): Promise<SectorMapping[]>;
+  getScreenerSectorsForCustomSector(sectorId: string): Promise<string[]>;
+  createSectorMapping(mapping: InsertSectorMapping): Promise<SectorMapping>;
+  deleteSectorMapping(id: string): Promise<void>;
+
+  // Scraping Log operations
+  createScrapingLog(log: InsertScrapingLog): Promise<ScrapingLog>;
+  getScrapingLogsByCompany(companyId: string): Promise<ScrapingLog[]>;
+  getScrapingLogsByTicker(ticker: string): Promise<ScrapingLog[]>;
+  getLastScrapeTime(ticker: string): Promise<Date | null>;
+  getScrapingLogs(filters?: { companyId?: string; sectorId?: string; status?: string; limit?: number }): Promise<ScrapingLog[]>;
+  updateScrapingLog(id: string, data: Partial<InsertScrapingLog>): Promise<ScrapingLog | undefined>;
+  deleteScrapingLog(id: string): Promise<void>;
+
+  // Sector Update History operations
+  createSectorUpdateHistory(history: InsertSectorUpdateHistory): Promise<SectorUpdateHistory>;
+  getSectorUpdateHistory(id: string): Promise<SectorUpdateHistory | undefined>;
+  getAllSectorUpdateHistory(limit?: number): Promise<SectorUpdateHistory[]>;
+  updateSectorUpdateHistory(id: string, data: Partial<InsertSectorUpdateHistory>): Promise<SectorUpdateHistory | undefined>;
 }
 
 export class DbStorage implements IStorage {
@@ -91,6 +169,11 @@ export class DbStorage implements IStorage {
 
   async getUserByEmail(email: string): Promise<User | undefined> {
     const result = await db.select().from(users).where(eq(users.email, email)).limit(1);
+    return result[0];
+  }
+
+  async getUserByPhone(phone: string): Promise<User | undefined> {
+    const result = await db.select().from(users).where(eq(users.phone, phone)).limit(1);
     return result[0];
   }
 
@@ -106,6 +189,10 @@ export class DbStorage implements IStorage {
 
   async getAllUsers(): Promise<User[]> {
     return await db.select().from(users);
+  }
+
+  async getAdminUsers(): Promise<User[]> {
+    return await db.select().from(users).where(eq(users.role, "admin"));
   }
 
   async deleteUser(id: string): Promise<void> {
@@ -169,12 +256,33 @@ export class DbStorage implements IStorage {
     return result[0];
   }
 
+  async getCompanyByTickerAndSector(ticker: string, sectorId: string): Promise<Company | undefined> {
+    const result = await db.select().from(companies)
+      .where(and(eq(companies.ticker, ticker), eq(companies.sectorId, sectorId)))
+      .limit(1);
+    return result[0];
+  }
+
   async getAllCompanies(): Promise<Company[]> {
     return await db.select().from(companies);
   }
 
   async getCompaniesBySector(sectorId: string): Promise<Company[]> {
     return await db.select().from(companies).where(eq(companies.sectorId, sectorId));
+  }
+
+  async getCompaniesBySectorAndMarketCap(sectorId: string, minCap?: number, maxCap?: number): Promise<Company[]> {
+    const conditions = [eq(companies.sectorId, sectorId)];
+
+    if (minCap !== undefined) {
+      conditions.push(gte(companies.marketCap, minCap.toString()));
+    }
+
+    if (maxCap !== undefined) {
+      conditions.push(lte(companies.marketCap, maxCap.toString()));
+    }
+
+    return await db.select().from(companies).where(and(...conditions));
   }
 
   async createCompany(company: InsertCompany): Promise<Company> {
@@ -194,7 +302,45 @@ export class DbStorage implements IStorage {
   }
 
   async deleteCompany(id: string): Promise<void> {
-    await db.delete(companies).where(eq(companies.id, id));
+    // Delete all related records first to avoid foreign key constraint violations
+    await db.transaction(async (tx) => {
+      // Delete signals
+      await tx.delete(signals).where(eq(signals.companyId, id));
+
+      // Delete quarterly data
+      await tx.delete(quarterlyData).where(eq(quarterlyData.companyId, id));
+
+      // Delete scraping logs
+      await tx.delete(scrapingLogs).where(eq(scrapingLogs.companyId, id));
+
+      // Delete custom tables
+      await tx.delete(customTables).where(eq(customTables.companyId, id));
+
+      // Finally delete the company
+      await tx.delete(companies).where(eq(companies.id, id));
+    });
+  }
+
+  async bulkDeleteCompanies(ids: string[]): Promise<void> {
+    if (ids.length === 0) return;
+
+    // Delete all related records first to avoid foreign key constraint violations
+    await db.transaction(async (tx) => {
+      // Delete signals for all companies
+      await tx.delete(signals).where(inArray(signals.companyId, ids));
+
+      // Delete quarterly data for all companies
+      await tx.delete(quarterlyData).where(inArray(quarterlyData.companyId, ids));
+
+      // Delete scraping logs for all companies
+      await tx.delete(scrapingLogs).where(inArray(scrapingLogs.companyId, ids));
+
+      // Delete custom tables for all companies
+      await tx.delete(customTables).where(inArray(customTables.companyId, ids));
+
+      // Finally delete the companies
+      await tx.delete(companies).where(inArray(companies.id, ids));
+    });
   }
 
   // Formula operations
@@ -282,6 +428,325 @@ export class DbStorage implements IStorage {
 
   async deleteSignalsByCompany(companyId: string): Promise<void> {
     await db.delete(signals).where(eq(signals.companyId, companyId));
+  }
+
+  // OTP operations
+  async createOtpCode(otp: InsertOtpCode): Promise<OtpCode> {
+    const result = await db.insert(otpCodes).values(otp).returning();
+    return result[0];
+  }
+
+  async getOtpCode(phone: string, code: string): Promise<OtpCode | undefined> {
+    const result = await db
+      .select()
+      .from(otpCodes)
+      .where(and(eq(otpCodes.phone, phone), eq(otpCodes.code, code), eq(otpCodes.used, false)))
+      .limit(1);
+    return result[0];
+  }
+
+  async markOtpCodeAsUsed(id: string): Promise<void> {
+    await db.update(otpCodes).set({ used: true }).where(eq(otpCodes.id, id));
+  }
+
+  async deleteExpiredOtpCodes(): Promise<void> {
+    await db.delete(otpCodes).where(eq(otpCodes.expiresAt, new Date()));
+  }
+
+  // Role Permissions operations
+  async getRolePermissions(role: string): Promise<RolePermission | undefined> {
+    const result = await db
+      .select()
+      .from(rolePermissions)
+      .where(eq(rolePermissions.role, role))
+      .limit(1);
+    return result[0];
+  }
+
+  async getAllRolePermissions(): Promise<RolePermission[]> {
+    return await db.select().from(rolePermissions);
+  }
+
+  async upsertRolePermissions(role: string, permissions: any): Promise<RolePermission> {
+    const existing = await this.getRolePermissions(role);
+
+    if (existing) {
+      const result = await db
+        .update(rolePermissions)
+        .set({ permissions, updatedAt: new Date() })
+        .where(eq(rolePermissions.role, role))
+        .returning();
+      return result[0];
+    } else {
+      const result = await db
+        .insert(rolePermissions)
+        .values({ role, permissions })
+        .returning();
+      return result[0];
+    }
+  }
+
+  // Quarterly Data operations
+  async getQuarterlyDataByTicker(ticker: string): Promise<QuarterlyData[]> {
+    return await db
+      .select()
+      .from(quarterlyData)
+      .where(eq(quarterlyData.ticker, ticker))
+      .orderBy(desc(quarterlyData.quarter), desc(quarterlyData.scrapeTimestamp));
+  }
+
+  async getQuarterlyDataByCompany(companyId: string): Promise<QuarterlyData[]> {
+    return await db
+      .select()
+      .from(quarterlyData)
+      .where(eq(quarterlyData.companyId, companyId))
+      .orderBy(desc(quarterlyData.quarter), desc(quarterlyData.scrapeTimestamp));
+  }
+
+  async getQuarterlyDataBySector(sectorId: string): Promise<QuarterlyData[]> {
+    // First get all company IDs in this sector
+    const sectorCompanies = await db
+      .select({ id: companies.id, ticker: companies.ticker })
+      .from(companies)
+      .where(eq(companies.sectorId, sectorId));
+
+    if (sectorCompanies.length === 0) {
+      return [];
+    }
+
+    const companyIds = sectorCompanies.map(c => c.id);
+
+    // Then get quarterly data for those companies
+    return await db
+      .select()
+      .from(quarterlyData)
+      .where(inArray(quarterlyData.companyId, companyIds))
+      .orderBy(desc(quarterlyData.quarter), desc(quarterlyData.scrapeTimestamp));
+  }
+
+  async createQuarterlyData(data: InsertQuarterlyData): Promise<QuarterlyData> {
+    const result = await db.insert(quarterlyData).values(data).returning();
+    return result[0];
+  }
+
+  async bulkCreateQuarterlyData(data: InsertQuarterlyData[]): Promise<QuarterlyData[]> {
+    if (data.length === 0) return [];
+
+    // Use ON CONFLICT to handle duplicates
+    const result = await db
+      .insert(quarterlyData)
+      .values(data)
+      .onConflictDoUpdate({
+        target: [quarterlyData.ticker, quarterlyData.quarter, quarterlyData.metricName, quarterlyData.scrapeTimestamp],
+        set: {
+          metricValue: sql`EXCLUDED.metric_value`,
+          companyId: sql`EXCLUDED.company_id`,
+        }
+      })
+      .returning();
+    return result;
+  }
+
+  async deleteQuarterlyDataByTicker(ticker: string): Promise<void> {
+    await db.delete(quarterlyData).where(eq(quarterlyData.ticker, ticker));
+  }
+
+  // Custom Table operations
+  async getCustomTable(id: string): Promise<CustomTable | undefined> {
+    const result = await db.select().from(customTables).where(eq(customTables.id, id)).limit(1);
+    return result[0];
+  }
+
+  async getAllCustomTables(): Promise<CustomTable[]> {
+    return await db.select().from(customTables).orderBy(desc(customTables.createdAt));
+  }
+
+  async getCustomTablesByUser(userId: string): Promise<CustomTable[]> {
+    return await db
+      .select()
+      .from(customTables)
+      .where(eq(customTables.createdBy, userId))
+      .orderBy(desc(customTables.createdAt));
+  }
+
+  async getCustomTablesByType(tableType: string): Promise<CustomTable[]> {
+    return await db
+      .select()
+      .from(customTables)
+      .where(eq(customTables.tableType, tableType))
+      .orderBy(desc(customTables.createdAt));
+  }
+
+  async getCustomTablesBySector(sectorId: string): Promise<CustomTable[]> {
+    return await db
+      .select()
+      .from(customTables)
+      .where(eq(customTables.sectorId, sectorId))
+      .orderBy(desc(customTables.createdAt));
+  }
+
+  async getCustomTablesByCompany(companyId: string): Promise<CustomTable[]> {
+    return await db
+      .select()
+      .from(customTables)
+      .where(eq(customTables.companyId, companyId))
+      .orderBy(desc(customTables.createdAt));
+  }
+
+  async createCustomTable(table: InsertCustomTable): Promise<CustomTable> {
+    const result = await db.insert(customTables).values(table).returning();
+    return result[0];
+  }
+
+  async updateCustomTable(id: string, data: Partial<InsertCustomTable>): Promise<CustomTable | undefined> {
+    const updateData = {
+      ...data,
+      updatedAt: new Date(),
+    };
+    const result = await db
+      .update(customTables)
+      .set(updateData)
+      .where(eq(customTables.id, id))
+      .returning();
+    return result[0];
+  }
+
+  async deleteCustomTable(id: string): Promise<void> {
+    await db.delete(customTables).where(eq(customTables.id, id));
+  }
+
+  // Sector Mapping operations
+  async getSectorMappingsByCustomSector(sectorId: string): Promise<SectorMapping[]> {
+    return await db
+      .select()
+      .from(sectorMappings)
+      .where(eq(sectorMappings.customSectorId, sectorId))
+      .orderBy(sectorMappings.createdAt);
+  }
+
+  async getSectorMappingsByScreenerSector(screenerSector: string): Promise<SectorMapping[]> {
+    return await db
+      .select()
+      .from(sectorMappings)
+      .where(eq(sectorMappings.screenerSector, screenerSector));
+  }
+
+  async getScreenerSectorsForCustomSector(sectorId: string): Promise<string[]> {
+    const mappings = await this.getSectorMappingsByCustomSector(sectorId);
+    return mappings.map(m => m.screenerSector);
+  }
+
+  async createSectorMapping(mapping: InsertSectorMapping): Promise<SectorMapping> {
+    const result = await db.insert(sectorMappings).values(mapping).returning();
+    return result[0];
+  }
+
+  async deleteSectorMapping(id: string): Promise<void> {
+    await db.delete(sectorMappings).where(eq(sectorMappings.id, id));
+  }
+
+  // Scraping Log operations
+  async createScrapingLog(log: InsertScrapingLog): Promise<ScrapingLog> {
+    const result = await db.insert(scrapingLogs).values(log).returning();
+    return result[0];
+  }
+
+  async getScrapingLogsByCompany(companyId: string): Promise<ScrapingLog[]> {
+    return await db
+      .select()
+      .from(scrapingLogs)
+      .where(eq(scrapingLogs.companyId, companyId))
+      .orderBy(desc(scrapingLogs.startedAt));
+  }
+
+  async getScrapingLogsByTicker(ticker: string): Promise<ScrapingLog[]> {
+    return await db
+      .select()
+      .from(scrapingLogs)
+      .where(eq(scrapingLogs.ticker, ticker))
+      .orderBy(desc(scrapingLogs.startedAt));
+  }
+
+  async getLastScrapeTime(ticker: string): Promise<Date | null> {
+    const logs = await db
+      .select()
+      .from(scrapingLogs)
+      .where(and(
+        eq(scrapingLogs.ticker, ticker),
+        eq(scrapingLogs.status, 'success')
+      ))
+      .orderBy(desc(scrapingLogs.completedAt))
+      .limit(1);
+
+    return logs[0]?.completedAt || null;
+  }
+
+  async getScrapingLogs(filters?: { companyId?: string; sectorId?: string; status?: string; limit?: number }): Promise<ScrapingLog[]> {
+    let query = db.select().from(scrapingLogs);
+
+    const conditions = [];
+    if (filters?.companyId) {
+      conditions.push(eq(scrapingLogs.companyId, filters.companyId));
+    }
+    if (filters?.sectorId) {
+      conditions.push(eq(scrapingLogs.sectorId, filters.sectorId));
+    }
+    if (filters?.status) {
+      conditions.push(eq(scrapingLogs.status, filters.status));
+    }
+
+    if (conditions.length > 0) {
+      query = query.where(and(...conditions)) as any;
+    }
+
+    query = query.orderBy(desc(scrapingLogs.startedAt)) as any;
+
+    if (filters?.limit) {
+      query = query.limit(filters.limit) as any;
+    }
+
+    return await query;
+  }
+
+  async updateScrapingLog(id: string, data: Partial<InsertScrapingLog>): Promise<ScrapingLog | undefined> {
+    const result = await db
+      .update(scrapingLogs)
+      .set(data)
+      .where(eq(scrapingLogs.id, id))
+      .returning();
+    return result[0];
+  }
+
+  async deleteScrapingLog(id: string): Promise<void> {
+    await db.delete(scrapingLogs).where(eq(scrapingLogs.id, id));
+  }
+
+  // Sector Update History operations
+  async createSectorUpdateHistory(history: InsertSectorUpdateHistory): Promise<SectorUpdateHistory> {
+    const result = await db.insert(sectorUpdateHistory).values(history).returning();
+    return result[0];
+  }
+
+  async getSectorUpdateHistory(id: string): Promise<SectorUpdateHistory | undefined> {
+    const result = await db.select().from(sectorUpdateHistory).where(eq(sectorUpdateHistory.id, id)).limit(1);
+    return result[0];
+  }
+
+  async getAllSectorUpdateHistory(limit: number = 50): Promise<SectorUpdateHistory[]> {
+    return await db
+      .select()
+      .from(sectorUpdateHistory)
+      .orderBy(desc(sectorUpdateHistory.startedAt))
+      .limit(limit);
+  }
+
+  async updateSectorUpdateHistory(id: string, data: Partial<InsertSectorUpdateHistory>): Promise<SectorUpdateHistory | undefined> {
+    const result = await db
+      .update(sectorUpdateHistory)
+      .set(data)
+      .where(eq(sectorUpdateHistory.id, id))
+      .returning();
+    return result[0];
   }
 }
 

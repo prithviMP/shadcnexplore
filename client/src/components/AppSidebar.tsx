@@ -1,4 +1,4 @@
-import { LayoutDashboard, Building2, TrendingUp, Table, Search, Users, Settings, Building, Briefcase } from "lucide-react";
+import { LayoutDashboard, Building2, TrendingUp, Table, Search, Users, Settings, Building, Briefcase, LogOut, Clock } from "lucide-react";
 import {
   Sidebar,
   SidebarContent,
@@ -12,7 +12,9 @@ import {
   SidebarFooter,
 } from "@/components/ui/sidebar";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Button } from "@/components/ui/button";
 import { Link, useLocation } from "wouter";
+import { useAuth } from "@/contexts/AuthContext";
 
 type UserRole = "admin" | "analyst" | "viewer";
 
@@ -23,6 +25,7 @@ interface AppSidebarProps {
 
 export default function AppSidebar({ userRole = "admin", userName = "Admin User" }: AppSidebarProps) {
   const [location] = useLocation();
+  const { logout } = useAuth();
 
   const navItems = [
     { title: "Dashboard", url: "/", icon: LayoutDashboard, roles: ["admin", "analyst", "viewer"] },
@@ -30,6 +33,8 @@ export default function AppSidebar({ userRole = "admin", userName = "Admin User"
     { title: "Sector Manager", url: "/sector-manager", icon: Building, roles: ["admin", "analyst"] },
     { title: "Company Manager", url: "/company-manager", icon: Briefcase, roles: ["admin", "analyst"] },
     { title: "Data Spreadsheet", url: "/data-spreadsheet", icon: Table, roles: ["admin", "analyst"] },
+    { title: "Custom Tables", url: "/custom-tables", icon: Table, roles: ["admin", "analyst"] },
+  { title: "Scheduler", url: "/scheduler", icon: Clock, roles: ["admin"] },
     { title: "Query Builder", url: "/query-builder", icon: Search, roles: ["admin", "analyst"] },
     { title: "Formulas", url: "/formulas", icon: Settings, roles: ["admin"] },
     { title: "Users", url: "/users", icon: Users, roles: ["admin"] },
@@ -70,7 +75,7 @@ export default function AppSidebar({ userRole = "admin", userName = "Admin User"
           </SidebarGroupContent>
         </SidebarGroup>
       </SidebarContent>
-      <SidebarFooter className="p-4 border-t">
+      <SidebarFooter className="p-4 border-t space-y-2">
         <div className="flex items-center gap-3">
           <Avatar>
             <AvatarFallback>{initials}</AvatarFallback>
@@ -80,6 +85,14 @@ export default function AppSidebar({ userRole = "admin", userName = "Admin User"
             <p className="text-xs text-muted-foreground capitalize">{userRole}</p>
           </div>
         </div>
+        <Button
+          variant="ghost"
+          className="w-full justify-start"
+          onClick={logout}
+        >
+          <LogOut className="h-4 w-4 mr-2" />
+          Logout
+        </Button>
       </SidebarFooter>
     </Sidebar>
   );

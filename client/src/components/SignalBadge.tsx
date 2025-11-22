@@ -1,13 +1,15 @@
 import { Badge } from "@/components/ui/badge";
-import { ArrowUp, ArrowDown, Minus } from "lucide-react";
+import { ArrowUp, ArrowDown, Minus, AlertTriangle, X } from "lucide-react";
+
+type SignalType = "BUY" | "SELL" | "HOLD" | "Check_OPM (Sell)" | "No Signal";
 
 interface SignalBadgeProps {
-  signal: "BUY" | "SELL" | "HOLD";
+  signal: SignalType | string;
   showIcon?: boolean;
 }
 
 export default function SignalBadge({ signal, showIcon = true }: SignalBadgeProps) {
-  const variants = {
+  const variants: Record<string, { className: string; icon: typeof ArrowUp }> = {
     BUY: {
       className: "bg-emerald-500/10 text-emerald-600 dark:bg-emerald-500/20 dark:text-emerald-400 border-emerald-500/20",
       icon: ArrowUp
@@ -19,15 +21,28 @@ export default function SignalBadge({ signal, showIcon = true }: SignalBadgeProp
     HOLD: {
       className: "bg-amber-500/10 text-amber-600 dark:bg-amber-500/20 dark:text-amber-400 border-amber-500/20",
       icon: Minus
+    },
+    "Check_OPM (Sell)": {
+      className: "bg-orange-500/10 text-orange-600 dark:bg-orange-500/20 dark:text-orange-400 border-orange-500/20",
+      icon: AlertTriangle
+    },
+    "No Signal": {
+      className: "bg-slate-500/10 text-slate-600 dark:bg-slate-500/20 dark:text-slate-400 border-slate-500/20",
+      icon: X
     }
   };
 
-  const { className, icon: Icon } = variants[signal];
+  // Get variant or default to HOLD if signal not found
+  const variant = variants[signal] || variants.HOLD;
+  const { className, icon: Icon } = variant;
+
+  // Format signal text for display (handle special cases)
+  const displayText = signal === "Check_OPM (Sell)" ? "Check OPM" : signal;
 
   return (
-    <Badge variant="outline" className={`${className} rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-wide`} data-testid={`badge-signal-${signal.toLowerCase()}`}>
+    <Badge variant="outline" className={`${className} rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-wide`} data-testid={`badge-signal-${signal.toLowerCase().replace(/\s+/g, '-')}`}>
       {showIcon && <Icon className="w-3 h-3 mr-1" />}
-      {signal}
+      {displayText}
     </Badge>
   );
 }

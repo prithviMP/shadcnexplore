@@ -1,6 +1,7 @@
 import { compare, hash } from "bcryptjs";
 import { authenticator } from "otplib";
 import { storage } from "./storage";
+import { sendOtpSms } from "./sms";
 import type { User } from "@shared/schema";
 
 export async function hashPassword(password: string): Promise<string> {
@@ -50,4 +51,57 @@ export async function getUserFromSession(token: string): Promise<User | null> {
 
 export async function deleteUserSession(token: string): Promise<void> {
   await storage.deleteSession(token);
+}
+
+/**
+ * Generate a 6-digit OTP code
+ */
+export function generateOtpCode(): string {
+  return Math.floor(100000 + Math.random() * 900000).toString();
+}
+
+/**
+ * Create and send OTP code via SMS
+ */
+export async function createAndSendOtp(phone: string): Promise<string> {
+  // Generate 6-digit code
+  const code = generateOtpCode();
+  
+  // Set expiration to 10 minutes from now
+  const expiresAt = new Date();
+  expiresAt.setMinutes(expiresAt.getMinutes() + 10);
+
+  // Store OTP code
+  await storage.createOtpCode({
+    phone,
+    code,
+    expiresAt,
+    used: false,
+  });
+
+  // Send SMS
+  await sendOtpSms(phone, code);
+
+  return code;
+}
+
+/**
+ * Verify OTP code
+ */
+export async function verifyOtpCode(phone: string, code: string): Promise<boolean> {
+  const otpRecord = await storage.getOtpCode(phone, code);
+  
+  if (!otpRecord) {
+    return false;
+  }
+
+  // Check if expired
+  if (new Date() > otpRecord.expiresAt) {
+    return false;
+  }
+
+  // Mark as used
+  await storage.markOtpCodeAsUsed(otpRecord.id);
+
+  return true;
 }

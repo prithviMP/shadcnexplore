@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from "express";
 import { getUserFromSession } from "./auth";
+import { hasPermission, hasAnyPermission, type Permission } from "./permissions";
 import type { User } from "@shared/schema";
 
 export interface AuthRequest extends Request {
@@ -32,6 +33,48 @@ export function requireRole(...roles: string[]) {
 
     if (!roles.includes(req.user.role)) {
       return res.status(403).json({ error: "Forbidden" });
+    }
+
+    next();
+  };
+}
+
+/**
+ * Middleware to require a specific permission
+ * Usage: requirePermission("formulas:create")
+ */
+export function requirePermission(permission: Permission) {
+  return (req: AuthRequest, res: Response, next: NextFunction) => {
+    if (!req.user) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+
+    if (!hasPermission(req.user.role, permission)) {
+      return res.status(403).json({ 
+        error: "Forbidden",
+        message: `You don't have permission to ${permission}` 
+      });
+    }
+
+    next();
+  };
+}
+
+/**
+ * Middleware to require any of the specified permissions
+ * Usage: requireAnyPermission(["formulas:create", "formulas:update"])
+ */
+export function requireAnyPermission(...permissions: Permission[]) {
+  return (req: AuthRequest, res: Response, next: NextFunction) => {
+    if (!req.user) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+
+    if (!hasAnyPermission(req.user.role, permissions)) {
+      return res.status(403).json({ 
+        error: "Forbidden",
+        message: "You don't have the required permissions" 
+      });
     }
 
     next();

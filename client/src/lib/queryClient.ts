@@ -7,14 +7,27 @@ async function throwIfResNotOk(res: Response) {
   }
 }
 
+const AUTH_TOKEN_KEY = "auth_token";
+
 export async function apiRequest(
   method: string,
   url: string,
   data?: unknown | undefined,
 ): Promise<Response> {
+  const token = localStorage.getItem(AUTH_TOKEN_KEY);
+  const headers: Record<string, string> = {};
+  
+  if (data) {
+    headers["Content-Type"] = "application/json";
+  }
+  
+  if (token) {
+    headers["Authorization"] = `Bearer ${token}`;
+  }
+
   const res = await fetch(url, {
     method,
-    headers: data ? { "Content-Type": "application/json" } : {},
+    headers,
     body: data ? JSON.stringify(data) : undefined,
     credentials: "include",
   });
@@ -51,7 +64,15 @@ export const getQueryFn: <T>(options: {
       url += separator + queryString;
     }
 
+    const token = localStorage.getItem(AUTH_TOKEN_KEY);
+    const headers: Record<string, string> = {};
+    
+    if (token) {
+      headers["Authorization"] = `Bearer ${token}`;
+    }
+
     const res = await fetch(url, {
+      headers,
       credentials: "include",
     });
 

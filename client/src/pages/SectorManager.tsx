@@ -13,7 +13,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { Plus, Pencil, Trash2 } from "lucide-react";
+import { Plus, Pencil, Trash2, X, Link as LinkIcon } from "lucide-react";
 import type { Sector, InsertSector } from "@shared/schema";
 
 const sectorFormSchema = z.object({
@@ -23,11 +23,20 @@ const sectorFormSchema = z.object({
 
 type SectorFormData = z.infer<typeof sectorFormSchema>;
 
+interface SectorMapping {
+  id: string;
+  screenerSector: string;
+  customSectorId: string;
+  createdAt: string;
+}
+
 export default function SectorManager() {
   const { toast } = useToast();
   const [createOpen, setCreateOpen] = useState(false);
   const [editSector, setEditSector] = useState<Sector | null>(null);
   const [deleteSector, setDeleteSector] = useState<Sector | null>(null);
+  const [selectedSectorForMapping, setSelectedSectorForMapping] = useState<Sector | null>(null);
+  const [newScreenerSector, setNewScreenerSector] = useState("");
 
   const { data: sectors, isLoading } = useQuery<Sector[]>({
     queryKey: ["/api/sectors"]
@@ -35,6 +44,41 @@ export default function SectorManager() {
 
   const { data: companies } = useQuery<Array<{ sectorId: string }>>({
     queryKey: ["/api/companies"]
+  });
+
+  // Fetch sector mappings for selected sector
+  const { data: sectorMappings, refetch: refetchMappings } = useQuery<SectorMapping[]>({
+    queryKey: ["/api/v1/sector-mappings", selectedSectorForMapping?.id],
+    queryFn: async () => {
+      if (!selectedSectorForMapping) return [];
+      const res = await apiRequest("GET", `/api/v1/sector-mappings/${selectedSectorForMapping.id}`);
+      return res.json();
+    },
+    enabled: !!selectedSectorForMapping,
+  });
+
+  const createMappingMutation = useMutation({
+    mutationFn: (data: { screenerSector: string; customSectorId: string }) =>
+      apiRequest("POST", "/api/v1/sector-mappings", data),
+    onSuccess: () => {
+      refetchMappings();
+      setNewScreenerSector("");
+      toast({ title: "Sector mapping created successfully" });
+    },
+    onError: (error: Error) => {
+      toast({ title: "Failed to create mapping", description: error.message, variant: "destructive" });
+    }
+  });
+
+  const deleteMappingMutation = useMutation({
+    mutationFn: (id: string) => apiRequest("DELETE", `/api/v1/sector-mappings/${id}`),
+    onSuccess: () => {
+      refetchMappings();
+      toast({ title: "Mapping deleted successfully" });
+    },
+    onError: (error: Error) => {
+      toast({ title: "Failed to delete mapping", description: error.message, variant: "destructive" });
+    }
   });
 
   const createForm = useForm<SectorFormData>({
@@ -47,7 +91,7 @@ export default function SectorManager() {
   });
 
   const createMutation = useMutation({
-    mutationFn: (data: InsertSector) => apiRequest("/api/sectors", "POST", data),
+    mutationFn: (data: InsertSector) => apiRequest("POST", "/api/sectors", data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/sectors"] });
       toast({ title: "Sector created successfully" });
@@ -61,7 +105,7 @@ export default function SectorManager() {
 
   const updateMutation = useMutation({
     mutationFn: ({ id, data }: { id: string; data: Partial<InsertSector> }) =>
-      apiRequest(`/api/sectors/${id}`, "PUT", data),
+      apiRequest("PUT", `/api/sectors/${id}`, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/sectors"] });
       toast({ title: "Sector updated successfully" });
@@ -73,7 +117,7 @@ export default function SectorManager() {
   });
 
   const deleteMutation = useMutation({
-    mutationFn: (id: string) => apiRequest(`/api/sectors/${id}`, "DELETE"),
+    mutationFn: (id: string) => apiRequest("DELETE", `/api/sectors/${id}`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/sectors"] });
       queryClient.invalidateQueries({ queryKey: ["/api/companies"] });
@@ -103,6 +147,17 @@ export default function SectorManager() {
     editForm.reset({
       name: sector.name,
       description: sector.description || ""
+    });
+  };
+
+  const handleAddMapping = () => {
+    if (!selectedSectorForMapping || !newScreenerSector.trim()) {
+      toast({ title: "Please enter a Screener.in sector name", variant: "destructive" });
+      return;
+    }
+    createMappingMutation.mutate({
+      screenerSector: newScreenerSector.trim(),
+      customSectorId: selectedSectorForMapping.id,
     });
   };
 
@@ -224,6 +279,80 @@ export default function SectorManager() {
           )}
         </CardContent>
       </Card>
+
+      {selectedSectorForMapping && (
+        <Card>
+          <CardHeader>
+            <div className="flex items-center justify-between">
+              <div>
+                <CardTitle>Sector Mappings: {selectedSectorForMapping.name}</CardTitle>
+                <CardDescription>
+                  Map multiple Screener.in sector names to this custom sector. This allows bulk scraping from multiple Screener.in sectors.
+                </CardDescription>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setSelectedSectorForMapping(null)}
+              >
+                Close
+              </Button>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="flex gap-2">
+              <Input
+                placeholder="Enter Screener.in sector name (e.g., IT, Banking, Energy)"
+                value={newScreenerSector}
+                onChange={(e) => setNewScreenerSector(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    handleAddMapping();
+                  }
+                }}
+              />
+              <Button
+                onClick={handleAddMapping}
+                disabled={createMappingMutation.isPending || !newScreenerSector.trim()}
+              >
+                <Plus className="h-4 w-4 mr-2" />
+                Add Mapping
+              </Button>
+            </div>
+
+            {sectorMappings && sectorMappings.length > 0 ? (
+              <div className="space-y-2">
+                <div className="text-sm font-medium">Mapped Screener.in Sectors:</div>
+                <div className="space-y-2">
+                  {sectorMappings.map((mapping) => (
+                    <div
+                      key={mapping.id}
+                      className="flex items-center justify-between p-3 border rounded-lg bg-muted/50"
+                    >
+                      <div className="flex items-center gap-2">
+                        <LinkIcon className="h-4 w-4 text-muted-foreground" />
+                        <span className="font-medium">{mapping.screenerSector}</span>
+                      </div>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => deleteMappingMutation.mutate(mapping.id)}
+                        disabled={deleteMappingMutation.isPending}
+                      >
+                        <X className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <div className="text-center py-8 text-muted-foreground">
+                No mappings yet. Add a Screener.in sector name to map it to this custom sector.
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       <Dialog open={!!editSector} onOpenChange={(open) => !open && setEditSector(null)}>
         <DialogContent data-testid="dialog-edit-sector">

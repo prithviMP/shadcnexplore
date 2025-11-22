@@ -1,11 +1,12 @@
 import { sql } from "drizzle-orm";
-import { pgTable, text, varchar, integer, timestamp, jsonb, decimal, boolean } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, integer, timestamp, jsonb, decimal, boolean, unique } from "drizzle-orm/pg-core";
 import { createInsertSchema, createSelectSchema } from "drizzle-zod";
 import { z } from "zod";
 
 export const users = pgTable("users", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   email: text("email").notNull().unique(),
+  phone: text("phone").unique(),
   password: text("password").notNull(),
   name: text("name").notNull(),
   role: text("role").notNull().default("viewer"),
@@ -31,14 +32,16 @@ export const sectors = pgTable("sectors", {
 
 export const companies = pgTable("companies", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  ticker: text("ticker").notNull().unique(),
+  ticker: text("ticker").notNull(),
   name: text("name").notNull(),
   sectorId: varchar("sector_id").notNull().references(() => sectors.id),
   marketCap: decimal("market_cap", { precision: 20, scale: 2 }),
   financialData: jsonb("financial_data"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
-});
+}, (table) => ({
+  uniqueTickerSector: unique().on(table.ticker, table.sectorId),
+}));
 
 export const formulas = pgTable("formulas", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -49,6 +52,7 @@ export const formulas = pgTable("formulas", {
   signal: text("signal").notNull(),
   priority: integer("priority").notNull().default(999),
   enabled: boolean("enabled").notNull().default(true),
+  formulaType: text("formula_type").default("simple"), // 'simple' | 'excel' - Excel formulas use Q12-Q16, P12-P16
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
@@ -70,6 +74,96 @@ export const signals = pgTable("signals", {
   signal: text("signal").notNull(),
   value: decimal("value", { precision: 10, scale: 4 }),
   metadata: jsonb("metadata"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export const quarterlyData = pgTable("quarterly_data", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  ticker: text("ticker").notNull(),
+  companyId: varchar("company_id").references(() => companies.id),
+  quarter: text("quarter").notNull(),
+  metricName: text("metric_name").notNull(),
+  metricValue: decimal("metric_value", { precision: 20, scale: 4 }),
+  scrapeTimestamp: timestamp("scrape_timestamp"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+}, (table) => ({
+  uniqueTickerQuarterMetric: unique().on(table.ticker, table.quarter, table.metricName, table.scrapeTimestamp),
+}));
+
+export const customTables = pgTable("custom_tables", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: text("name").notNull(),
+  tableType: text("table_type").notNull(), // 'sector', 'company', 'global'
+  sectorId: varchar("sector_id").references(() => sectors.id),
+  companyId: varchar("company_id").references(() => companies.id),
+  columns: jsonb("columns"),
+  data: jsonb("data"),
+  createdBy: varchar("created_by").references(() => users.id),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export const otpCodes = pgTable("otp_codes", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  phone: text("phone").notNull(),
+  code: text("code").notNull(),
+  expiresAt: timestamp("expires_at").notNull(),
+  used: boolean("used").notNull().default(false),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export const rolePermissions = pgTable("role_permissions", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  role: text("role").notNull().unique(),
+  permissions: jsonb("permissions").notNull(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export const sectorMappings = pgTable("sector_mappings", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  screenerSector: text("screener_sector").notNull(),
+  customSectorId: varchar("custom_sector_id").notNull().references(() => sectors.id),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+}, (table) => ({
+  uniqueScreenerSectorCustomSector: unique().on(table.screenerSector, table.customSectorId),
+}));
+
+export const scrapingLogs = pgTable("scraping_logs", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  ticker: text("ticker").notNull(),
+  companyId: varchar("company_id").references(() => companies.id),
+  sectorId: varchar("sector_id").references(() => sectors.id),
+  userId: varchar("user_id").references(() => users.id), // Track who triggered the scrape
+  status: text("status").notNull(), // 'success' | 'failed'
+  quartersScraped: integer("quarters_scraped").default(0),
+  metricsScraped: integer("metrics_scraped").default(0),
+  error: text("error"),
+  startedAt: timestamp("started_at").notNull().defaultNow(),
+  completedAt: timestamp("completed_at"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export const sectorUpdateHistory = pgTable("sector_update_history", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").references(() => users.id).notNull(), // Who triggered the update
+  status: text("status").notNull(), // 'pending' | 'running' | 'completed' | 'failed'
+  progress: integer("progress").default(0), // 0-100
+  totalSectors: integer("total_sectors").notNull(),
+  completedSectors: integer("completed_sectors").default(0),
+  successfulSectors: integer("successful_sectors").default(0),
+  failedSectors: integer("failed_sectors").default(0),
+  sectorResults: jsonb("sector_results").$type<Array<{
+    sectorId: string;
+    sectorName: string;
+    status: 'success' | 'error';
+    error?: string;
+    companiesUpdated?: number;
+  }>>().default([]),
+  error: text("error"),
+  startedAt: timestamp("started_at").notNull().defaultNow(),
+  completedAt: timestamp("completed_at"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
@@ -106,6 +200,12 @@ export const insertSignalSchema = createInsertSchema(signals).omit({
   createdAt: true,
 });
 
+export const insertCustomTableSchema = createInsertSchema(customTables).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
 export type InsertUser = z.infer<typeof insertUserSchema>;
 export type User = typeof users.$inferSelect;
 
@@ -125,3 +225,24 @@ export type InsertSignal = z.infer<typeof insertSignalSchema>;
 export type Signal = typeof signals.$inferSelect;
 
 export type Session = typeof sessions.$inferSelect;
+
+export type QuarterlyData = typeof quarterlyData.$inferSelect;
+export type InsertQuarterlyData = typeof quarterlyData.$inferInsert;
+
+export type CustomTable = typeof customTables.$inferSelect;
+export type InsertCustomTable = typeof customTables.$inferInsert;
+
+export type OtpCode = typeof otpCodes.$inferSelect;
+export type InsertOtpCode = typeof otpCodes.$inferInsert;
+
+export type RolePermission = typeof rolePermissions.$inferSelect;
+export type InsertRolePermission = typeof rolePermissions.$inferInsert;
+
+export type SectorMapping = typeof sectorMappings.$inferSelect;
+export type InsertSectorMapping = typeof sectorMappings.$inferInsert;
+
+export type ScrapingLog = typeof scrapingLogs.$inferSelect;
+export type InsertScrapingLog = typeof scrapingLogs.$inferInsert;
+
+export type SectorUpdateHistory = typeof sectorUpdateHistory.$inferSelect;
+export type InsertSectorUpdateHistory = typeof sectorUpdateHistory.$inferInsert;

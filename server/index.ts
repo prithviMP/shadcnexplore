@@ -1,7 +1,10 @@
+import "dotenv/config";
 import express, { type Request, Response, NextFunction } from "express";
 import cookieParser from "cookie-parser";
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
+import { seedRolePermissions } from "./seedPermissions";
+import { scrapingScheduler } from "./scheduler";
 
 const app = express();
 
@@ -49,6 +52,20 @@ app.use((req, res, next) => {
 });
 
 (async () => {
+  // Seed role permissions on startup
+  try {
+    await seedRolePermissions();
+  } catch (error) {
+    log(`Warning: Failed to seed role permissions: ${error}`);
+  }
+  
+  // Initialize scraping scheduler
+  try {
+    await scrapingScheduler.initialize();
+  } catch (error) {
+    log(`Warning: Failed to initialize scraping scheduler: ${error}`);
+  }
+
   const server = await registerRoutes(app);
 
   app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {

@@ -7,10 +7,13 @@ import { SidebarProvider, SidebarTrigger, SidebarInset } from "@/components/ui/s
 import { ThemeProvider } from "@/components/ThemeProvider";
 import ThemeToggle from "@/components/ThemeToggle";
 import AppSidebar from "@/components/AppSidebar";
+import ProtectedRoute from "@/components/ProtectedRoute";
+import { AuthProvider, useAuth } from "@/contexts/AuthContext";
 import NotFound from "@/pages/not-found";
 import LoginPage from "@/pages/LoginPage";
 import Dashboard from "@/pages/Dashboard";
 import SectorsList from "@/pages/SectorsList";
+import SchedulerSettings from "@/pages/SchedulerSettings";
 import SectorManager from "@/pages/SectorManager";
 import CompanyManager from "@/pages/CompanyManager";
 import CompanyDetail from "@/pages/CompanyDetail";
@@ -18,11 +21,12 @@ import FormulaManager from "@/pages/FormulaManager";
 import QueryBuilder from "@/pages/QueryBuilder";
 import UserManagement from "@/pages/UserManagement";
 import FinancialDataSpreadsheet from "@/pages/FinancialDataSpreadsheet";
-import { useState } from "react";
+import CustomTables from "@/pages/CustomTables";
 
 function AuthenticatedLayout() {
-  const [userRole] = useState<"admin" | "analyst" | "viewer">("admin");
-  const [userName] = useState("Admin User");
+  const { user } = useAuth();
+  const userRole = (user?.role as "admin" | "analyst" | "viewer") || "viewer";
+  const userName = user?.name || "User";
 
   const style = {
     "--sidebar-width": "16rem",
@@ -38,19 +42,77 @@ function AuthenticatedLayout() {
             <SidebarTrigger data-testid="button-sidebar-toggle" />
             <ThemeToggle />
           </header>
-          <main className="flex-1 overflow-auto p-6">
-            <div className="max-w-7xl mx-auto">
+          <main className="flex-1 overflow-auto p-6 w-full min-w-0">
+            <div className="max-w-7xl mx-auto w-full min-w-0">
               <Switch>
-                <Route path="/" component={Dashboard} />
-                <Route path="/sectors" component={SectorsList} />
-                <Route path="/sectors/:sector" component={SectorsList} />
-                <Route path="/sector-manager" component={SectorManager} />
-                <Route path="/company-manager" component={CompanyManager} />
-                <Route path="/company/:ticker" component={CompanyDetail} />
-                <Route path="/query-builder" component={QueryBuilder} />
-                <Route path="/formulas" component={FormulaManager} />
-                <Route path="/users" component={UserManagement} />
-                <Route path="/data-spreadsheet" component={FinancialDataSpreadsheet} />
+                <Route path="/">
+                  <ProtectedRoute>
+                    <Dashboard />
+                  </ProtectedRoute>
+                </Route>
+                <Route path="/sectors">
+                  <ProtectedRoute>
+                    <SectorsList />
+                  </ProtectedRoute>
+                </Route>
+                <Route path="/sectors/:sectorId">
+                  <ProtectedRoute>
+                    <SectorsList />
+                  </ProtectedRoute>
+                </Route>
+                <Route path="/sector-manager">
+                  <ProtectedRoute requiredRole="analyst">
+                    <SectorManager />
+                  </ProtectedRoute>
+                </Route>
+                <Route path="/company-manager">
+                  <ProtectedRoute requiredRole="analyst">
+                    <CompanyManager />
+                  </ProtectedRoute>
+                </Route>
+                <Route path="/company/id/:id">
+                  <ProtectedRoute>
+                    <CompanyDetail />
+                  </ProtectedRoute>
+                </Route>
+                <Route path="/company/:ticker">
+                  <ProtectedRoute>
+                    <CompanyDetail />
+                  </ProtectedRoute>
+                </Route>
+                <Route path="/query-builder">
+                  <ProtectedRoute requiredRole="analyst">
+                    <QueryBuilder />
+                  </ProtectedRoute>
+                </Route>
+                <Route path="/formulas">
+                  <ProtectedRoute requiredRole="admin">
+                    <FormulaManager />
+                  </ProtectedRoute>
+                </Route>
+                <Route path="/users">
+                  <ProtectedRoute requiredRole="admin">
+                    <UserManagement />
+                  </ProtectedRoute>
+                </Route>
+                <Route path="/data-spreadsheet">
+                  <ProtectedRoute requiredRole="analyst">
+                    <FinancialDataSpreadsheet />
+                  </ProtectedRoute>
+                </Route>
+            <Route path="/custom-tables">
+              <ProtectedRoute requiredRole="analyst">
+                <CustomTables />
+              </ProtectedRoute>
+            </Route>
+            <Route path="/scheduler">
+              <ProtectedRoute requiredRole="admin">
+                <SchedulerSettings />
+              </ProtectedRoute>
+            </Route>
+                <Route path="/login">
+                  <LoginPage />
+                </Route>
                 <Route component={NotFound} />
               </Switch>
             </div>
@@ -62,9 +124,17 @@ function AuthenticatedLayout() {
 }
 
 function Router() {
-  const [isAuthenticated] = useState(true);
+  const { user, loading } = useAuth();
 
-  if (!isAuthenticated) {
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
+      </div>
+    );
+  }
+
+  if (!user) {
     return <LoginPage />;
   }
 
@@ -76,8 +146,10 @@ function App() {
     <QueryClientProvider client={queryClient}>
       <ThemeProvider defaultTheme="light">
         <TooltipProvider>
+          <AuthProvider>
           <Router />
           <Toaster />
+          </AuthProvider>
         </TooltipProvider>
       </ThemeProvider>
     </QueryClientProvider>
