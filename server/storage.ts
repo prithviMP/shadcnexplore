@@ -14,6 +14,8 @@ import {
   sectorMappings,
   scrapingLogs,
   sectorUpdateHistory,
+  bulkImportJobs,
+  bulkImportItems,
   type User,
   type InsertUser,
   type Sector,
@@ -40,7 +42,11 @@ import {
   type ScrapingLog,
   type InsertScrapingLog,
   type SectorUpdateHistory,
-  type InsertSectorUpdateHistory
+  type InsertSectorUpdateHistory,
+  type BulkImportJob,
+  type InsertBulkImportJob,
+  type BulkImportItem,
+  type InsertBulkImportItem
 } from "@shared/schema";
 import { eq, and, inArray, desc, sql, gte, lte } from "drizzle-orm";
 import { randomBytes } from "crypto";
@@ -747,6 +753,99 @@ export class DbStorage implements IStorage {
       .where(eq(sectorUpdateHistory.id, id))
       .returning();
     return result[0];
+  }
+
+  // Bulk Import Job operations
+  async createBulkImportJob(job: InsertBulkImportJob): Promise<BulkImportJob> {
+    const result = await db.insert(bulkImportJobs).values(job).returning();
+    return result[0];
+  }
+
+  async getBulkImportJob(id: string): Promise<BulkImportJob | undefined> {
+    const result = await db.select().from(bulkImportJobs).where(eq(bulkImportJobs.id, id)).limit(1);
+    return result[0];
+  }
+
+  async getAllBulkImportJobs(userId?: string, limit: number = 50): Promise<BulkImportJob[]> {
+    let query = db.select().from(bulkImportJobs);
+    
+    if (userId) {
+      query = query.where(eq(bulkImportJobs.userId, userId)) as any;
+    }
+    
+    return await query.orderBy(desc(bulkImportJobs.createdAt)).limit(limit);
+  }
+
+  async updateBulkImportJob(id: string, data: Partial<InsertBulkImportJob>): Promise<BulkImportJob | undefined> {
+    const result = await db
+      .update(bulkImportJobs)
+      .set(data)
+      .where(eq(bulkImportJobs.id, id))
+      .returning();
+    return result[0];
+  }
+
+  async deleteBulkImportJob(id: string): Promise<void> {
+    // Items will be deleted by cascade
+    await db.delete(bulkImportJobs).where(eq(bulkImportJobs.id, id));
+  }
+
+  // Bulk Import Item operations
+  async createBulkImportItem(item: InsertBulkImportItem): Promise<BulkImportItem> {
+    const result = await db.insert(bulkImportItems).values(item).returning();
+    return result[0];
+  }
+
+  async bulkCreateBulkImportItems(items: InsertBulkImportItem[]): Promise<BulkImportItem[]> {
+    if (items.length === 0) return [];
+    const result = await db.insert(bulkImportItems).values(items).returning();
+    return result;
+  }
+
+  async getBulkImportItemsByJob(jobId: string): Promise<BulkImportItem[]> {
+    return await db.select().from(bulkImportItems)
+      .where(eq(bulkImportItems.jobId, jobId))
+      .orderBy(bulkImportItems.createdAt);
+  }
+
+  async getBulkImportItemsByStatus(jobId: string, status: string): Promise<BulkImportItem[]> {
+    return await db.select().from(bulkImportItems)
+      .where(and(
+        eq(bulkImportItems.jobId, jobId),
+        eq(bulkImportItems.status, status)
+      ))
+      .orderBy(bulkImportItems.createdAt);
+  }
+
+  async getNextPendingBulkImportItem(jobId: string): Promise<BulkImportItem | undefined> {
+    const result = await db.select().from(bulkImportItems)
+      .where(and(
+        eq(bulkImportItems.jobId, jobId),
+        eq(bulkImportItems.status, 'pending')
+      ))
+      .orderBy(bulkImportItems.createdAt)
+      .limit(1);
+    return result[0];
+  }
+
+  async updateBulkImportItem(id: string, data: Partial<InsertBulkImportItem>): Promise<BulkImportItem | undefined> {
+    const result = await db
+      .update(bulkImportItems)
+      .set(data)
+      .where(eq(bulkImportItems.id, id))
+      .returning();
+    return result[0];
+  }
+
+  async getBulkImportStats(jobId: string): Promise<{ pending: number; processing: number; success: number; failed: number; skipped: number }> {
+    const items = await db.select().from(bulkImportItems).where(eq(bulkImportItems.jobId, jobId));
+    return {
+      pending: items.filter(i => i.status === 'pending').length,
+      processing: items.filter(i => i.status === 'processing').length,
+      success: items.filter(i => i.status === 'success').length,
+      failed: items.filter(i => i.status === 'failed').length,
+      skipped: items.filter(i => i.status === 'skipped').length,
+    };
   }
 }
 

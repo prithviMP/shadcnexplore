@@ -44,7 +44,10 @@ export type Permission =
   // Dashboard & Reports
   | "dashboard:view"
   | "reports:view"
-  | "reports:export";
+  | "reports:export"
+  // Settings
+  | "settings:read"
+  | "settings:write";
 
 export interface RolePermissions {
   role: string;
@@ -91,6 +94,8 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<string, Permission[]> = {
     "dashboard:view",
     "reports:view",
     "reports:export",
+    "settings:read",
+    "settings:write",
   ],
   analyst: [
     // Can read and create, but limited updates/deletes
@@ -115,6 +120,8 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<string, Permission[]> = {
     "dashboard:view",
     "reports:view",
     "reports:export",
+    "settings:read",
+    "settings:write",
   ],
   viewer: [
     // Read-only access, can only see buy signals

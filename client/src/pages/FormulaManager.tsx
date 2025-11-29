@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -12,12 +12,14 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { useToast } from "@/hooks/use-toast";
-import { Plus, Pencil, Trash2, TestTube, Loader2, Play, Search } from "lucide-react";
+import { Plus, Pencil, Trash2, TestTube, Loader2, Play, Search, Calculator, BarChart3 } from "lucide-react";
 import SignalBadge from "@/components/SignalBadge";
 import { queryClient, apiRequest } from "@/lib/queryClient";
-import { insertFormulaSchema, type Formula } from "@shared/schema";
+import { insertFormulaSchema, type Formula, type Company } from "@shared/schema";
 import { z } from "zod";
+import { sortQuarters, formatQuarterWithLabel } from "@/utils/quarterUtils";
 
 const formulaFormSchema = insertFormulaSchema.extend({
   scopeValue: z.string().optional().nullable(),
@@ -25,17 +27,121 @@ const formulaFormSchema = insertFormulaSchema.extend({
 
 type FormulaFormData = z.infer<typeof formulaFormSchema>;
 
+// Helper to format values for display
+const formatValue = (value: number | string | null, metric: string): string => {
+  if (value === null || value === undefined) return "—";
+  
+  const numValue = typeof value === 'string' ? parseFloat(value) : value;
+  if (isNaN(numValue)) return String(value);
+  
+  const metricLower = metric.toLowerCase();
+  
+  // Format percentages
+  if (metricLower.includes('%') || metricLower.includes('growth') || metricLower.includes('margin')) {
+    return `${numValue.toFixed(2)}%`;
+  }
+  
+  // Format currency values (large numbers)
+  if (metricLower.includes('sales') || metricLower.includes('profit') || metricLower.includes('revenue') || 
+      metricLower.includes('income') || metricLower.includes('expense') || metricLower.includes('tax')) {
+    if (Math.abs(numValue) >= 10000000) {
+      return `₹${(numValue / 10000000).toFixed(2)} Cr`;
+    }
+    if (Math.abs(numValue) >= 100000) {
+      return `₹${(numValue / 100000).toFixed(2)} L`;
+    }
+    if (Math.abs(numValue) >= 1000) {
+      return `₹${(numValue / 1000).toFixed(2)} K`;
+    }
+    return `₹${numValue.toFixed(2)}`;
+  }
+  
+  // EPS in Rs - show with rupee symbol
+  if (metricLower.includes('eps') && !metricLower.includes('%')) {
+    return `₹${numValue.toFixed(2)}`;
+  }
+  
+  return numValue.toFixed(2);
+};
+
 export default function FormulaManager() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingFormula, setEditingFormula] = useState<Formula | null>(null);
   const [testingFormula, setTestingFormula] = useState<{ formula: Formula; ticker: string } | null>(null);
-  const [testTicker, setTestTicker] = useState("RELIANCE");
+  const [selectedCompanyId, setSelectedCompanyId] = useState<string>("");
   const [previewResult, setPreviewResult] = useState<any>(null);
+  const [showQuarterlyData, setShowQuarterlyData] = useState(false);
   const { toast } = useToast();
 
   const { data: formulas = [], isLoading } = useQuery<Formula[]>({
     queryKey: ["/api/formulas"],
   });
+
+  // Fetch companies for selection
+  const { data: companies = [] } = useQuery<Company[]>({
+    queryKey: ["/api/companies"],
+  });
+
+  // Get the selected company's ticker
+  const selectedCompany = useMemo(() => {
+    return companies.find(c => c.id === selectedCompanyId);
+  }, [companies, selectedCompanyId]);
+
+  const testTicker = selectedCompany?.ticker || "";
+
+  // Fetch quarterly data for selected company
+  const { data: quarterlyData, isLoading: quarterlyLoading } = useQuery<{
+    ticker: string;
+    quarters: Array<{
+      quarter: string;
+      metrics: Record<string, number | string>;
+    }>;
+  }>({
+    queryKey: ["/api/v1/companies", testTicker, "data"],
+    queryFn: async () => {
+      if (!testTicker) return { ticker: "", quarters: [] };
+      const res = await apiRequest("GET", `/api/v1/companies/${testTicker}/data`);
+      return res.json();
+    },
+    enabled: !!testTicker && dialogOpen,
+  });
+
+  // Sort quarterly data (most recent last)
+  const sortedQuarterlyData = useMemo(() => {
+    if (!quarterlyData?.quarters) return null;
+    const sortedQuarters = sortQuarters(quarterlyData.quarters.map(q => q.quarter));
+    const quartersMap = new Map(quarterlyData.quarters.map(q => [q.quarter, q]));
+    return {
+      ...quarterlyData,
+      quarters: sortedQuarters.map(q => quartersMap.get(q)!).filter(Boolean),
+    };
+  }, [quarterlyData]);
+
+  // Get available metrics
+  const availableMetrics = useMemo(() => {
+    if (!sortedQuarterlyData?.quarters?.length) return [];
+    return Object.keys(sortedQuarterlyData.quarters[0].metrics);
+  }, [sortedQuarterlyData]);
+
+  // Default 6 metrics to display
+  const displayMetrics = useMemo(() => {
+    const defaultMetricNames = [
+      'Sales',
+      'Sales Growth(YoY) %',
+      'Sales Growth(QoQ) %',
+      'EPS in Rs',
+      'EPS Growth(YoY) %',
+      'EPS Growth(QoQ) %',
+    ];
+    const matched = defaultMetricNames.filter(m => availableMetrics.includes(m));
+    return matched.length > 0 ? matched : availableMetrics.slice(0, 6);
+  }, [availableMetrics]);
+
+  // Get last 12 quarters
+  const displayQuarters = useMemo(() => {
+    if (!sortedQuarterlyData?.quarters) return [];
+    return sortedQuarterlyData.quarters.slice(-12);
+  }, [sortedQuarterlyData]);
 
   const form = useForm<FormulaFormData>({
     resolver: zodResolver(formulaFormSchema),
@@ -51,13 +157,22 @@ export default function FormulaManager() {
   });
 
   const createFormula = useMutation({
-    mutationFn: async (data: FormulaFormData) =>
-      apiRequest("POST", "/api/formulas", data),
-    onSuccess: () => {
+    mutationFn: async (data: FormulaFormData) => {
+      const res = await apiRequest("POST", "/api/formulas", data);
+      return res.json();
+    },
+    onSuccess: (data: Formula) => {
       queryClient.invalidateQueries({ queryKey: ["/api/formulas"] });
       toast({ title: "Formula created successfully" });
       setDialogOpen(false);
       form.reset();
+      
+      // Navigate to formula builder if scope is company or sector
+      if (data.scope === "company" && data.scopeValue) {
+        window.location.href = `/formula-builder?type=company&id=${data.scopeValue}`;
+      } else if (data.scope === "sector" && data.scopeValue) {
+        window.location.href = `/formula-builder?type=sector&id=${data.scopeValue}`;
+      }
     },
     onError: (error: any) => {
       toast({
@@ -182,17 +297,15 @@ export default function FormulaManager() {
   };
 
   const handleEdit = (formula: Formula) => {
-    setEditingFormula(formula);
-    form.reset({
-      name: formula.name,
-      scope: formula.scope,
-      scopeValue: formula.scopeValue,
-      condition: formula.condition,
-      signal: formula.signal,
-      priority: formula.priority,
-      enabled: formula.enabled,
-    });
-    setDialogOpen(true);
+    // Navigate to formula builder with the formula's scope and scopeValue
+    if (formula.scope === "company" && formula.scopeValue) {
+      window.location.href = `/formula-builder?type=company&id=${formula.scopeValue}&formulaId=${formula.id}`;
+    } else if (formula.scope === "sector" && formula.scopeValue) {
+      window.location.href = `/formula-builder?type=sector&id=${formula.scopeValue}&formulaId=${formula.id}`;
+    } else {
+      // For global formulas, just navigate to formula builder
+      window.location.href = `/formula-builder?formulaId=${formula.id}`;
+    }
   };
 
   const handleOpenChange = (open: boolean) => {
@@ -212,214 +325,41 @@ export default function FormulaManager() {
   };
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
+    <div className="space-y-4 sm:space-y-6">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h1 className="text-3xl font-bold bg-gradient-to-r from-slate-900 to-slate-700 dark:from-white dark:to-slate-300 bg-clip-text text-transparent">
+          <h1 className="text-2xl sm:text-3xl font-bold bg-gradient-to-r from-slate-900 to-slate-700 dark:from-white dark:to-slate-300 bg-clip-text text-transparent">
             Formula Manager
           </h1>
-          <p className="text-muted-foreground mt-1">Define and manage signal generation formulas</p>
+          <p className="text-sm sm:text-base text-muted-foreground mt-1">Define and manage signal generation formulas</p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex gap-2 shrink-0">
           <Button
             onClick={() => calculateSignals.mutate()}
             disabled={calculateSignals.isPending}
             variant="outline"
+            size="sm"
             className="border-emerald-600 text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/30"
             data-testid="button-calculate-signals"
           >
             {calculateSignals.isPending ? (
-              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+              <Loader2 className="h-4 w-4 sm:mr-2 animate-spin" />
             ) : (
-              <Play className="h-4 w-4 mr-2" />
+              <Play className="h-4 w-4 sm:mr-2" />
             )}
-            Calculate Signals
+            <span className="hidden sm:inline">Calculate Signals</span>
           </Button>
-          <Dialog open={dialogOpen} onOpenChange={handleOpenChange}>
-            <DialogTrigger asChild>
-              <Button onClick={() => { setEditingFormula(null); form.reset(); }} className="bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 shadow-lg" data-testid="button-add-formula">
-                <Plus className="h-4 w-4 mr-2" />
-                Add Formula
-              </Button>
-            </DialogTrigger>
-            <DialogContent className="max-w-2xl bg-white/95 dark:bg-slate-900/95 backdrop-blur-sm border-slate-200 dark:border-slate-800">
-              <DialogHeader>
-                <DialogTitle className="text-xl">{editingFormula ? "Edit Formula" : "Create New Formula"}</DialogTitle>
-                <DialogDescription>Define the conditions for signal generation</DialogDescription>
-              </DialogHeader>
-              <Form {...form}>
-                <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4 py-4">
-                  <FormField
-                    control={form.control}
-                    name="name"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel className="font-medium">Formula Name</FormLabel>
-                        <FormControl>
-                          <Input {...field} placeholder="e.g., High ROE Stocks" className="h-11" data-testid="input-formula-name" />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                  <div className="grid grid-cols-2 gap-4">
-                    <FormField
-                      control={form.control}
-                      name="scope"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel className="font-medium">Scope</FormLabel>
-                          <Select onValueChange={field.onChange} value={field.value}>
-                            <FormControl>
-                              <SelectTrigger className="h-11" data-testid="select-scope">
-                                <SelectValue />
-                              </SelectTrigger>
-                            </FormControl>
-                            <SelectContent>
-                              <SelectItem value="global">Global</SelectItem>
-                              <SelectItem value="sector">Sector</SelectItem>
-                              <SelectItem value="company">Company</SelectItem>
-                            </SelectContent>
-                          </Select>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-                    <FormField
-                      control={form.control}
-                      name="signal"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel className="font-medium">Signal Type</FormLabel>
-                          <Select onValueChange={field.onChange} value={field.value}>
-                            <FormControl>
-                              <SelectTrigger className="h-11" data-testid="select-signal">
-                                <SelectValue />
-                              </SelectTrigger>
-                            </FormControl>
-                            <SelectContent>
-                              <SelectItem value="BUY">BUY</SelectItem>
-                              <SelectItem value="SELL">SELL</SelectItem>
-                              <SelectItem value="HOLD">HOLD</SelectItem>
-                              <SelectItem value="Check_OPM (Sell)">Check_OPM (Sell)</SelectItem>
-                              <SelectItem value="No Signal">No Signal</SelectItem>
-                            </SelectContent>
-                          </Select>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-                  </div>
-                  <FormField
-                    control={form.control}
-                    name="scopeValue"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel className="font-medium">Scope Value (optional)</FormLabel>
-                        <FormControl>
-                          <Input {...field} value={field.value || ""} placeholder="e.g., Technology (for sector-specific formulas)" className="h-11" data-testid="input-scope-value" />
-                        </FormControl>
-                        <FormDescription className="text-xs">
-                          Required for sector/company scoped formulas
-                        </FormDescription>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                  <FormField
-                    control={form.control}
-                    name="condition"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel className="font-medium">Formula Condition</FormLabel>
-                        <FormControl>
-                          <Textarea
-                            {...field}
-                            placeholder='Simple: ROE > 20 AND PE < 15\nExcel: IF(AND(Q14>0, P14>0, Q12>=20%, Q15>=20%, ...), "BUY", IF(..., "Check_OPM (Sell)", "No Signal"))'
-                            className="font-mono text-sm min-h-32 bg-slate-50 dark:bg-slate-900/50"
-                            rows={8}
-                            data-testid="input-condition"
-                          />
-                        </FormControl>
-                        <FormDescription className="text-xs space-y-1">
-                          <div><strong>Simple formulas:</strong> Use metrics like ROE, PE, PEG, Revenue_Growth, Debt_to_Equity, etc.</div>
-                          <div><strong>Excel formulas:</strong> Use Q12-Q16 (current quarter) and P12-P16 (previous quarter) metrics:</div>
-                          <div className="ml-4">• Q12/P12: Sales Growth (YoY) %</div>
-                          <div className="ml-4">• Q13/P13: EPS Growth (YoY) %</div>
-                          <div className="ml-4">• Q14/P14: OPM %</div>
-                          <div className="ml-4">• Q15/P15: Sales Growth (QoQ) %</div>
-                          <div className="ml-4">• Q16/P16: EPS Growth (QoQ) %</div>
-                          <div>Supports: IF(), AND(), OR(), NOT(), ISNUMBER(), MIN(), ABS()</div>
-                        </FormDescription>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-
-                  <div className="p-4 border rounded-lg bg-slate-50 dark:bg-slate-900/50 space-y-4">
-                    <div className="flex items-center justify-between">
-                      <h3 className="text-sm font-medium">Real-time Preview</h3>
-                      {evaluatePreview.isPending && <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />}
-                    </div>
-
-                    <div className="grid grid-cols-3 gap-4">
-                      <div className="col-span-1">
-                        <label className="text-xs font-medium mb-1.5 block text-muted-foreground">Test Ticker</label>
-                        <Input
-                          value={testTicker}
-                          onChange={(e) => setTestTicker(e.target.value)}
-                          placeholder="e.g. RELIANCE"
-                          className="h-8 text-xs"
-                        />
-                      </div>
-                      <div className="col-span-2">
-                        <label className="text-xs font-medium mb-1.5 block text-muted-foreground">Result</label>
-                        <div className="h-8 px-3 py-1.5 rounded-md border bg-background text-xs font-mono flex items-center">
-                          {previewResult ? (
-                            <span className={
-                              previewResult.result === "BUY" ? "text-green-600 font-bold" :
-                                previewResult.result === "SELL" || (typeof previewResult.result === 'string' && previewResult.result.includes("Sell")) ? "text-red-600 font-bold" :
-                                  "text-muted-foreground"
-                            }>
-                              {String(previewResult.result)}
-                            </span>
-                          ) : (
-                            <span className="text-muted-foreground italic">Waiting for input...</span>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-
-                  <FormField
-                    control={form.control}
-                    name="priority"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel className="font-medium">Priority (lower = higher priority)</FormLabel>
-                        <FormControl>
-                          <Input {...field} type="number" onChange={e => field.onChange(parseInt(e.target.value))} className="h-11" data-testid="input-priority" />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                  <DialogFooter>
-                    <Button type="button" variant="outline" onClick={() => handleOpenChange(false)}>Cancel</Button>
-                    <Button
-                      type="submit"
-                      disabled={createFormula.isPending || updateFormula.isPending}
-                      className="bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700"
-                      data-testid="button-save-formula"
-                    >
-                      {(createFormula.isPending || updateFormula.isPending) && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-                      Save Formula
-                    </Button>
-                  </DialogFooter>
-                </form>
-              </Form>
-            </DialogContent>
-          </Dialog>
+          <Button 
+            onClick={() => { 
+              window.location.href = "/formula-builder";
+            }} 
+            size="sm" 
+            className="bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 shadow-lg" 
+            data-testid="button-add-formula"
+          >
+            <Plus className="h-4 w-4 sm:mr-2" />
+            <span className="hidden sm:inline">Add Formula</span>
+          </Button>
         </div>
       </div>
 

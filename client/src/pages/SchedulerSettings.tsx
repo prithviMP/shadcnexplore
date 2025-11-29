@@ -1,14 +1,16 @@
-import { useState, useEffect } from "react";
-import { useQuery, useMutation } from "@tanstack/react-query";
+import { useState, useEffect, useRef } from "react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Clock, Play, Pause, Calendar, RefreshCw, Loader2, CheckCircle2, XCircle, AlertCircle, History, Eye, User } from "lucide-react";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Input } from "@/components/ui/input";
+import { Clock, Play, Pause, Calendar, RefreshCw, Loader2, CheckCircle2, XCircle, AlertCircle, History, Eye, User, Upload, Download, Trash2, FileText, Search, Filter } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import type { Sector } from "@shared/schema";
+import type { Sector, BulkImportJob, BulkImportItem } from "@shared/schema";
 import { apiRequest } from "@/lib/queryClient";
 
 // Helper function to format date
@@ -19,7 +21,7 @@ const formatTimeAgo = (date: string): string => {
   const diffMins = Math.floor(diffMs / 60000);
   const diffHours = Math.floor(diffMs / 3600000);
   const diffDays = Math.floor(diffMs / 86400000);
-  
+
   if (diffMins < 1) return "just now";
   if (diffMins < 60) return `${diffMins} minute${diffMins > 1 ? 's' : ''} ago`;
   if (diffHours < 24) return `${diffHours} hour${diffHours > 1 ? 's' : ''} ago`;
@@ -69,10 +71,56 @@ interface HistoryEntry {
   createdAt: string;
 }
 
+interface BulkImportJobWithDetails {
+  id: string;
+  userId: string;
+  fileName: string;
+  status: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled' | 'paused';
+  totalItems: number;
+  processedItems: number;
+  successItems: number;
+  failedItems: number;
+  skippedItems: number;
+  error?: string;
+  startedAt?: string;
+  completedAt?: string;
+  createdAt: string;
+  items?: BulkImportItemType[];
+  stats?: {
+    pending: number;
+    processing: number;
+    success: number;
+    failed: number;
+    skipped: number;
+  };
+}
+
+interface BulkImportItemType {
+  id: string;
+  jobId: string;
+  ticker: string;
+  companyName: string;
+  sectorName: string;
+  status: 'pending' | 'processing' | 'success' | 'failed' | 'skipped';
+  resolvedTicker?: string;
+  sectorId?: string;
+  companyId?: string;
+  error?: string;
+  quartersScraped?: number;
+  metricsScraped?: number;
+  processedAt?: string;
+  createdAt: string;
+}
+
 export default function SchedulerSettings() {
   const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [currentTaskId, setCurrentTaskId] = useState<string | null>(null);
   const [selectedHistory, setSelectedHistory] = useState<HistoryEntry | null>(null);
+  const [selectedBulkJob, setSelectedBulkJob] = useState<BulkImportJobWithDetails | null>(null);
+  const [bulkJobSearch, setBulkJobSearch] = useState("");
+  const [bulkItemFilter, setBulkItemFilter] = useState<"all" | "pending" | "success" | "failed" | "processing">("all");
 
   const { data: sectors } = useQuery<Sector[]>({
     queryKey: ["/api/sectors"]
@@ -82,9 +130,10 @@ export default function SchedulerSettings() {
   const { data: taskStatus } = useQuery<TaskStatus>({
     queryKey: ["/api/v1/scheduler/task", currentTaskId],
     enabled: !!currentTaskId,
-    refetchInterval: (data) => {
+    refetchInterval: (query) => {
       // Poll every 2 seconds if task is running
-      if (data?.status === 'running' || data?.status === 'pending') {
+      const status = query.state.data;
+      if (status?.status === 'running' || status?.status === 'pending') {
         return 2000;
       }
       return false;
@@ -103,6 +152,53 @@ export default function SchedulerSettings() {
       return [];
     },
   });
+
+  // Fetch bulk import jobs
+  const { data: bulkImportJobs, refetch: refetchBulkJobs } = useQuery<BulkImportJobWithDetails[]>({
+    queryKey: ["/api/v1/bulk-import/jobs"],
+    retry: false,
+    refetchInterval: (query) => {
+      // Poll every 3 seconds if any job is running
+      const jobs = query.state.data;
+      if (Array.isArray(jobs) && jobs.some(job => job.status === 'running' || job.status === 'pending')) {
+        return 3000;
+      }
+      return false;
+    },
+  });
+
+  // Fetch selected bulk job details - use custom fetch to avoid query key issues
+  const fetchJobDetails = async (jobId: string) => {
+    try {
+      const response = await apiRequest("GET", `/api/v1/bulk-import/jobs/${jobId}`);
+      const data = await response.json();
+      setSelectedBulkJob(data);
+    } catch (err: any) {
+      toast({
+        title: "Error",
+        description: err.message || "Failed to load job details",
+        variant: "destructive",
+      });
+    }
+  };
+
+  // Poll for job updates when viewing a running job
+  useEffect(() => {
+    if (!selectedBulkJob || selectedBulkJob.status !== 'running') return;
+
+    const interval = setInterval(async () => {
+      try {
+        const response = await apiRequest("GET", `/api/v1/bulk-import/jobs/${selectedBulkJob.id}`);
+        const data = await response.json();
+        setSelectedBulkJob(data);
+      } catch (err) {
+        // Ignore errors during polling
+      }
+    }, 2000);
+
+    return () => clearInterval(interval);
+  }, [selectedBulkJob?.id, selectedBulkJob?.status]);
+
 
   // Start updating all sectors
   const startUpdateMutation = useMutation({
@@ -125,6 +221,243 @@ export default function SchedulerSettings() {
       });
     },
   });
+
+  // Create bulk import job
+  const createBulkImportMutation = useMutation({
+    mutationFn: async (data: { fileName: string; items: { ticker: string; name: string; sector: string }[] }) => {
+      const response = await apiRequest("POST", "/api/v1/bulk-import/jobs", data);
+      return await response.json();
+    },
+    onSuccess: (data) => {
+      toast({
+        title: "Import Job Created",
+        description: `Created job with ${data.job.totalItems} companies. Click "Start" to begin processing.`,
+      });
+      refetchBulkJobs();
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to create import job",
+        variant: "destructive",
+      });
+    },
+  });
+
+  // Start bulk import job
+  const startBulkImportMutation = useMutation({
+    mutationFn: async (jobId: string) => {
+      const response = await apiRequest("POST", `/api/v1/bulk-import/jobs/${jobId}/start`);
+      return await response.json();
+    },
+    onSuccess: () => {
+      toast({
+        title: "Import Started",
+        description: "Processing companies in the background. Progress will update automatically.",
+      });
+      refetchBulkJobs();
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to start import",
+        variant: "destructive",
+      });
+    },
+  });
+
+  // Cancel bulk import job
+  const cancelBulkImportMutation = useMutation({
+    mutationFn: async (jobId: string) => {
+      const response = await apiRequest("POST", `/api/v1/bulk-import/jobs/${jobId}/cancel`);
+      return await response.json();
+    },
+    onSuccess: () => {
+      toast({
+        title: "Import Cancelled",
+        description: "The import job has been cancelled.",
+      });
+      refetchBulkJobs();
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to cancel import",
+        variant: "destructive",
+      });
+    },
+  });
+
+  // Pause bulk import job
+  const pauseBulkImportMutation = useMutation({
+    mutationFn: async (jobId: string) => {
+      const response = await apiRequest("POST", `/api/v1/bulk-import/jobs/${jobId}/pause`);
+      return await response.json();
+    },
+    onSuccess: () => {
+      toast({
+        title: "Import Paused",
+        description: "The import job has been paused.",
+      });
+      refetchBulkJobs();
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to pause import",
+        variant: "destructive",
+      });
+    },
+  });
+
+  // Resume bulk import job
+  const resumeBulkImportMutation = useMutation({
+    mutationFn: async (jobId: string) => {
+      const response = await apiRequest("POST", `/api/v1/bulk-import/jobs/${jobId}/resume`);
+      return await response.json();
+    },
+    onSuccess: () => {
+      toast({
+        title: "Import Resumed",
+        description: "The import job has resumed processing.",
+      });
+      refetchBulkJobs();
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to resume import",
+        variant: "destructive",
+      });
+    },
+  });
+
+  // Retry failed items in bulk import job
+  const retryBulkImportMutation = useMutation({
+    mutationFn: async (jobId: string) => {
+      const response = await apiRequest("POST", `/api/v1/bulk-import/jobs/${jobId}/retry`);
+      return await response.json();
+    },
+    onSuccess: (data) => {
+      toast({
+        title: "Retry Started",
+        description: `Retrying ${data.retriedItems} failed items.`,
+      });
+      refetchBulkJobs();
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to retry import",
+        variant: "destructive",
+      });
+    },
+  });
+
+  // Delete bulk import job
+  const deleteBulkImportMutation = useMutation({
+    mutationFn: async (jobId: string) => {
+      const response = await apiRequest("DELETE", `/api/v1/bulk-import/jobs/${jobId}`);
+      return await response.json();
+    },
+    onSuccess: () => {
+      toast({
+        title: "Job Deleted",
+        description: "The import job has been deleted.",
+      });
+      setSelectedBulkJob(null);
+      refetchBulkJobs();
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to delete job",
+        variant: "destructive",
+      });
+    },
+  });
+
+  // Handle CSV file upload
+  const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const text = e.target?.result as string;
+      const lines = text.split("\n").filter(line => line.trim());
+
+      // Skip header row
+      const dataRows = lines.slice(1);
+
+      const items: { ticker: string; name: string; sector: string }[] = [];
+
+      for (const row of dataRows) {
+        // Parse CSV with proper handling of quoted fields
+        const matches = row.match(/(?:^|,)("(?:[^"]*(?:""[^"]*)*)"|[^,]*)/g);
+        if (matches && matches.length >= 3) {
+          const cols = matches.map(m => {
+            let val = m.replace(/^,/, "").trim();
+            // Remove surrounding quotes and unescape double quotes
+            if (val.startsWith('"') && val.endsWith('"')) {
+              val = val.slice(1, -1).replace(/""/g, '"');
+            }
+            return val;
+          });
+
+          if (cols[0] && cols[1] && cols[2]) {
+            items.push({
+              ticker: cols[0].trim(),
+              name: cols[1].trim(),
+              sector: cols[2].trim(),
+            });
+          }
+        }
+      }
+
+      if (items.length === 0) {
+        toast({
+          title: "Invalid CSV",
+          description: "No valid rows found. CSV should have columns: ticker, name, sector",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      createBulkImportMutation.mutate({
+        fileName: file.name,
+        items,
+      });
+    };
+
+    reader.readAsText(file);
+
+    // Reset file input
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
+    }
+  };
+
+  // Download CSV export
+  const downloadExport = async (jobId: string, status?: string) => {
+    try {
+      const url = `/api/v1/bulk-import/jobs/${jobId}/export${status ? `?status=${status}` : ""}`;
+      const response = await apiRequest("GET", url);
+      const blob = await response.blob();
+
+      const link = document.createElement("a");
+      link.href = URL.createObjectURL(blob);
+      link.download = `bulk-import-${jobId}-${status || "all"}.csv`;
+      link.click();
+      URL.revokeObjectURL(link.href);
+    } catch (error: any) {
+      toast({
+        title: "Download Failed",
+        description: error.message || "Failed to download CSV",
+        variant: "destructive",
+      });
+    }
+  };
 
   // Show toast when task completes
   useEffect(() => {
@@ -326,6 +659,373 @@ export default function SchedulerSettings() {
         </CardContent>
       </Card>
 
+      {/* Bulk Import Section */}
+      <Card>
+        <CardHeader>
+          <div className="flex items-center justify-between flex-wrap gap-4">
+            <div>
+              <CardTitle className="flex items-center gap-2">
+                <Upload className="h-5 w-5" />
+                Bulk Import Companies
+              </CardTitle>
+              <CardDescription>
+                Upload a CSV file to bulk import companies and scrape their data. CSV format: ticker, name, sector
+              </CardDescription>
+            </div>
+            <div className="flex items-center gap-2">
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".csv"
+                onChange={handleFileUpload}
+                className="hidden"
+              />
+              <Button
+                onClick={() => fileInputRef.current?.click()}
+                disabled={createBulkImportMutation.isPending}
+              >
+                {createBulkImportMutation.isPending ? (
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                ) : (
+                  <Upload className="h-4 w-4 mr-2" />
+                )}
+                Upload CSV
+              </Button>
+              <Button variant="outline" onClick={() => refetchBulkJobs()}>
+                <RefreshCw className="h-4 w-4" />
+              </Button>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent>
+          {bulkImportJobs && bulkImportJobs.length > 0 ? (
+            <div className="space-y-4">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>File</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead>Progress</TableHead>
+                    <TableHead>Results</TableHead>
+                    <TableHead>Created</TableHead>
+                    <TableHead>Actions</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {bulkImportJobs.map((job) => (
+                    <TableRow key={job.id}>
+                      <TableCell>
+                        <div className="flex items-center gap-2">
+                          <FileText className="h-4 w-4 text-muted-foreground" />
+                          <span className="font-medium truncate max-w-[150px]">{job.fileName}</span>
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <Badge
+                          variant={
+                            job.status === 'completed' ? 'default' :
+                              job.status === 'failed' ? 'destructive' :
+                                job.status === 'running' ? 'secondary' :
+                                  job.status === 'paused' ? 'secondary' :
+                                    job.status === 'cancelled' ? 'outline' : 'outline'
+                          }
+                          className={job.status === 'paused' ? 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200' : ''}
+                        >
+                          {job.status === 'running' && <Loader2 className="h-3 w-3 mr-1 animate-spin" />}
+                          {job.status === 'completed' && <CheckCircle2 className="h-3 w-3 mr-1" />}
+                          {job.status === 'failed' && <XCircle className="h-3 w-3 mr-1" />}
+                          {job.status === 'paused' && <Pause className="h-3 w-3 mr-1" />}
+                          {job.status.charAt(0).toUpperCase() + job.status.slice(1)}
+                        </Badge>
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex items-center gap-2">
+                          <Progress
+                            value={job.totalItems > 0 ? (job.processedItems / job.totalItems) * 100 : 0}
+                            className="h-2 w-20"
+                          />
+                          <span className="text-xs text-muted-foreground">
+                            {job.processedItems}/{job.totalItems}
+                          </span>
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <div className="text-xs space-x-2">
+                          <span className="text-green-600">{job.successItems} ✓</span>
+                          <span className="text-red-600">{job.failedItems} ✗</span>
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <span className="text-xs text-muted-foreground">
+                          {formatTimeAgo(job.createdAt)}
+                        </span>
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex items-center gap-1">
+                          {job.status === 'pending' && (
+                            <Button
+                              size="sm"
+                              variant="default"
+                              onClick={() => startBulkImportMutation.mutate(job.id)}
+                              disabled={startBulkImportMutation.isPending}
+                            >
+                              <Play className="h-3 w-3 mr-1" />
+                              Start
+                            </Button>
+                          )}
+
+                          {job.status === 'running' && (
+                            <>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => pauseBulkImportMutation.mutate(job.id)}
+                                disabled={pauseBulkImportMutation.isPending}
+                              >
+                                <Pause className="h-3 w-3 mr-1" />
+                                Pause
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => cancelBulkImportMutation.mutate(job.id)}
+                                disabled={cancelBulkImportMutation.isPending}
+                              >
+                                <XCircle className="h-3 w-3 mr-1" />
+                                Cancel
+                              </Button>
+                            </>
+                          )}
+                          {job.status === 'paused' && (
+                            <>
+                              <Button
+                                size="sm"
+                                variant="default"
+                                onClick={() => resumeBulkImportMutation.mutate(job.id)}
+                                disabled={resumeBulkImportMutation.isPending}
+                              >
+                                <Play className="h-3 w-3 mr-1" />
+                                Resume
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => cancelBulkImportMutation.mutate(job.id)}
+                                disabled={cancelBulkImportMutation.isPending}
+                              >
+                                <XCircle className="h-3 w-3 mr-1" />
+                                Cancel
+                              </Button>
+                            </>
+                          )}
+                          {/* Show Resume for any incomplete job (failed/completed with unprocessed items) */}
+                          {(job.status === 'completed' || job.status === 'failed' || job.status === 'cancelled') &&
+                            (job.processedItems < job.totalItems || job.failedItems > 0) && (
+                              <>
+                                <Button
+                                  size="sm"
+                                  variant="default"
+                                  onClick={() => resumeBulkImportMutation.mutate(job.id)}
+                                  disabled={resumeBulkImportMutation.isPending}
+                                >
+                                  <Play className="h-3 w-3 mr-1" />
+                                  Resume
+                                </Button>
+                                {job.failedItems > 0 && (
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    onClick={() => retryBulkImportMutation.mutate(job.id)}
+                                    disabled={retryBulkImportMutation.isPending}
+                                  >
+                                    <RefreshCw className="h-3 w-3 mr-1" />
+                                    Retry Failed
+                                  </Button>
+                                )}
+                              </>
+                            )}
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => fetchJobDetails(job.id)}
+                          >
+                            <Eye className="h-3 w-3" />
+                          </Button>
+                          {(job.status === 'completed' || job.status === 'failed' || job.status === 'cancelled') && (
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className="text-red-600 hover:text-red-700"
+                              onClick={() => {
+                                if (confirm("Are you sure you want to delete this job?")) {
+                                  deleteBulkImportMutation.mutate(job.id);
+                                }
+                              }}
+                            >
+                              <Trash2 className="h-3 w-3" />
+                            </Button>
+                          )}
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          ) : (
+            <div className="text-center py-8 text-muted-foreground">
+              <Upload className="h-12 w-12 mx-auto mb-4 opacity-50" />
+              <p>No bulk import jobs yet</p>
+              <p className="text-sm mt-2">Upload a CSV file with columns: ticker, name, sector</p>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Bulk Import Job Details Dialog */}
+      <Dialog open={!!selectedBulkJob} onOpenChange={(open) => !open && setSelectedBulkJob(null)}>
+        <DialogContent className="max-w-5xl max-h-[85vh] overflow-hidden flex flex-col">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <FileText className="h-5 w-5" />
+              Bulk Import: {selectedBulkJob?.fileName}
+            </DialogTitle>
+            <DialogDescription>
+              View import progress and download results
+            </DialogDescription>
+          </DialogHeader>
+
+          {selectedBulkJob && (
+            <div className="flex-1 overflow-hidden flex flex-col space-y-4">
+              {/* Stats */}
+              <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+                <div className="p-3 bg-muted rounded-lg text-center">
+                  <div className="text-2xl font-bold">{selectedBulkJob.totalItems}</div>
+                  <div className="text-xs text-muted-foreground">Total</div>
+                </div>
+                <div className="p-3 bg-muted rounded-lg text-center">
+                  <div className="text-2xl font-bold">{selectedBulkJob.processedItems}</div>
+                  <div className="text-xs text-muted-foreground">Processed</div>
+                </div>
+                <div className="p-3 bg-green-50 dark:bg-green-950/20 rounded-lg text-center">
+                  <div className="text-2xl font-bold text-green-600">{selectedBulkJob.successItems}</div>
+                  <div className="text-xs text-green-600">Success</div>
+                </div>
+                <div className="p-3 bg-red-50 dark:bg-red-950/20 rounded-lg text-center">
+                  <div className="text-2xl font-bold text-red-600">{selectedBulkJob.failedItems}</div>
+                  <div className="text-xs text-red-600">Failed</div>
+                </div>
+                <div className="p-3 bg-muted rounded-lg text-center">
+                  <div className="text-2xl font-bold">{selectedBulkJob.skippedItems}</div>
+                  <div className="text-xs text-muted-foreground">Skipped</div>
+                </div>
+              </div>
+
+              {/* Progress Bar */}
+              <div className="space-y-1">
+                <div className="flex justify-between text-sm">
+                  <span>Progress</span>
+                  <span>{selectedBulkJob.totalItems > 0 ? Math.round((selectedBulkJob.processedItems / selectedBulkJob.totalItems) * 100) : 0}%</span>
+                </div>
+                <Progress
+                  value={selectedBulkJob.totalItems > 0 ? (selectedBulkJob.processedItems / selectedBulkJob.totalItems) * 100 : 0}
+                  className="h-2"
+                />
+              </div>
+
+              {/* Download Buttons */}
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => downloadExport(selectedBulkJob.id)}
+                >
+                  <Download className="h-4 w-4 mr-2" />
+                  Download All
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => downloadExport(selectedBulkJob.id, "success")}
+                  className="text-green-600 border-green-600 hover:bg-green-50"
+                >
+                  <Download className="h-4 w-4 mr-2" />
+                  Success ({selectedBulkJob.successItems})
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => downloadExport(selectedBulkJob.id, "failed")}
+                  className="text-red-600 border-red-600 hover:bg-red-50"
+                >
+                  <Download className="h-4 w-4 mr-2" />
+                  Failed ({selectedBulkJob.failedItems})
+                </Button>
+              </div>
+
+              {/* Filter Tabs */}
+              <Tabs value={bulkItemFilter} onValueChange={(v) => setBulkItemFilter(v as any)}>
+                <TabsList>
+                  <TabsTrigger value="all">All ({selectedBulkJob.items?.length || 0})</TabsTrigger>
+                  <TabsTrigger value="success">Success ({selectedBulkJob.stats?.success || 0})</TabsTrigger>
+                  <TabsTrigger value="failed">Failed ({selectedBulkJob.stats?.failed || 0})</TabsTrigger>
+                  <TabsTrigger value="pending">Pending ({selectedBulkJob.stats?.pending || 0})</TabsTrigger>
+                  <TabsTrigger value="processing">Processing ({selectedBulkJob.stats?.processing || 0})</TabsTrigger>
+                </TabsList>
+              </Tabs>
+
+              {/* Items Table */}
+              <div className="flex-1 overflow-auto border rounded-lg">
+                <Table>
+                  <TableHeader className="sticky top-0 bg-background z-10">
+                    <TableRow>
+                      <TableHead>Ticker</TableHead>
+                      <TableHead>Company</TableHead>
+                      <TableHead>Sector</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead>Resolved Ticker</TableHead>
+                      <TableHead>Quarters</TableHead>
+                      <TableHead>Metrics</TableHead>
+                      <TableHead>Error</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {selectedBulkJob.items
+                      ?.filter(item => bulkItemFilter === "all" || item.status === bulkItemFilter)
+                      .map((item) => (
+                        <TableRow key={item.id}>
+                          <TableCell className="font-mono text-sm">{item.ticker}</TableCell>
+                          <TableCell className="max-w-[150px] truncate">{item.companyName}</TableCell>
+                          <TableCell className="max-w-[120px] truncate">{item.sectorName}</TableCell>
+                          <TableCell>
+                            <Badge
+                              variant={
+                                item.status === 'success' ? 'default' :
+                                  item.status === 'failed' ? 'destructive' :
+                                    item.status === 'processing' ? 'secondary' : 'outline'
+                              }
+                              className="text-xs"
+                            >
+                              {item.status === 'processing' && <Loader2 className="h-2 w-2 mr-1 animate-spin" />}
+                              {item.status}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="font-mono text-sm">{item.resolvedTicker || '-'}</TableCell>
+                          <TableCell>{item.quartersScraped || 0}</TableCell>
+                          <TableCell>{item.metricsScraped || 0}</TableCell>
+                          <TableCell className="max-w-[200px] truncate text-xs text-red-600">
+                            {item.error || '-'}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                  </TableBody>
+                </Table>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
       <Card>
         <CardHeader>
           <CardTitle>Sector-Specific Schedules</CardTitle>
@@ -411,11 +1111,11 @@ export default function SchedulerSettings() {
                         </div>
                       </TableCell>
                       <TableCell>
-                        <Badge 
+                        <Badge
                           variant={
-                            entry.status === 'completed' ? 'default' : 
-                            entry.status === 'failed' ? 'destructive' : 
-                            entry.status === 'running' ? 'secondary' : 'outline'
+                            entry.status === 'completed' ? 'default' :
+                              entry.status === 'failed' ? 'destructive' :
+                                entry.status === 'running' ? 'secondary' : 'outline'
                           }
                         >
                           {entry.status === 'running' && <Loader2 className="h-3 w-3 mr-1 animate-spin" />}
@@ -591,7 +1291,7 @@ export default function SchedulerSettings() {
           )}
         </DialogContent>
       </Dialog>
-    </div>
+    </div >
   );
 }
 

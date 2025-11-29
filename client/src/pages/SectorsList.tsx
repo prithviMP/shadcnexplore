@@ -18,12 +18,16 @@ import React, { useState, useMemo, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 import { queryClient } from "@/lib/queryClient";
-import { Search, ArrowLeft, TrendingUp, Play, Loader2, Filter, RefreshCw, Calculator, CheckCircle2, CheckSquare, Square, XCircle, Plus, Trash2, Settings } from "lucide-react";
+import { Search, ArrowLeft, TrendingUp, Play, Loader2, Filter, RefreshCw, Calculator, CheckCircle2, CheckSquare, Square, XCircle, Plus, Trash2, Settings, List, Grid3x3, Building2, ChevronDown } from "lucide-react";
 import { Link, useRoute } from "wouter";
 import type { Company, Sector, Formula, SectorMapping } from "@shared/schema";
 import { apiRequest } from "@/lib/queryClient";
 import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, CartesianGrid } from "recharts";
 import { useAuth } from "@/contexts/AuthContext";
+import { sortQuarterStrings, formatQuarterWithLabel } from "@/utils/quarterUtils";
+import SignalBadge from "@/components/SignalBadge";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import QuarterlyDataSpreadsheet from "@/components/QuarterlyDataSpreadsheet";
 
 interface QuarterlyDataResponse {
   sectorId: string;
@@ -77,6 +81,14 @@ export default function SectorsList() {
   const [formulaResults, setFormulaResults] = useState<Record<string, { result: string | number | boolean, type: string }>>({});
   const [isEvaluating, setIsEvaluating] = useState(false);
 
+  // Sector list view state
+  const [sectorSearchTerm, setSectorSearchTerm] = useState("");
+  const [sectorViewMode, setSectorViewMode] = useState<"list" | "grid">("grid");
+  const [sectorSignalFilter, setSectorSignalFilter] = useState<string>("all");
+  const [sectorCompanyCountMin, setSectorCompanyCountMin] = useState<string>("");
+  const [sectorCompanyCountMax, setSectorCompanyCountMax] = useState<string>("");
+  const [sectorFiltersOpen, setSectorFiltersOpen] = useState(false);
+
   // Sector Management State
   const [createSectorOpen, setCreateSectorOpen] = useState(false);
   const [newSectorName, setNewSectorName] = useState("");
@@ -94,9 +106,28 @@ export default function SectorsList() {
     queryKey: ["/api/sectors"]
   });
 
+  // Fetch all companies for sector stats
+  const { data: allCompanies } = useQuery<Company[]>({
+    queryKey: ["/api/companies"]
+  });
+
+  // Fetch all signals for sector stats
+  const { data: allSignals } = useQuery<any[]>({
+    queryKey: ["/api/signals"]
+  });
+
   const { data: formulas } = useQuery<Formula[]>({
     queryKey: ["/api/formulas"],
   });
+
+  // Get global formula as fallback
+  const globalFormula = useMemo(() => {
+    if (!formulas) return null;
+    const globalFormulas = formulas
+      .filter(f => f.enabled && f.scope === "global")
+      .sort((a, b) => a.priority - b.priority);
+    return globalFormulas[0] || null;
+  }, [formulas]);
 
   // If route has sectorId, use it; otherwise check if it's a sector name and find the ID
   const resolvedSectorId = routeSectorId
@@ -105,6 +136,22 @@ export default function SectorsList() {
 
   // Determine which sector to show
   const displaySectorId = resolvedSectorId || null;
+
+  // Fetch sector-specific formula (moved after displaySectorId is defined)
+  const { data: sectorFormulaData } = useQuery<{ formula: Formula | null }>({
+    queryKey: ["/api/v1/formulas/entity", "sector", displaySectorId],
+    queryFn: async () => {
+      if (!displaySectorId) return { formula: null };
+      const res = await apiRequest("GET", `/api/v1/formulas/entity/sector/${displaySectorId}`);
+      return res.json();
+    },
+    enabled: !!displaySectorId
+  });
+
+  // Get active formula for sector: sector-specific > global
+  const activeSectorFormula = useMemo(() => {
+    return sectorFormulaData?.formula || globalFormula;
+  }, [sectorFormulaData, globalFormula]);
   const currentSector = sectors?.find(s => s.id === displaySectorId);
 
   // Fetch quarterly data for the selected sector
@@ -117,6 +164,15 @@ export default function SectorsList() {
     },
     enabled: !!displaySectorId,
   });
+
+  // Sort quarterly data chronologically (oldest to newest)
+  const sortedQuarterlyData = useMemo(() => {
+    if (!quarterlyData) return null;
+    return {
+      ...quarterlyData,
+      quarters: sortQuarterStrings(quarterlyData.quarters)
+    };
+  }, [quarterlyData]);
 
   // Fetch companies for the selected sector
   const { data: companies, isLoading: companiesLoading } = useQuery<Company[]>({
@@ -336,42 +392,76 @@ export default function SectorsList() {
     setCurrentPage(1);
   }, [searchTerm, signalFilter]);
 
+  // Fetch default metrics from settings
+  const { data: defaultMetricsData } = useQuery<{
+    metrics: Record<string, boolean>;
+    visibleMetrics: string[];
+  }>({
+    queryKey: ["/api/settings/default-metrics"],
+    retry: 1, // Retry once if it fails
+  });
+
+  // Initialize formula from active sector formula when sector changes
+  useEffect(() => {
+    if (activeSectorFormula && !customFormula && !selectedFormulaId) {
+      setCustomFormula(activeSectorFormula.condition);
+      setCustomFormulaSignal(activeSectorFormula.signal);
+      setUseCustomFormula(false);
+    }
+  }, [activeSectorFormula, displaySectorId]);
+
   // Initialize selected metrics and quarters when data loads
   useEffect(() => {
-    if (quarterlyData && selectedMetricsForTable.length === 0) {
-      // Default metrics to show (key financial metrics) - try to match by keywords
-      const defaultMetricKeywords = [
-        "Sales",
-        "Sales Growth",
-        "EPS",
-        "EPS Growth",
-      ];
-
-      // Find metrics that match default keywords
-      const availableMetrics = quarterlyData.metrics.filter(m => {
-        const metricLower = m.toLowerCase();
-        return defaultMetricKeywords.some(keyword =>
-          metricLower.includes(keyword.toLowerCase())
-        );
-      });
-
-      if (availableMetrics.length > 0) {
-        // Take up to 6 metrics that match
-        setSelectedMetricsForTable(availableMetrics.slice(0, 6));
-      } else if (quarterlyData.metrics.length > 0) {
-        // If default metrics not found, use first 6 metrics
-        setSelectedMetricsForTable(quarterlyData.metrics.slice(0, 6));
+    if (sortedQuarterlyData && selectedMetricsForTable.length === 0) {
+      // Use default metrics from API if available
+      let defaultMetricNames: string[] = [];
+      
+      if (defaultMetricsData?.visibleMetrics && defaultMetricsData.visibleMetrics.length > 0) {
+        // Use metrics from settings API
+        defaultMetricNames = defaultMetricsData.visibleMetrics;
+      } else {
+        // Fallback to hardcoded defaults if API fails
+        defaultMetricNames = [
+          'Sales',
+          'Sales Growth(YoY) %',
+          'Sales Growth(QoQ) %',
+          'EPS in Rs',
+          'EPS Growth(YoY) %',
+          'EPS Growth(QoQ) %',
+        ];
       }
 
-      // Default to show last 8 quarters (or all if less than 8)
-      if (selectedQuartersForTable.length === 0 && quarterlyData.quarters.length > 0) {
-        const quartersToShow = quarterlyData.quarters.length > 8
-          ? quarterlyData.quarters.slice(-8)
-          : quarterlyData.quarters;
+      // Find metrics that match default names exactly
+      const matchedMetrics = defaultMetricNames.filter(metricName =>
+        sortedQuarterlyData.metrics.includes(metricName)
+      );
+
+      if (matchedMetrics.length > 0) {
+        setSelectedMetricsForTable(matchedMetrics);
+      } else if (sortedQuarterlyData.metrics.length > 0) {
+        // If default metrics not found, use first 6 metrics
+        setSelectedMetricsForTable(sortedQuarterlyData.metrics.slice(0, 6));
+      }
+
+      // Default to show last 12 quarters (or all if less than 12)
+      if (selectedQuartersForTable.length === 0 && sortedQuarterlyData.quarters.length > 0) {
+        const quartersToShow = sortedQuarterlyData.quarters.length > 12
+          ? sortedQuarterlyData.quarters.slice(-12)
+          : sortedQuarterlyData.quarters;
         setSelectedQuartersForTable(quartersToShow);
       }
     }
-  }, [quarterlyData, selectedMetricsForTable.length, selectedQuartersForTable.length]);
+  }, [sortedQuarterlyData, selectedMetricsForTable.length, selectedQuartersForTable.length, defaultMetricsData]);
+
+  // Auto-select last 12 quarters for formula evaluation when data loads
+  useEffect(() => {
+    if (sortedQuarterlyData && sortedQuarterlyData.quarters.length > 0 && selectedQuartersForFormula.size === 0) {
+      const quartersForFormula = sortedQuarterlyData.quarters.length > 12
+        ? sortedQuarterlyData.quarters.slice(-12)
+        : sortedQuarterlyData.quarters;
+      setSelectedQuartersForFormula(new Set(quartersForFormula));
+    }
+  }, [sortedQuarterlyData, selectedQuartersForFormula.size]);
 
   // Filter companies for quarterly table
   const filteredCompaniesForQuarterly = useMemo(() => {
@@ -499,115 +589,382 @@ export default function SectorsList() {
     return numValue.toFixed(2);
   };
 
+  // Calculate sector stats (company counts and signal distribution)
+  const sectorsWithStats = useMemo(() => {
+    if (!sectors || !allCompanies || !allSignals) return [];
+
+    return sectors.map(sector => {
+      const sectorCompanies = allCompanies.filter(c => c.sectorId === sector.id);
+      const sectorCompanyIds = new Set(sectorCompanies.map(c => c.id));
+
+      // Get signals for companies in this sector
+      const sectorSignals = allSignals.filter(s => sectorCompanyIds.has(s.companyId));
+
+      // Count signals by type
+      const buyCount = sectorSignals.filter(s => s.signal === "BUY").length;
+      const sellCount = sectorSignals.filter(s => s.signal === "SELL" || s.signal === "Check_OPM (Sell)").length;
+      const holdCount = sectorSignals.filter(s => s.signal === "HOLD").length;
+      const noSignalCount = sectorCompanies.length - sectorSignals.length;
+
+      return {
+        ...sector,
+        companyCount: sectorCompanies.length,
+        buySignals: buyCount,
+        sellSignals: sellCount,
+        holdSignals: holdCount,
+        noSignals: noSignalCount,
+        totalSignals: sectorSignals.length,
+      };
+    });
+  }, [sectors, allCompanies, allSignals]);
+
+  // Filter sectors based on search and filters
+  const filteredSectors = useMemo(() => {
+    if (!sectorsWithStats) return [];
+
+    let filtered = sectorsWithStats;
+
+    // Search filter
+    if (sectorSearchTerm.trim()) {
+      const term = sectorSearchTerm.toLowerCase();
+      filtered = filtered.filter(sector =>
+        sector.name.toLowerCase().includes(term) ||
+        sector.description?.toLowerCase().includes(term)
+      );
+    }
+
+    // Signal filter
+    if (sectorSignalFilter !== "all") {
+      filtered = filtered.filter(sector => {
+        if (sectorSignalFilter === "has_buy") return sector.buySignals > 0;
+        if (sectorSignalFilter === "has_sell") return sector.sellSignals > 0;
+        if (sectorSignalFilter === "has_hold") return sector.holdSignals > 0;
+        if (sectorSignalFilter === "has_signals") return sector.totalSignals > 0;
+        if (sectorSignalFilter === "no_signals") return sector.totalSignals === 0;
+        return true;
+      });
+    }
+
+    // Company count filter
+    if (sectorCompanyCountMin || sectorCompanyCountMax) {
+      filtered = filtered.filter(sector => {
+        const count = sector.companyCount;
+        if (sectorCompanyCountMin && count < parseInt(sectorCompanyCountMin)) return false;
+        if (sectorCompanyCountMax && count > parseInt(sectorCompanyCountMax)) return false;
+        return true;
+      });
+    }
+
+    return filtered;
+  }, [sectorsWithStats, sectorSearchTerm, sectorSignalFilter, sectorCompanyCountMin, sectorCompanyCountMax]);
+
   // If no sector is selected, show sector list
   if (!displaySectorId) {
     return (
-      <div className="space-y-6">
+      <div className="space-y-4 sm:space-y-6">
         <div>
-          <h1 className="text-3xl font-bold bg-gradient-to-r from-slate-900 to-slate-700 dark:from-white dark:to-slate-300 bg-clip-text text-transparent">
+          <h1 className="text-2xl sm:text-3xl font-bold bg-gradient-to-r from-slate-900 to-slate-700 dark:from-white dark:to-slate-300 bg-clip-text text-transparent">
             Sectors
           </h1>
-          <p className="text-muted-foreground mt-1">Select a sector to view companies and quarterly data</p>
+          <p className="text-sm sm:text-base text-muted-foreground mt-1">Select a sector to view companies and quarterly data</p>
         </div>
 
-        {isAdmin && (
-          <div className="flex justify-end">
-            <Dialog open={createSectorOpen} onOpenChange={setCreateSectorOpen}>
-              <DialogTrigger asChild>
-                <Button>
-                  <Plus className="h-4 w-4 mr-2" />
-                  Create Sector
-                </Button>
-              </DialogTrigger>
-              <DialogContent>
-                <DialogHeader>
-                  <DialogTitle>Create New Sector</DialogTitle>
-                  <DialogDescription>
-                    Create a custom sector to organize companies.
-                  </DialogDescription>
-                </DialogHeader>
-                <div className="space-y-4 py-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="name">Sector Name</Label>
-                    <Input
-                      id="name"
-                      placeholder="e.g., My Tech Portfolio"
-                      value={newSectorName}
-                      onChange={(e) => setNewSectorName(e.target.value)}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="description">Description</Label>
-                    <Textarea
-                      id="description"
-                      placeholder="Optional description..."
-                      value={newSectorDescription}
-                      onChange={(e) => setNewSectorDescription(e.target.value)}
-                    />
-                  </div>
-                </div>
-                <div className="flex justify-end gap-2">
-                  <Button variant="outline" onClick={() => setCreateSectorOpen(false)}>Cancel</Button>
-                  <Button onClick={handleCreateSector} disabled={createSectorMutation.isPending || !newSectorName}>
-                    {createSectorMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : "Create"}
-                  </Button>
-                </div>
-              </DialogContent>
-            </Dialog>
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 sm:gap-4">
+          <div className="flex-1">
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Input
+                placeholder="Search sectors..."
+                value={sectorSearchTerm}
+                onChange={(e) => setSectorSearchTerm(e.target.value)}
+                className="pl-9"
+              />
+            </div>
           </div>
-        )}
+          <div className="flex items-center gap-2 justify-between sm:justify-start">
+            <div className="flex items-center gap-2">
+              <Button
+                variant={sectorViewMode === "list" ? "default" : "outline"}
+                size="sm"
+                onClick={() => setSectorViewMode("list")}
+              >
+                <List className="h-4 w-4 sm:mr-2" />
+                <span className="hidden sm:inline">List</span>
+              </Button>
+              <Button
+                variant={sectorViewMode === "grid" ? "default" : "outline"}
+                size="sm"
+                onClick={() => setSectorViewMode("grid")}
+              >
+                <Grid3x3 className="h-4 w-4 sm:mr-2" />
+                <span className="hidden sm:inline">Grid</span>
+              </Button>
+            </div>
+            {isAdmin && (
+              <Dialog open={createSectorOpen} onOpenChange={setCreateSectorOpen}>
+                <DialogTrigger asChild>
+                  <Button size="sm">
+                    <Plus className="h-4 w-4 sm:mr-2" />
+                    <span className="hidden sm:inline">Create Sector</span>
+                  </Button>
+                </DialogTrigger>
+                <DialogContent>
+                  <DialogHeader>
+                    <DialogTitle>Create New Sector</DialogTitle>
+                    <DialogDescription>
+                      Create a custom sector to organize companies.
+                    </DialogDescription>
+                  </DialogHeader>
+                  <div className="space-y-4 py-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="name">Sector Name</Label>
+                      <Input
+                        id="name"
+                        placeholder="e.g., My Tech Portfolio"
+                        value={newSectorName}
+                        onChange={(e) => setNewSectorName(e.target.value)}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="description">Description</Label>
+                      <Textarea
+                        id="description"
+                        placeholder="Optional description..."
+                        value={newSectorDescription}
+                        onChange={(e) => setNewSectorDescription(e.target.value)}
+                      />
+                    </div>
+                  </div>
+                  <div className="flex justify-end gap-2">
+                    <Button variant="outline" onClick={() => setCreateSectorOpen(false)}>Cancel</Button>
+                    <Button onClick={handleCreateSector} disabled={createSectorMutation.isPending || !newSectorName}>
+                      {createSectorMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : "Create"}
+                    </Button>
+                  </div>
+                </DialogContent>
+              </Dialog>
+            )}
+          </div>
+        </div>
 
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-          {sectorsLoading ? (
-            Array.from({ length: 6 }).map((_, i) => (
+        {/* Filters */}
+        <Collapsible open={sectorFiltersOpen} onOpenChange={setSectorFiltersOpen}>
+          <CollapsibleTrigger asChild>
+            <Button variant="outline" size="sm" className="w-full sm:w-auto">
+              <Filter className="h-4 w-4 mr-2" />
+              Filters
+              <ChevronDown className={`h-4 w-4 ml-2 transition-transform ${sectorFiltersOpen ? 'rotate-180' : ''}`} />
+            </Button>
+          </CollapsibleTrigger>
+          <CollapsibleContent className="mt-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 p-4 border rounded-lg bg-muted/30">
+              <div className="space-y-2">
+                <Label htmlFor="sector-signal-filter" className="text-sm font-medium">Signal Type</Label>
+                <Select value={sectorSignalFilter} onValueChange={setSectorSignalFilter}>
+                  <SelectTrigger id="sector-signal-filter" className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Sectors</SelectItem>
+                    <SelectItem value="has_buy">Has BUY Signals</SelectItem>
+                    <SelectItem value="has_sell">Has SELL Signals</SelectItem>
+                    <SelectItem value="has_hold">Has HOLD Signals</SelectItem>
+                    <SelectItem value="has_signals">Has Any Signals</SelectItem>
+                    <SelectItem value="no_signals">No Signals</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="sector-company-count-min" className="text-sm font-medium">Company Count</Label>
+                <div className="flex items-center gap-2">
+                  <Input
+                    id="sector-company-count-min"
+                    type="number"
+                    placeholder="Min"
+                    value={sectorCompanyCountMin}
+                    onChange={(e) => setSectorCompanyCountMin(e.target.value)}
+                    className="w-full"
+                  />
+                  <span className="text-sm text-muted-foreground">to</span>
+                  <Input
+                    id="sector-company-count-max"
+                    type="number"
+                    placeholder="Max"
+                    value={sectorCompanyCountMax}
+                    onChange={(e) => setSectorCompanyCountMax(e.target.value)}
+                    className="w-full"
+                  />
+                </div>
+              </div>
+            </div>
+          </CollapsibleContent>
+        </Collapsible>
+
+        {sectorsLoading ? (
+          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+            {Array.from({ length: 6 }).map((_, i) => (
               <Card key={i}>
                 <CardHeader>
                   <Skeleton className="h-6 w-32" />
                   <Skeleton className="h-4 w-48 mt-2" />
                 </CardHeader>
               </Card>
-            ))
-          ) : sectors && sectors.length > 0 ? (
-            sectors.map((sector) => (
-              <Link key={sector.id} href={`/sectors/${sector.id}`}>
-                <Card
-                  className="cursor-pointer hover:shadow-lg transition-shadow"
-                >
-                  <CardHeader>
-                    <CardTitle className="flex items-center gap-2">
-                      <TrendingUp className="h-5 w-5" />
-                      {sector.name}
-                    </CardTitle>
-                    <CardDescription>{sector.description || "Click to view companies"}</CardDescription>
-                  </CardHeader>
-                </Card>
-              </Link>
-            ))
-          ) : (
+            ))}
+          </div>
+        ) : filteredSectors && filteredSectors.length > 0 ? (
+          sectorViewMode === "list" ? (
             <Card>
-              <CardContent className="py-8 text-center text-muted-foreground">
-                No sectors found
+              <CardContent className="p-0">
+                <div className="overflow-x-auto">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Sector</TableHead>
+                        <TableHead>Description</TableHead>
+                        <TableHead className="text-center">Companies</TableHead>
+                        <TableHead className="text-center">BUY</TableHead>
+                        <TableHead className="text-center">SELL</TableHead>
+                        <TableHead className="text-center">HOLD</TableHead>
+                        <TableHead className="text-center">No Signal</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {filteredSectors.map((sector) => (
+                        <TableRow key={sector.id} className="cursor-pointer hover:bg-muted/50">
+                          <TableCell>
+                            <Link href={`/sectors/${sector.id}`} className="flex items-center gap-2">
+                              <Building2 className="h-4 w-4 text-muted-foreground" />
+                              <span className="font-semibold">{sector.name}</span>
+                            </Link>
+                          </TableCell>
+                          <TableCell className="text-muted-foreground">
+                            {sector.description || "—"}
+                          </TableCell>
+                          <TableCell className="text-center font-semibold">
+                            {sector.companyCount}
+                          </TableCell>
+                          <TableCell className="text-center">
+                            {sector.buySignals > 0 ? (
+                              <Badge variant="outline" className="bg-green-100 dark:bg-green-950 text-green-700 dark:text-green-300 border-green-200 dark:border-green-800">
+                                {sector.buySignals}
+                              </Badge>
+                            ) : (
+                              <span className="text-muted-foreground">0</span>
+                            )}
+                          </TableCell>
+                          <TableCell className="text-center">
+                            {sector.sellSignals > 0 ? (
+                              <Badge variant="outline" className="bg-red-100 dark:bg-red-950 text-red-700 dark:text-red-300 border-red-200 dark:border-red-800">
+                                {sector.sellSignals}
+                              </Badge>
+                            ) : (
+                              <span className="text-muted-foreground">0</span>
+                            )}
+                          </TableCell>
+                          <TableCell className="text-center">
+                            {sector.holdSignals > 0 ? (
+                              <Badge variant="outline" className="bg-yellow-100 dark:bg-yellow-950 text-yellow-700 dark:text-yellow-300 border-yellow-200 dark:border-yellow-800">
+                                {sector.holdSignals}
+                              </Badge>
+                            ) : (
+                              <span className="text-muted-foreground">0</span>
+                            )}
+                          </TableCell>
+                          <TableCell className="text-center">
+                            {sector.noSignals > 0 ? (
+                              <span className="text-muted-foreground">{sector.noSignals}</span>
+                            ) : (
+                              <span className="text-muted-foreground">0</span>
+                            )}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
               </CardContent>
             </Card>
-          )}
-        </div>
+          ) : (
+            <div className="grid gap-3 sm:gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
+              {filteredSectors.map((sector) => (
+                <Link key={sector.id} href={`/sectors/${sector.id}`}>
+                  <Card className="cursor-pointer hover:shadow-lg transition-shadow h-full">
+                    <CardHeader className="p-3 sm:p-6">
+                      <CardTitle className="flex items-center gap-2">
+                        <Building2 className="h-5 w-5" />
+                        {sector.name}
+                      </CardTitle>
+                      <CardDescription>{sector.description || "Click to view companies"}</CardDescription>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="space-y-3">
+                        <div className="flex items-center justify-between">
+                          <span className="text-sm text-muted-foreground">Companies</span>
+                          <span className="text-lg font-bold">{sector.companyCount}</span>
+                        </div>
+                        <div className="space-y-2">
+                          <div className="flex items-center justify-between text-sm">
+                            <div className="flex items-center gap-2">
+                              <SignalBadge signal="BUY" showIcon={false} />
+                              <span className="text-muted-foreground">BUY</span>
+                            </div>
+                            <span className="font-semibold">{sector.buySignals}</span>
+                          </div>
+                          <div className="flex items-center justify-between text-sm">
+                            <div className="flex items-center gap-2">
+                              <SignalBadge signal="SELL" showIcon={false} />
+                              <span className="text-muted-foreground">SELL</span>
+                            </div>
+                            <span className="font-semibold">{sector.sellSignals}</span>
+                          </div>
+                          <div className="flex items-center justify-between text-sm">
+                            <div className="flex items-center gap-2">
+                              <SignalBadge signal="HOLD" showIcon={false} />
+                              <span className="text-muted-foreground">HOLD</span>
+                            </div>
+                            <span className="font-semibold">{sector.holdSignals}</span>
+                          </div>
+                          {sector.noSignals > 0 && (
+                            <div className="flex items-center justify-between text-sm">
+                              <span className="text-muted-foreground">No Signal</span>
+                              <span className="font-semibold text-muted-foreground">{sector.noSignals}</span>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                </Link>
+              ))}
+            </div>
+          )
+        ) : (
+          <Card>
+            <CardContent className="py-8 text-center text-muted-foreground">
+              {sectorSearchTerm || sectorSignalFilter !== "all" || sectorCompanyCountMin || sectorCompanyCountMax
+                ? "No sectors match your filters. Try adjusting the search or filter criteria."
+                : "No sectors found"}
+            </CardContent>
+          </Card>
+        )}
       </div>
     );
   }
 
   // Show sector detail with companies and quarterly data
   return (
-    <div className="space-y-6 w-full min-w-0">
-      <div className="flex items-center gap-4">
+    <div className="space-y-4 sm:space-y-6 w-full min-w-0">
+      <div className="flex items-center gap-2 sm:gap-4">
         <Button
           variant="ghost"
           size="icon"
           onClick={() => setSelectedSectorId(null)}
+          className="shrink-0"
         >
           <ArrowLeft className="h-4 w-4" />
         </Button>
-        <div>
-          <h1 className="text-3xl font-bold bg-gradient-to-r from-slate-900 to-slate-700 dark:from-white dark:to-slate-300 bg-clip-text text-transparent">
+        <div className="min-w-0">
+          <h1 className="text-xl sm:text-3xl font-bold bg-gradient-to-r from-slate-900 to-slate-700 dark:from-white dark:to-slate-300 bg-clip-text text-transparent truncate">
             {currentSector?.name || "Sector"} Sector
           </h1>
           <p className="text-muted-foreground mt-1">
@@ -616,12 +973,12 @@ export default function SectorsList() {
         </div>
 
         {isAdmin && (
-          <div className="ml-auto flex gap-2">
+          <div className="ml-auto flex gap-2 shrink-0">
             <Dialog open={manageMappingsOpen} onOpenChange={setManageMappingsOpen}>
               <DialogTrigger asChild>
                 <Button variant="outline" size="sm">
-                  <Settings className="h-4 w-4 mr-2" />
-                  Manage Mappings
+                  <Settings className="h-4 w-4 sm:mr-2" />
+                  <span className="hidden sm:inline">Manage Mappings</span>
                 </Button>
               </DialogTrigger>
               <DialogContent>
@@ -682,9 +1039,9 @@ export default function SectorsList() {
       </div>
 
       <Tabs defaultValue="companies" className="space-y-4">
-        <TabsList>
-          <TabsTrigger value="companies">Companies List</TabsTrigger>
-          <TabsTrigger value="quarterly">Quarterly Data</TabsTrigger>
+        <TabsList className="w-full sm:w-auto grid grid-cols-2 sm:inline-flex">
+          <TabsTrigger value="companies" className="text-xs sm:text-sm">Companies List</TabsTrigger>
+          <TabsTrigger value="quarterly" className="text-xs sm:text-sm">Quarterly Data</TabsTrigger>
         </TabsList>
 
         <TabsContent value="companies" className="space-y-4">
@@ -1072,24 +1429,38 @@ export default function SectorsList() {
                 <div>
                   <CardTitle>Quarterly Financial Data</CardTitle>
                   <CardDescription>
-                    {quarterlyData ? `${quarterlyData.companies.length} companies, ${quarterlyData.quarters.length} quarters` : "Loading..."}
+                    {sortedQuarterlyData ? `${sortedQuarterlyData.companies.length} companies, ${sortedQuarterlyData.quarters.length} quarters` : "Loading..."}
                   </CardDescription>
                 </div>
-                {quarterlyData && quarterlyData.metrics.length > 0 && (
-                  <Select value={selectedMetric} onValueChange={setSelectedMetric}>
+                <div className="flex gap-2">
+                  {displaySectorId && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        window.location.href = `/formula-builder?type=sector&id=${displaySectorId}`;
+                      }}
+                    >
+                      <Calculator className="h-4 w-4 mr-2" />
+                      Build Formula
+                    </Button>
+                  )}
+                  {sortedQuarterlyData && sortedQuarterlyData.metrics.length > 0 && (
+                    <Select value={selectedMetric} onValueChange={setSelectedMetric}>
                     <SelectTrigger className="w-[250px]">
                       <SelectValue placeholder="Select metric" />
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="all">All Metrics</SelectItem>
-                      {quarterlyData.metrics.map((metric) => (
+                      {sortedQuarterlyData.metrics.map((metric) => (
                         <SelectItem key={metric} value={metric}>
                           {metric}
                         </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
-                )}
+                  )}
+                </div>
               </div>
             </CardHeader>
             <CardContent>
@@ -1113,11 +1484,18 @@ export default function SectorsList() {
                     <Label>Selected Quarters: {selectedQuartersForFormula.size > 0 ? Array.from(selectedQuartersForFormula).join(", ") : "None"}</Label>
                     <div className="flex gap-2">
                       <Select
-                        value={selectedFormulaId || "default"}
+                        value={selectedFormulaId || (activeSectorFormula ? "sector-default" : "default")}
                         onValueChange={(value) => {
-                          if (value === "default") {
+                          if (value === "default" || value === "sector-default") {
                             setSelectedFormulaId("");
-                            setUseCustomFormula(true);
+                            setUseCustomFormula(false);
+                            // Use active sector formula if available
+                            if (activeSectorFormula && value === "sector-default") {
+                              setCustomFormula(activeSectorFormula.condition);
+                              setCustomFormulaSignal(activeSectorFormula.signal);
+                            } else {
+                              setCustomFormula("");
+                            }
                           } else {
                             setSelectedFormulaId(value);
                             setUseCustomFormula(false);
@@ -1128,7 +1506,11 @@ export default function SectorsList() {
                           <SelectValue placeholder="Select a formula" />
                         </SelectTrigger>
                         <SelectContent>
-                          <SelectItem value="default">Use Custom Formula</SelectItem>
+                          <SelectItem value={activeSectorFormula ? "sector-default" : "default"}>
+                            {activeSectorFormula 
+                              ? `Default: ${activeSectorFormula.name} (${activeSectorFormula.scope === "sector" ? "Sector" : "Global"})`
+                              : "Use Custom Formula"}
+                          </SelectItem>
                           {formulas?.filter(f => f.enabled).map((formula) => (
                             <SelectItem key={formula.id} value={formula.id}>
                               {formula.name} ({formula.signal})
@@ -1154,6 +1536,10 @@ export default function SectorsList() {
                               formulaToUse = formula.condition;
                             }
                           }
+                          // If no custom formula and no selected formula, use active sector formula
+                          if (!formulaToUse && activeSectorFormula) {
+                            formulaToUse = activeSectorFormula.condition;
+                          }
 
                           if (!formulaToUse) {
                             toast({
@@ -1178,7 +1564,17 @@ export default function SectorsList() {
                                   selectedQuarters: Array.from(selectedQuartersForFormula)
                                 });
                                 const data = await res.json();
-                                results[company.ticker] = { result: data.result, type: data.resultType };
+                                // Handle both old format (result is object) and new format (result is primitive)
+                                let actualResult = data.result;
+                                let actualType = data.resultType;
+
+                                // If result is an object with a nested result property, extract it
+                                if (actualResult && typeof actualResult === 'object' && 'result' in actualResult) {
+                                  actualType = actualResult.resultType || actualType;
+                                  actualResult = actualResult.result;
+                                }
+
+                                results[company.ticker] = { result: actualResult, type: actualType };
                               } catch (err) {
                                 console.error(`Failed to evaluate for ${company.ticker}`, err);
                                 results[company.ticker] = { result: "Error", type: "error" };
@@ -1258,8 +1654,11 @@ export default function SectorsList() {
                       <div className="space-y-2">
                         <Label>Custom Excel Formula</Label>
                         <Textarea
-                          value={customFormula}
-                          onChange={(e) => setCustomFormula(e.target.value)}
+                          value={customFormula || (activeSectorFormula && !useCustomFormula ? activeSectorFormula.condition : "")}
+                          onChange={(e) => {
+                            setCustomFormula(e.target.value);
+                            setUseCustomFormula(true);
+                          }}
                           placeholder='IF(AND(Q14>0, P14>0, Q12>=20%, Q15>=20%, ...), "BUY", ...)'
                           className="font-mono text-sm min-h-24"
                         />
@@ -1371,20 +1770,21 @@ export default function SectorsList() {
                                 size="sm"
                                 className="h-7 text-xs"
                                 onClick={() => {
-                                  if (selectedQuartersForTable.length === quarterlyData.quarters.length) {
+                                  if (!sortedQuarterlyData) return;
+                                  if (selectedQuartersForTable.length === sortedQuarterlyData.quarters.length) {
                                     setSelectedQuartersForTable([]);
                                   } else {
-                                    setSelectedQuartersForTable([...quarterlyData.quarters]);
+                                    setSelectedQuartersForTable([...sortedQuarterlyData.quarters]);
                                   }
                                 }}
                               >
-                                {selectedQuartersForTable.length === quarterlyData.quarters.length ? "Deselect All" : "Select All"}
+                                {sortedQuarterlyData && selectedQuartersForTable.length === sortedQuarterlyData.quarters.length ? "Deselect All" : "Select All"}
                               </Button>
                             </div>
                           </div>
                           <ScrollArea className="h-[300px]">
                             <div className="p-2 space-y-2">
-                              {quarterlyData.quarters.map((quarter) => (
+                              {sortedQuarterlyData?.quarters.map((quarter) => (
                                 <label key={quarter} className="flex items-center space-x-2 p-2 hover:bg-slate-50 dark:hover:bg-slate-800 rounded cursor-pointer">
                                   <Checkbox
                                     checked={selectedQuartersForTable.includes(quarter)}
@@ -1396,7 +1796,7 @@ export default function SectorsList() {
                                       }
                                     }}
                                   />
-                                  <span className="text-sm flex-1">{quarter}</span>
+                                  <span className="text-sm flex-1">{formatQuarterWithLabel(quarter)}</span>
                                 </label>
                               ))}
                             </div>
@@ -1406,130 +1806,70 @@ export default function SectorsList() {
                     </div>
                   </div>
 
-                  {/* Compact Table */}
-                  <div className="border rounded-lg overflow-hidden w-full min-w-0">
-                    <div className="overflow-x-auto w-full">
-                      <Table className="min-w-full">
-                        <TableHeader>
-                          <TableRow>
-                            <TableHead className="sticky left-0 bg-background z-10 min-w-[200px] font-semibold shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]">Company / Metric</TableHead>
-                            {selectedQuartersForTable.length > 0 ? selectedQuartersForTable.map((quarter) => (
-                              <TableHead key={quarter} className="text-center min-w-[100px] font-semibold">
-                                <div className="flex flex-col items-center gap-1">
-                                  <div
-                                    className="cursor-pointer hover:text-blue-600"
-                                    onClick={() => {
-                                      const newSet = new Set(selectedQuartersForFormula);
-                                      if (newSet.has(quarter)) {
-                                        newSet.delete(quarter);
-                                      } else {
-                                        newSet.add(quarter);
-                                      }
-                                      setSelectedQuartersForFormula(newSet);
-                                      if (newSet.size > 0) {
-                                        setShowFormulaBar(true);
-                                      }
-                                    }}
-                                  >
-                                    {selectedQuartersForFormula.has(quarter) ? (
-                                      <CheckSquare className="h-4 w-4 text-blue-600" />
-                                    ) : (
-                                      <Square className="h-4 w-4 text-muted-foreground" />
-                                    )}
-                                  </div>
-                                  {quarter}
-                                </div>
-                              </TableHead>
-                            )) : quarterlyData.quarters.slice(-8).map((quarter) => (
-                              <TableHead key={quarter} className="text-center min-w-[100px] font-semibold">
-                                <div className="flex flex-col items-center gap-1">
-                                  <div
-                                    className="cursor-pointer hover:text-blue-600"
-                                    onClick={() => {
-                                      const newSet = new Set(selectedQuartersForFormula);
-                                      if (newSet.has(quarter)) {
-                                        newSet.delete(quarter);
-                                      } else {
-                                        newSet.add(quarter);
-                                      }
-                                      setSelectedQuartersForFormula(newSet);
-                                      if (newSet.size > 0) {
-                                        setShowFormulaBar(true);
-                                      }
-                                    }}
-                                  >
-                                    {selectedQuartersForFormula.has(quarter) ? (
-                                      <CheckSquare className="h-4 w-4 text-blue-600" />
-                                    ) : (
-                                      <Square className="h-4 w-4 text-muted-foreground" />
-                                    )}
-                                  </div>
-                                  {quarter}
-                                </div>
-                              </TableHead>
-                            ))}
-                          </TableRow>
-                        </TableHeader>
-                        <TableBody>
-                          {filteredCompaniesForQuarterly
-                            .filter(comp => quarterlyData.companies.some(c => c.ticker === comp.ticker))
-                            .map((company) => {
-                              const companyData = quarterlyData.companies.find(c => c.ticker === company.ticker);
-                              if (!companyData) return null;
+                  {/* Spreadsheet View */}
+                  <QuarterlyDataSpreadsheet
+                    data={sortedQuarterlyData ? {
+                      ...sortedQuarterlyData,
+                      companies: filteredCompaniesForQuarterly
+                        .filter(comp => sortedQuarterlyData.companies.some(c => c.ticker === comp.ticker))
+                        .map(comp => sortedQuarterlyData.companies.find(c => c.ticker === comp.ticker)!)
+                    } : undefined}
+                    selectedMetrics={selectedMetricsForTable}
+                    selectedQuarters={selectedQuartersForTable}
+                    selectedCells={new Set(Array.from(selectedQuartersForFormula).flatMap(q =>
+                      // Visual feedback for selected columns (quarters)
+                      // We can't easily highlight entire columns in the spreadsheet component via this prop yet
+                      // but we can pass the set of selected cells if we want specific highlighting
+                      []
+                    ))}
+                    onCellSelect={(metric, quarter) => {
+                      // When a cell is clicked, we want to add its reference to the formula
+                      // Reference format: MetricName(RelativeIndex)
+                      // e.g. Sales(0) for current quarter, Sales(-1) for previous
 
-                              const quartersToShow = selectedQuartersForTable.length > 0
-                                ? selectedQuartersForTable
-                                : quarterlyData.quarters.slice(-8);
+                      if (!sortedQuarterlyData) return;
 
-                              return (
-                                <React.Fragment key={company.ticker}>
-                                  {/* Company Header Row */}
-                                  <TableRow className="bg-slate-50 dark:bg-slate-800/50">
-                                    <TableCell className="sticky left-0 bg-slate-50 dark:bg-slate-800/50 z-20 font-semibold border-r border-border shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]">
-                                      <Link href={companyData.companyId ? `/company/id/${companyData.companyId}` : `/company/${company.ticker}`}>
-                                        <span className="font-mono font-bold hover:text-blue-600 dark:hover:text-blue-400 transition-colors">
-                                          {company.ticker}
-                                        </span>
-                                      </Link>
-                                      <div className="text-xs text-muted-foreground font-normal">{companyData.companyName}</div>
-                                      {formulaResults[company.ticker] && (
-                                        <div className={`mt-1 text-xs font-bold ${formulaResults[company.ticker].type === "boolean"
-                                          ? (formulaResults[company.ticker].result ? "text-green-600" : "text-red-600")
-                                          : "text-blue-600"
-                                          }`}>
-                                          Result: {String(formulaResults[company.ticker].result)}
-                                        </div>
-                                      )}
-                                    </TableCell>
-                                    {quartersToShow.map((quarter) => (
-                                      <TableCell key={quarter} className="text-center">
-                                        {/* Empty cells for company header */}
-                                      </TableCell>
-                                    ))}
-                                  </TableRow>
+                      // Find relative index
+                      // sortedQuarterlyData.quarters is sorted oldest to newest? 
+                      // Wait, `sortQuarterStrings` usually sorts chronologically.
+                      // But for "Relative Index", 0 usually means "Most Recent".
+                      // Let's check `sortQuarterStrings` behavior or `sortedQuarterlyData`
 
-                                  {/* Metric Rows for this company */}
-                                  {(selectedMetricsForTable.length > 0 ? selectedMetricsForTable : quarterlyData.metrics.slice(0, 6)).map((metric) => (
-                                    <TableRow key={`${company.ticker}-${metric}`} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/30">
-                                      <TableCell className="sticky left-0 bg-background z-20 pl-8 text-sm text-muted-foreground border-r border-border shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]">
-                                        {metric}
-                                      </TableCell>
-                                      {quartersToShow.map((quarter) => (
-                                        <TableCell key={quarter} className="text-center font-mono text-sm">
-                                          {formatValue(
-                                            companyData.quarters[quarter]?.[metric] || null,
-                                            metric
-                                          )}
-                                        </TableCell>
-                                      ))}
-                                    </TableRow>
-                                  ))}
-                                </React.Fragment>
-                              );
-                            })}
-                        </TableBody>
-                      </Table>
-                    </div>
+                      // In `SectorsList`, we did:
+                      // quarters: sortQuarterStrings(quarterlyData.quarters)
+
+                      // If we want 0 to be the LAST item in the sorted list (most recent),
+                      // then index = quarters.indexOf(quarter) - (quarters.length - 1)
+                      // e.g. length 10. Index 9 (last) -> 9 - 9 = 0.
+                      // Index 8 (prev) -> 8 - 9 = -1.
+
+                      const allQuarters = sortedQuarterlyData.quarters;
+                      const index = allQuarters.indexOf(quarter);
+                      const relativeIndex = index - (allQuarters.length - 1);
+
+                      // Create reference string
+                      // If metric has spaces, maybe wrap in brackets or underscores?
+                      // Let's use underscores for now as per plan
+                      const sanitizedMetric = metric.replace(/[^a-zA-Z0-9]/g, "_");
+                      const reference = `${sanitizedMetric}(${relativeIndex})`;
+
+                      // Insert into custom formula
+                      setCustomFormula(prev => prev + (prev ? " " : "") + reference);
+                      setUseCustomFormula(true);
+                      setSelectedFormulaId(""); // Clear selected preset
+                      setShowFormulaBar(true);
+
+                      // Also add this quarter to selectedQuartersForFormula if not present
+                      // so it gets sent to backend
+                      const newSet = new Set(selectedQuartersForFormula);
+                      newSet.add(quarter);
+                      setSelectedQuartersForFormula(newSet);
+                    }}
+                    formulaResults={formulaResults}
+                  />
+
+                  <div className="text-xs text-muted-foreground mt-2">
+                    <p><strong>Tip:</strong> Click on any cell to add its reference to the formula bar. References are relative to the most recent quarter (0).</p>
                   </div>
                 </div>
               )}
@@ -1540,3 +1880,4 @@ export default function SectorsList() {
     </div>
   );
 }
+

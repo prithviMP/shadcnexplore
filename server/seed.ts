@@ -10,15 +10,15 @@ async function seed() {
   // Create admin user (only if doesn't exist)
   const existingAdmin = await db.select().from(users).where(eq(users.email, "admin@finanalytics.com")).limit(1);
   if (existingAdmin.length === 0) {
-    const adminPassword = await hashPassword("admin123");
-    const [admin] = await db.insert(users).values({
-      email: "admin@finanalytics.com",
-      password: adminPassword,
-      name: "Admin User",
-      role: "admin",
-      otpEnabled: false
-    }).returning();
-    console.log("✅ Created admin user");
+  const adminPassword = await hashPassword("admin123");
+  const [admin] = await db.insert(users).values({
+    email: "admin@finanalytics.com",
+    password: adminPassword,
+    name: "Admin User",
+    role: "admin",
+    otpEnabled: false
+  }).returning();
+  console.log("✅ Created admin user");
   } else {
     console.log("ℹ️  Admin user already exists, skipping...");
   }
@@ -26,15 +26,15 @@ async function seed() {
   // Create analyst user (only if doesn't exist)
   const existingAnalyst = await db.select().from(users).where(eq(users.email, "analyst@finanalytics.com")).limit(1);
   if (existingAnalyst.length === 0) {
-    const analystPassword = await hashPassword("analyst123");
-    await db.insert(users).values({
-      email: "analyst@finanalytics.com",
-      password: analystPassword,
-      name: "Analyst User",
-      role: "analyst",
-      otpEnabled: false
-    }).returning();
-    console.log("✅ Created analyst user");
+  const analystPassword = await hashPassword("analyst123");
+  await db.insert(users).values({
+    email: "analyst@finanalytics.com",
+    password: analystPassword,
+    name: "Analyst User",
+    role: "analyst",
+    otpEnabled: false
+  }).returning();
+  console.log("✅ Created analyst user");
   } else {
     console.log("ℹ️  Analyst user already exists, skipping...");
   }
@@ -445,30 +445,30 @@ IF(
 
     // Value Stock signals
     if (valueFormula && data) {
-      if (data.peRatio < 15) {
-        signalData.push({
+    if (data.peRatio < 15) {
+      signalData.push({
           companyId: (company as any).id,
           formulaId: (valueFormula as any).id,
-          signal: "BUY",
-          value: String(data.peRatio),
-          metadata: { formula: "Value Stock", threshold: 15 }
-        });
-      } else if (data.peRatio > 40) {
-        signalData.push({
+        signal: "BUY",
+        value: String(data.peRatio),
+        metadata: { formula: "Value Stock", threshold: 15 }
+      });
+    } else if (data.peRatio > 40) {
+      signalData.push({
           companyId: (company as any).id,
           formulaId: (valueFormula as any).id,
-          signal: "SELL",
-          value: String(data.peRatio),
-          metadata: { formula: "Value Stock", threshold: 40 }
-        });
-      } else {
-        signalData.push({
+        signal: "SELL",
+        value: String(data.peRatio),
+        metadata: { formula: "Value Stock", threshold: 40 }
+      });
+    } else {
+      signalData.push({
           companyId: (company as any).id,
           formulaId: (valueFormula as any).id,
-          signal: "HOLD",
-          value: String(data.peRatio),
-          metadata: { formula: "Value Stock" }
-        });
+        signal: "HOLD",
+        value: String(data.peRatio),
+        metadata: { formula: "Value Stock" }
+      });
       }
     }
   }

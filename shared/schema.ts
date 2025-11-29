@@ -3,6 +3,15 @@ import { pgTable, text, varchar, integer, timestamp, jsonb, decimal, boolean, un
 import { createInsertSchema, createSelectSchema } from "drizzle-zod";
 import { z } from "zod";
 
+export const roles = pgTable("roles", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: text("name").notNull().unique(),
+  description: text("description"),
+  permissions: jsonb("permissions").notNull().default([]),
+  isSystem: boolean("is_system").notNull().default(false),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
 export const users = pgTable("users", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   email: text("email").notNull().unique(),
@@ -12,6 +21,7 @@ export const users = pgTable("users", {
   role: text("role").notNull().default("viewer"),
   otpSecret: text("otp_secret").default(sql`NULL`),
   otpEnabled: boolean("otp_enabled").notNull().default(false),
+  enabled: boolean("enabled").notNull().default(true),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
@@ -20,6 +30,15 @@ export const sessions = pgTable("sessions", {
   userId: varchar("user_id").notNull().references(() => users.id),
   token: text("token").notNull().unique(),
   expiresAt: timestamp("expires_at").notNull(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export const otpCodes = pgTable("otp_codes", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  email: text("email").notNull(),
+  code: text("code").notNull(),
+  expiresAt: timestamp("expires_at").notNull(),
+  used: boolean("used").notNull().default(false),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
@@ -103,14 +122,7 @@ export const customTables = pgTable("custom_tables", {
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
 
-export const otpCodes = pgTable("otp_codes", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  phone: text("phone").notNull(),
-  code: text("code").notNull(),
-  expiresAt: timestamp("expires_at").notNull(),
-  used: boolean("used").notNull().default(false),
-  createdAt: timestamp("created_at").notNull().defaultNow(),
-});
+
 
 export const rolePermissions = pgTable("role_permissions", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -172,6 +184,11 @@ export const insertUserSchema = createInsertSchema(users).omit({
   createdAt: true,
 });
 
+export const insertRoleSchema = createInsertSchema(roles).omit({
+  id: true,
+  createdAt: true,
+});
+
 export const insertSectorSchema = createInsertSchema(sectors).omit({
   id: true,
   createdAt: true,
@@ -208,6 +225,9 @@ export const insertCustomTableSchema = createInsertSchema(customTables).omit({
 
 export type InsertUser = z.infer<typeof insertUserSchema>;
 export type User = typeof users.$inferSelect;
+
+export type InsertRole = z.infer<typeof insertRoleSchema>;
+export type Role = typeof roles.$inferSelect;
 
 export type InsertSector = z.infer<typeof insertSectorSchema>;
 export type Sector = typeof sectors.$inferSelect;
@@ -246,3 +266,54 @@ export type InsertScrapingLog = typeof scrapingLogs.$inferInsert;
 
 export type SectorUpdateHistory = typeof sectorUpdateHistory.$inferSelect;
 export type InsertSectorUpdateHistory = typeof sectorUpdateHistory.$inferInsert;
+
+// Bulk Import Jobs - tracks overall import job
+export const bulkImportJobs = pgTable("bulk_import_jobs", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").references(() => users.id).notNull(),
+  fileName: text("file_name").notNull(),
+  status: text("status").notNull().default("pending"), // 'pending' | 'running' | 'completed' | 'failed' | 'cancelled'
+  totalItems: integer("total_items").notNull().default(0),
+  processedItems: integer("processed_items").notNull().default(0),
+  successItems: integer("success_items").notNull().default(0),
+  failedItems: integer("failed_items").notNull().default(0),
+  skippedItems: integer("skipped_items").notNull().default(0),
+  error: text("error"),
+  startedAt: timestamp("started_at"),
+  completedAt: timestamp("completed_at"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+// Bulk Import Items - tracks each company in the job
+export const bulkImportItems = pgTable("bulk_import_items", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  jobId: varchar("job_id").notNull().references(() => bulkImportJobs.id, { onDelete: "cascade" }),
+  ticker: text("ticker").notNull(),
+  companyName: text("company_name").notNull(),
+  sectorName: text("sector_name").notNull(),
+  status: text("status").notNull().default("pending"), // 'pending' | 'processing' | 'success' | 'failed' | 'skipped'
+  resolvedTicker: text("resolved_ticker"), // Actual ticker from Screener.in search
+  sectorId: varchar("sector_id").references(() => sectors.id),
+  companyId: varchar("company_id").references(() => companies.id),
+  error: text("error"),
+  quartersScraped: integer("quarters_scraped").default(0),
+  metricsScraped: integer("metrics_scraped").default(0),
+  processedAt: timestamp("processed_at"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export const insertBulkImportJobSchema = createInsertSchema(bulkImportJobs).omit({
+  id: true,
+  createdAt: true,
+});
+
+export const insertBulkImportItemSchema = createInsertSchema(bulkImportItems).omit({
+  id: true,
+  createdAt: true,
+});
+
+export type BulkImportJob = typeof bulkImportJobs.$inferSelect;
+export type InsertBulkImportJob = z.infer<typeof insertBulkImportJobSchema>;
+
+export type BulkImportItem = typeof bulkImportItems.$inferSelect;
+export type InsertBulkImportItem = z.infer<typeof insertBulkImportItemSchema>;

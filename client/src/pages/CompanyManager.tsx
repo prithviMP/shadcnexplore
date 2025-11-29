@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -17,11 +17,15 @@ import { useToast } from "@/hooks/use-toast";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { Plus, Pencil, Trash2, Upload, ExternalLink, Search, CheckCircle2, FileText, Loader2, AlertCircle, MoreVertical } from "lucide-react";
+import { Plus, Pencil, Trash2, Upload, ExternalLink, Search, CheckCircle2, FileText, Loader2, AlertCircle, MoreVertical, Filter, ChevronDown, ArrowUp, ArrowDown, ArrowUpDown } from "lucide-react";
 import { Link } from "wouter";
 import type { Company, Sector, InsertCompany } from "@shared/schema";
+import { formatDistanceToNow } from "date-fns";
 import { Checkbox } from "@/components/ui/checkbox";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { Pagination, PaginationContent, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious, PaginationEllipsis } from "@/components/ui/pagination";
+import MetricFilter from "@/components/MetricFilter";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 
 // Schema without strict validation - we'll validate in submit handler
 const companyFormSchema = z.object({
@@ -51,8 +55,15 @@ export default function CompanyManager() {
   const [bulkSectorUpdateOpen, setBulkSectorUpdateOpen] = useState(false);
   const [bulkScrapeOpen, setBulkScrapeOpen] = useState(false);
   const [bulkSectorId, setBulkSectorId] = useState<string>("");
+  const [searchTerm, setSearchTerm] = useState("");
+  const [currentPage, setCurrentPage] = useState<number>(1);
+  const [itemsPerPage] = useState<number>(20);
+  const [metricFilters, setMetricFilters] = useState<Array<{ metric: string; min: string; max: string }>>([]);
+  const [filtersOpen, setFiltersOpen] = useState<boolean>(false);
+  const [sortField, setSortField] = useState<string>("updatedAt");
+  const [sortDirection, setSortDirection] = useState<"asc" | "desc">("desc");
 
-  const companiesQueryKey = selectedSector 
+  const companiesQueryKey = selectedSector
     ? ["/api/companies", { sectorId: selectedSector }]
     : ["/api/companies"];
 
@@ -63,6 +74,162 @@ export default function CompanyManager() {
   const { data: sectors } = useQuery<Sector[]>({
     queryKey: ["/api/sectors"]
   });
+
+  // Filter companies based on search term
+  const filteredCompanies = useMemo(() => {
+    if (!companies) return [];
+    if (!searchTerm.trim()) return companies;
+
+    const term = searchTerm.toLowerCase();
+    return companies.filter(company =>
+      company.ticker.toLowerCase().includes(term) ||
+      company.name?.toLowerCase().includes(term)
+    );
+  }, [companies, searchTerm]);
+
+  // Fetch quarterly data for metric filtering (only when metric filters are active)
+  const activeMetricFilters = metricFilters.filter(f => f.metric);
+  const tickersToFetch = useMemo(() => {
+    return filteredCompanies.slice(0, 100).map(c => c.ticker).sort();
+  }, [filteredCompanies]);
+  
+  const { data: quarterlyDataMap } = useQuery<Record<string, {
+    ticker: string;
+    quarters: Array<{
+      quarter: string;
+      metrics: Record<string, string | null>;
+    }>;
+  }>>({
+    queryKey: ["/api/companies/quarterly-data-batch", tickersToFetch.length, tickersToFetch.slice(0, 10).join(",")],
+    queryFn: async () => {
+      if (activeMetricFilters.length === 0 || tickersToFetch.length === 0) return {};
+      
+      const data: Record<string, any> = {};
+      await Promise.all(
+        tickersToFetch.map(async (ticker) => {
+          try {
+            const res = await apiRequest("GET", `/api/v1/companies/${ticker}/data`);
+            const result = await res.json();
+            data[ticker] = result;
+          } catch (error) {
+            // Ignore errors for individual companies
+          }
+        })
+      );
+      return data;
+    },
+    enabled: activeMetricFilters.length > 0 && tickersToFetch.length > 0 && tickersToFetch.length <= 100,
+  });
+
+  // Apply metric filters
+  const companiesWithMetricFilters = useMemo(() => {
+    if (activeMetricFilters.length === 0 || !quarterlyDataMap) {
+      return filteredCompanies;
+    }
+
+    return filteredCompanies.filter(company => {
+      const companyData = quarterlyDataMap[company.ticker];
+      if (!companyData || !companyData.quarters || companyData.quarters.length === 0) {
+        return false; // Exclude companies without quarterly data when metric filters are active
+      }
+
+      // Get the most recent quarter's metrics
+      const latestQuarter = companyData.quarters[companyData.quarters.length - 1];
+      const metrics = latestQuarter.metrics || {};
+
+      // Check all metric filters
+      return activeMetricFilters.every(filter => {
+        const metricValue = metrics[filter.metric];
+        if (metricValue === null || metricValue === undefined) return false;
+
+        const numValue = parseFloat(String(metricValue));
+        if (isNaN(numValue)) return false;
+
+        if (filter.min && numValue < parseFloat(filter.min)) return false;
+        if (filter.max && numValue > parseFloat(filter.max)) return false;
+        return true;
+      });
+    });
+  }, [filteredCompanies, activeMetricFilters, quarterlyDataMap]);
+
+  // Sort companies
+  const sortedCompanies = useMemo(() => {
+    const sorted = [...companiesWithMetricFilters];
+    
+    sorted.sort((a, b) => {
+      let aValue: any;
+      let bValue: any;
+      
+      switch (sortField) {
+        case "ticker":
+          aValue = a.ticker?.toLowerCase() || "";
+          bValue = b.ticker?.toLowerCase() || "";
+          break;
+        case "name":
+          aValue = a.name?.toLowerCase() || "";
+          bValue = b.name?.toLowerCase() || "";
+          break;
+        case "updatedAt":
+          aValue = new Date(a.updatedAt).getTime();
+          bValue = new Date(b.updatedAt).getTime();
+          break;
+        case "revenue":
+          aValue = getFinancialValueNumber(a, "revenue") || 0;
+          bValue = getFinancialValueNumber(b, "revenue") || 0;
+          break;
+        case "roe":
+          aValue = getFinancialValueNumber(a, "roe") || 0;
+          bValue = getFinancialValueNumber(b, "roe") || 0;
+          break;
+        case "pe":
+          aValue = getFinancialValueNumber(a, "pe") || 0;
+          bValue = getFinancialValueNumber(b, "pe") || 0;
+          break;
+        default:
+          return 0;
+      }
+      
+      if (aValue < bValue) return sortDirection === "asc" ? -1 : 1;
+      if (aValue > bValue) return sortDirection === "asc" ? 1 : -1;
+      return 0;
+    });
+    
+    return sorted;
+  }, [companiesWithMetricFilters, sortField, sortDirection]);
+
+  // Pagination logic
+  const totalPages = Math.ceil(sortedCompanies.length / itemsPerPage);
+  const startIndex = (currentPage - 1) * itemsPerPage;
+  const endIndex = startIndex + itemsPerPage;
+  const paginatedCompanies = sortedCompanies.slice(startIndex, endIndex);
+
+  // Handle sort
+  const handleSort = (field: string) => {
+    if (sortField === field) {
+      setSortDirection(sortDirection === "asc" ? "desc" : "asc");
+    } else {
+      setSortField(field);
+      setSortDirection("asc");
+    }
+    setCurrentPage(1); // Reset to first page when sorting changes
+  };
+
+  // Sort icon component
+  const SortIcon = ({ field }: { field: string }) => {
+    if (sortField !== field) {
+      return <ArrowUpDown className="h-3 w-3 ml-1 opacity-50" />;
+    }
+    return sortDirection === "asc" ? (
+      <ArrowUp className="h-3 w-3 ml-1" />
+    ) : (
+      <ArrowDown className="h-3 w-3 ml-1" />
+    );
+  };
+
+  // Reset to page 1 when filters change
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchTerm, selectedSector, metricFilters, sortField, sortDirection]);
 
   const createForm = useForm<CompanyFormData>({
     resolver: zodResolver(companyFormSchema),
@@ -79,74 +246,74 @@ export default function CompanyManager() {
       const company = await response.json();
       queryClient.invalidateQueries({ queryKey: ["/api/companies"] });
       toast({ title: "Company created successfully" });
-      
+
       // Start scraping automatically
       const ticker = company.ticker || createForm.getValues("ticker");
       if (ticker) {
         setScrapingStatus({ ticker, status: "scraping", message: "Fetching company data..." });
-        
+
         try {
           const scrapeRes = await apiRequest("POST", "/api/v1/scraper/scrape/single", { ticker });
           if (scrapeRes.ok) {
             const scrapeResult = await scrapeRes.json();
             if (scrapeResult.success) {
-              setScrapingStatus({ 
-                ticker, 
-                status: "success", 
-                message: `Data fetched successfully! ${scrapeResult.quartersScraped || 0} quarters, ${scrapeResult.metricsScraped || 0} metrics` 
+              setScrapingStatus({
+                ticker,
+                status: "success",
+                message: `Data fetched successfully! ${scrapeResult.quartersScraped || 0} quarters, ${scrapeResult.metricsScraped || 0} metrics`
               });
-              toast({ 
-                title: "Data fetched successfully", 
-                description: `Scraped ${scrapeResult.quartersScraped || 0} quarters and ${scrapeResult.metricsScraped || 0} metrics` 
+              toast({
+                title: "Data fetched successfully",
+                description: `Scraped ${scrapeResult.quartersScraped || 0} quarters and ${scrapeResult.metricsScraped || 0} metrics`
               });
-              
+
               // Invalidate queries to refresh data
               queryClient.invalidateQueries({ queryKey: ["/api/v1/companies", ticker] });
               queryClient.invalidateQueries({ queryKey: ["/api/v1/companies", ticker, "data"] });
             } else {
-              setScrapingStatus({ 
-                ticker, 
-                status: "error", 
-                message: scrapeResult.error || "Failed to fetch data" 
+              setScrapingStatus({
+                ticker,
+                status: "error",
+                message: scrapeResult.error || "Failed to fetch data"
               });
-              toast({ 
-                title: "Scraping failed", 
-                description: scrapeResult.error || "Failed to fetch company data", 
-                variant: "destructive" 
+              toast({
+                title: "Scraping failed",
+                description: scrapeResult.error || "Failed to fetch company data",
+                variant: "destructive"
               });
             }
           } else {
             const errorData = await scrapeRes.json();
-            setScrapingStatus({ 
-              ticker, 
-              status: "error", 
-              message: errorData.error || "Failed to start scraping" 
+            setScrapingStatus({
+              ticker,
+              status: "error",
+              message: errorData.error || "Failed to start scraping"
             });
-            toast({ 
-              title: "Scraping failed", 
-              description: errorData.error || "Failed to start scraping", 
-              variant: "destructive" 
+            toast({
+              title: "Scraping failed",
+              description: errorData.error || "Failed to start scraping",
+              variant: "destructive"
             });
           }
         } catch (error: any) {
-          setScrapingStatus({ 
-            ticker, 
-            status: "error", 
-            message: error.message || "Failed to fetch data" 
+          setScrapingStatus({
+            ticker,
+            status: "error",
+            message: error.message || "Failed to fetch data"
           });
-          toast({ 
-            title: "Scraping failed", 
-            description: error.message || "Failed to fetch company data", 
-            variant: "destructive" 
+          toast({
+            title: "Scraping failed",
+            description: error.message || "Failed to fetch company data",
+            variant: "destructive"
           });
         }
-        
+
         // Clear scraping status after 5 seconds
         setTimeout(() => {
           setScrapingStatus(null);
         }, 5000);
       }
-      
+
       setCreateOpen(false);
       createForm.reset();
       setDetectedMetadata(null);
@@ -182,10 +349,10 @@ export default function CompanyManager() {
     }
   });
 
-  const [csvPreview, setCsvPreview] = useState<Array<{ 
-    ticker: string; 
-    name?: string; 
-    sectorId?: string; 
+  const [csvPreview, setCsvPreview] = useState<Array<{
+    ticker: string;
+    name?: string;
+    sectorId?: string;
     sector?: string;
     verifiedTicker?: string;
     verifiedCompanyName?: string;
@@ -203,39 +370,39 @@ export default function CompanyManager() {
       return await res.json();
     },
     onSuccess: (data, variables) => {
-      setCsvPreview(prev => prev.map((item, idx) => 
-        idx === variables.index 
-          ? { 
-              ...item, 
-              verifiedTicker: data.success ? data.ticker : undefined,
-              verifiedCompanyName: data.success ? data.companyName : undefined,
-              verifiedSector: data.success ? data.detectedSector : undefined,
-              isVerifying: false,
-              verificationError: data.success ? undefined : data.message || "Verification failed"
-            }
+      setCsvPreview(prev => prev.map((item, idx) =>
+        idx === variables.index
+          ? {
+            ...item,
+            verifiedTicker: data.success ? data.ticker : undefined,
+            verifiedCompanyName: data.success ? data.companyName : undefined,
+            verifiedSector: data.success ? data.detectedSector : undefined,
+            isVerifying: false,
+            verificationError: data.success ? undefined : data.message || "Verification failed"
+          }
           : item
       ));
       if (data.success) {
-        toast({ 
-          title: "Ticker fetched", 
-          description: `Found ticker: ${data.ticker} for ${data.companyName}` 
+        toast({
+          title: "Ticker fetched",
+          description: `Found ticker: ${data.ticker} for ${data.companyName}`
         });
       } else {
-        toast({ 
-          title: "Ticker not found", 
+        toast({
+          title: "Ticker not found",
           description: data.message || "Company not found on Screener.in",
           variant: "destructive"
         });
       }
     },
     onError: (error: Error, variables) => {
-      setCsvPreview(prev => prev.map((item, idx) => 
-        idx === variables.index 
+      setCsvPreview(prev => prev.map((item, idx) =>
+        idx === variables.index
           ? { ...item, isVerifying: false, verificationError: error.message }
           : item
       ));
-      toast({ 
-        title: "Failed to fetch ticker", 
+      toast({
+        title: "Failed to fetch ticker",
         description: error.message,
         variant: "destructive"
       });
@@ -245,77 +412,77 @@ export default function CompanyManager() {
   const verifyAllTickers = async () => {
     setVerifyingAll(true);
     const companiesToVerify = csvPreview.filter(c => c.name && !c.verifiedTicker);
-    
+
     for (let i = 0; i < companiesToVerify.length; i++) {
       const company = companiesToVerify[i];
       if (!company.name) continue;
-      
+
       // Update state to show verifying
-      setCsvPreview(prev => prev.map((item, idx) => 
-        item.name === company.name 
+      setCsvPreview(prev => prev.map((item, idx) =>
+        item.name === company.name
           ? { ...item, isVerifying: true, verificationError: undefined }
           : item
       ));
-      
+
       try {
         const res = await apiRequest("POST", "/api/v1/companies/verify-ticker", { companyName: company.name });
         const data = await res.json();
-        
-        setCsvPreview(prev => prev.map((item, idx) => 
-          item.name === company.name 
-            ? { 
-                ...item, 
-                verifiedTicker: data.success ? data.ticker : undefined,
-                verifiedCompanyName: data.success ? data.companyName : undefined,
-                verifiedSector: data.success ? data.detectedSector : undefined,
-                isVerifying: false,
-                verificationError: data.success ? undefined : data.message || "Verification failed"
-              }
+
+        setCsvPreview(prev => prev.map((item, idx) =>
+          item.name === company.name
+            ? {
+              ...item,
+              verifiedTicker: data.success ? data.ticker : undefined,
+              verifiedCompanyName: data.success ? data.companyName : undefined,
+              verifiedSector: data.success ? data.detectedSector : undefined,
+              isVerifying: false,
+              verificationError: data.success ? undefined : data.message || "Verification failed"
+            }
             : item
         ));
-        
+
         // Add delay to avoid rate limiting
         await new Promise(resolve => setTimeout(resolve, 1000));
       } catch (error: any) {
-        setCsvPreview(prev => prev.map((item, idx) => 
-          item.name === company.name 
+        setCsvPreview(prev => prev.map((item, idx) =>
+          item.name === company.name
             ? { ...item, isVerifying: false, verificationError: error.message }
             : item
         ));
       }
     }
-    
+
     setVerifyingAll(false);
     const successCount = csvPreview.filter(c => c.verifiedTicker).length;
-    toast({ 
-      title: "Bulk fetch completed", 
-      description: `Fetched tickers for ${successCount} out of ${companiesToVerify.length} companies` 
+    toast({
+      title: "Bulk fetch completed",
+      description: `Fetched tickers for ${successCount} out of ${companiesToVerify.length} companies`
     });
   };
 
   const bulkImportMutation = useMutation({
-    mutationFn: (data: { companies: Array<{ ticker: string; name?: string; sectorId?: string; sector?: string }>; autoScrape?: boolean }) => 
+    mutationFn: (data: { companies: Array<{ ticker: string; name?: string; sectorId?: string; sector?: string }>; autoScrape?: boolean }) =>
       apiRequest("POST", "/api/v1/companies/bulk-import", data),
     onSuccess: async (result: any) => {
       queryClient.invalidateQueries({ queryKey: ["/api/companies"] });
       queryClient.invalidateQueries({ queryKey: ["/api/sectors"] });
-      
+
       const successMsg = `${result.success} successful, ${result.failed} failed`;
-      
+
       if (result.failed > 0 && result.errors) {
         const errorDetails = result.errors.slice(0, 5).map((e: any) => `${e.ticker}: ${e.error}`).join(', ');
-        toast({ 
-          title: `Import completed with errors`, 
+        toast({
+          title: `Import completed with errors`,
           description: `${successMsg}. First errors: ${errorDetails}`,
           variant: result.success === 0 ? "destructive" : "default"
         });
       } else {
-      toast({ 
-        title: `Import completed`, 
-          description: successMsg 
+        toast({
+          title: `Import completed`,
+          description: successMsg
         });
       }
-      
+
       // Trigger scraping if requested
       if (autoScrapeAfterImport && result.success > 0 && result.importedTickers && result.importedTickers.length > 0) {
         toast({
@@ -340,7 +507,7 @@ export default function CompanyManager() {
           });
         }
       }
-      
+
       setBulkOpen(false);
       setBulkData("");
       setCsvPreview([]);
@@ -364,13 +531,13 @@ export default function CompanyManager() {
   const parseCSV = (csvText: string): Array<{ ticker: string; name?: string; sectorId?: string; sector?: string }> => {
     const lines = csvText.split('\n').filter(line => line.trim());
     if (lines.length === 0) return [];
-    
+
     // Handle CSV with quoted values (common in Excel exports)
     const parseCSVLine = (line: string): string[] => {
       const result: string[] = [];
       let current = '';
       let inQuotes = false;
-      
+
       for (let i = 0; i < line.length; i++) {
         const char = line[i];
         if (char === '"') {
@@ -385,12 +552,12 @@ export default function CompanyManager() {
       result.push(current.trim());
       return result;
     };
-    
+
     const headers = parseCSVLine(lines[0]).map(h => h.trim().toLowerCase().replace(/"/g, ''));
     const tickerIndex = headers.findIndex(h => h === 'ticker' || h === 'symbol');
     const nameIndex = headers.findIndex(h => h === 'name' || h === 'company name' || h === 'company');
     const sectorIndex = headers.findIndex(h => h === 'sector' || h === 'sectorid' || h === 'sector id');
-    
+
     if (tickerIndex === -1) {
       throw new Error("CSV must have a 'ticker' or 'symbol' column");
     }
@@ -400,11 +567,11 @@ export default function CompanyManager() {
       const result: { ticker: string; name?: string; sectorId?: string; sector?: string } = {
         ticker: values[tickerIndex] || '',
       };
-      
+
       if (nameIndex !== -1 && values[nameIndex]) {
         result.name = values[nameIndex];
       }
-      
+
       if (sectorIndex !== -1 && values[sectorIndex]) {
         const sectorName = values[sectorIndex];
         // Try to find sector by name first
@@ -416,7 +583,7 @@ export default function CompanyManager() {
           result.sector = sectorName;
         }
       }
-      
+
       return result;
     }).filter(row => row.ticker);
   };
@@ -439,7 +606,7 @@ export default function CompanyManager() {
 
   const handleBulkImport = () => {
     let companiesToImport: Array<{ ticker: string; name?: string; sectorId?: string; sector?: string }> = [];
-    
+
     if (csvPreview.length > 0) {
       // Use verified ticker if available, otherwise use original ticker
       companiesToImport = csvPreview.map(company => ({
@@ -470,7 +637,7 @@ export default function CompanyManager() {
       return;
     }
 
-    bulkImportMutation.mutate({ 
+    bulkImportMutation.mutate({
       companies: companiesToImport,
       autoScrape: autoScrapeAfterImport
     });
@@ -480,17 +647,17 @@ export default function CompanyManager() {
     try {
       // If we have detected metadata, use auto-detection
       const useAutoDetect = !!detectedMetadata;
-      
+
       // Validate: if not auto-detecting, name and sectorId are required
       if (!useAutoDetect && (!data.name || !data.sectorId)) {
-        toast({ 
-          title: "Validation error", 
-          description: "Name and sector are required when not using auto-detection", 
-          variant: "destructive" 
+        toast({
+          title: "Validation error",
+          description: "Name and sector are required when not using auto-detection",
+          variant: "destructive"
         });
         return;
       }
-      
+
       const insertData: InsertCompany & { autoDetect?: boolean; detectedSector?: string } = {
         ticker: data.ticker,
         name: data.name || (detectedMetadata?.companyName) || "",
@@ -537,17 +704,26 @@ export default function CompanyManager() {
     return sectors?.find(s => s.id === sectorId)?.name || "Unknown";
   };
 
+  const getFinancialValueNumber = (company: Company, key: string): number | null => {
+    if (!company.financialData) return null;
+    const data = company.financialData as any;
+    const value = data[key];
+    if (value === undefined || value === null) return null;
+    const numValue = parseFloat(value);
+    return isNaN(numValue) ? null : numValue;
+  };
+
   const getFinancialValue = (company: Company, key: string): string => {
     if (!company.financialData) return "—";
     const data = company.financialData as any;
     const value = data[key];
     if (value === undefined || value === null) return "—";
-    
+
     // Format currency values (revenue, marketCap) with ₹ symbol
     if (key === "revenue" || key === "marketCap") {
       const numValue = parseFloat(value);
       if (isNaN(numValue)) return String(value);
-      
+
       if (Math.abs(numValue) >= 10000000) {
         return `₹${(numValue / 10000000).toFixed(2)} Cr`;
       }
@@ -559,14 +735,14 @@ export default function CompanyManager() {
       }
       return `₹${numValue.toFixed(2)}`;
     }
-    
+
     // Format percentages (roe, roce, etc.)
     if (key === "roe" || key === "roce" || key.includes("%")) {
       const numValue = parseFloat(value);
       if (isNaN(numValue)) return String(value);
       return `${numValue.toFixed(2)}%`;
     }
-    
+
     return String(value);
   };
 
@@ -584,11 +760,11 @@ export default function CompanyManager() {
   };
 
   const toggleSelectAll = () => {
-    if (!companies) return;
-    if (selectedCompanies.size === companies.length) {
+    if (!companiesWithMetricFilters) return;
+    if (selectedCompanies.size === companiesWithMetricFilters.length) {
       setSelectedCompanies(new Set());
     } else {
-      setSelectedCompanies(new Set(companies.map(c => c.id)));
+      setSelectedCompanies(new Set(companiesWithMetricFilters.map(c => c.id)));
     }
   };
 
@@ -605,7 +781,7 @@ export default function CompanyManager() {
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["/api/companies"] });
       clearSelection();
-      toast({ 
+      toast({
         title: `Successfully deleted ${data.deleted} companies`,
         description: `All selected companies have been deleted along with their related data.`
       });
@@ -625,12 +801,12 @@ export default function CompanyManager() {
     },
     onSuccess: (results) => {
       const successCount = results.filter(r => r.status === "fulfilled").length;
-      
+
       queryClient.invalidateQueries({ queryKey: ["/api/companies"] });
       clearSelection();
       setBulkSectorUpdateOpen(false);
       setBulkSectorId("");
-      
+
       toast({ title: `Successfully updated ${successCount} companies` });
     },
     onError: (error: Error) => {
@@ -642,16 +818,16 @@ export default function CompanyManager() {
     mutationFn: async (companyIds: string[]) => {
       const selectedCompaniesData = companies?.filter(c => companyIds.includes(c.id)) || [];
       const tickers = selectedCompaniesData.map(c => c.ticker);
-      
+
       const res = await apiRequest("POST", "/api/v1/scraper/scrape", { tickers });
       return res.json();
     },
     onSuccess: () => {
       clearSelection();
       setBulkScrapeOpen(false);
-      toast({ 
-        title: "Bulk scraping started", 
-        description: "Scraping data for selected companies. This may take a while." 
+      toast({
+        title: "Bulk scraping started",
+        description: "Scraping data for selected companies. This may take a while."
       });
     },
     onError: (error: Error) => {
@@ -666,9 +842,9 @@ export default function CompanyManager() {
 
   const handleBulkSectorUpdate = () => {
     if (selectedCompanies.size === 0 || !bulkSectorId) return;
-    bulkSectorUpdateMutation.mutate({ 
-      companyIds: Array.from(selectedCompanies), 
-      sectorId: bulkSectorId 
+    bulkSectorUpdateMutation.mutate({
+      companyIds: Array.from(selectedCompanies),
+      sectorId: bulkSectorId
     });
   };
 
@@ -788,7 +964,7 @@ export default function CompanyManager() {
                   {csvPreview.length > 0 && (
                     <div className="space-y-2">
                       <div className="flex items-center justify-between">
-                      <h3 className="text-md font-semibold">CSV Preview ({csvPreview.length} companies)</h3>
+                        <h3 className="text-md font-semibold">CSV Preview ({csvPreview.length} companies)</h3>
                         <Button
                           type="button"
                           variant="outline"
@@ -845,7 +1021,7 @@ export default function CompanyManager() {
                                 </TableCell>
                                 <TableCell>
                                   {company.verifiedSector || (
-                                    company.sectorId 
+                                    company.sectorId
                                       ? sectors?.find(s => s.id === company.sectorId)?.name || "Unknown"
                                       : company.sector || "Auto-detect"
                                   )}
@@ -857,7 +1033,7 @@ export default function CompanyManager() {
                                       variant="ghost"
                                       size="sm"
                                       onClick={() => {
-                                        setCsvPreview(prev => prev.map((item, idx) => 
+                                        setCsvPreview(prev => prev.map((item, idx) =>
                                           idx === index ? { ...item, isVerifying: true, verificationError: undefined } : item
                                         ));
                                         verifyTickerMutation.mutate({ companyName: company.name!, index });
@@ -936,101 +1112,101 @@ export default function CompanyManager() {
                   <TabsTrigger value="ticker">Add by Ticker</TabsTrigger>
                 </TabsList>
                 <TabsContent value="manual">
-              <Form {...createForm}>
-                <form onSubmit={createForm.handleSubmit(handleCreateSubmit)} className="space-y-4">
-                  <div className="grid grid-cols-2 gap-4">
-                    <FormField
-                      control={createForm.control}
-                      name="ticker"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Ticker</FormLabel>
-                          <FormControl>
-                            <Input {...field} data-testid="input-company-ticker" placeholder="AAPL" />
-                          </FormControl>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-                    <FormField
-                      control={createForm.control}
-                      name="sectorId"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Sector</FormLabel>
-                          <Select onValueChange={field.onChange} value={field.value}>
+                  <Form {...createForm}>
+                    <form onSubmit={createForm.handleSubmit(handleCreateSubmit)} className="space-y-4">
+                      <div className="grid grid-cols-2 gap-4">
+                        <FormField
+                          control={createForm.control}
+                          name="ticker"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Ticker</FormLabel>
+                              <FormControl>
+                                <Input {...field} data-testid="input-company-ticker" placeholder="AAPL" />
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                        <FormField
+                          control={createForm.control}
+                          name="sectorId"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Sector</FormLabel>
+                              <Select onValueChange={field.onChange} value={field.value}>
+                                <FormControl>
+                                  <SelectTrigger data-testid="select-sector">
+                                    <SelectValue placeholder="Select sector" />
+                                  </SelectTrigger>
+                                </FormControl>
+                                <SelectContent>
+                                  {sectors?.map((sector) => (
+                                    <SelectItem key={sector.id} value={sector.id}>
+                                      {sector.name}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                      </div>
+                      <FormField
+                        control={createForm.control}
+                        name="name"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Company Name</FormLabel>
                             <FormControl>
-                              <SelectTrigger data-testid="select-sector">
-                                <SelectValue placeholder="Select sector" />
-                              </SelectTrigger>
+                              <Input {...field} data-testid="input-company-name" placeholder="Apple Inc." />
                             </FormControl>
-                            <SelectContent>
-                              {sectors?.map((sector) => (
-                                <SelectItem key={sector.id} value={sector.id}>
-                                  {sector.name}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-                  </div>
-                  <FormField
-                    control={createForm.control}
-                    name="name"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Company Name</FormLabel>
-                        <FormControl>
-                          <Input {...field} data-testid="input-company-name" placeholder="Apple Inc." />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                  <FormField
-                    control={createForm.control}
-                    name="marketCap"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Market Cap (Optional)</FormLabel>
-                        <FormControl>
-                          <Input {...field} data-testid="input-market-cap" placeholder="2500000000000" />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                  <FormField
-                    control={createForm.control}
-                    name="financialData"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Financial Data (JSON, Optional)</FormLabel>
-                        <FormControl>
-                          <Textarea
-                            {...field}
-                            data-testid="input-financial-data"
-                            placeholder='{"revenue": 394328, "roe": 147.3, "pe": 28.5}'
-                            className="font-mono text-xs"
-                          />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                  <div className="flex justify-end gap-2">
-                    <Button type="button" variant="outline" onClick={() => setCreateOpen(false)} data-testid="button-cancel">
-                      Cancel
-                    </Button>
-                    <Button type="submit" disabled={createMutation.isPending} data-testid="button-submit-company">
-                      {createMutation.isPending ? "Creating..." : "Create Company"}
-                    </Button>
-                  </div>
-                </form>
-              </Form>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                      <FormField
+                        control={createForm.control}
+                        name="marketCap"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Market Cap (Optional)</FormLabel>
+                            <FormControl>
+                              <Input {...field} data-testid="input-market-cap" placeholder="2500000000000" />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                      <FormField
+                        control={createForm.control}
+                        name="financialData"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Financial Data (JSON, Optional)</FormLabel>
+                            <FormControl>
+                              <Textarea
+                                {...field}
+                                data-testid="input-financial-data"
+                                placeholder='{"revenue": 394328, "roe": 147.3, "pe": 28.5}'
+                                className="font-mono text-xs"
+                              />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                      <div className="flex justify-end gap-2">
+                        <Button type="button" variant="outline" onClick={() => setCreateOpen(false)} data-testid="button-cancel">
+                          Cancel
+                        </Button>
+                        <Button type="submit" disabled={createMutation.isPending} data-testid="button-submit-company">
+                          {createMutation.isPending ? "Creating..." : "Create Company"}
+                        </Button>
+                      </div>
+                    </form>
+                  </Form>
                 </TabsContent>
                 <TabsContent value="ticker">
                   <Form {...createForm}>
@@ -1045,8 +1221,8 @@ export default function CompanyManager() {
                               <FormControl>
                                 <Input {...field} data-testid="input-ticker-autodetect" placeholder="RELIANCE" />
                               </FormControl>
-                              <Button 
-                                type="button" 
+                              <Button
+                                type="button"
                                 onClick={async () => {
                                   const ticker = createForm.getValues("ticker");
                                   if (!ticker) {
@@ -1151,8 +1327,8 @@ export default function CompanyManager() {
                         <Button type="button" variant="outline" onClick={() => setCreateOpen(false)}>
                           Cancel
                         </Button>
-                        <Button 
-                          type="submit" 
+                        <Button
+                          type="submit"
                           disabled={createMutation.isPending || !createForm.getValues("ticker") || (!createForm.getValues("name") && !detectedMetadata)}
                         >
                           {createMutation.isPending ? "Creating..." : "Create Company"}
@@ -1177,20 +1353,43 @@ export default function CompanyManager() {
                 {selectedCompanies.size > 0 && ` • ${selectedCompanies.size} selected`}
               </CardDescription>
             </div>
-            <div className="flex items-center gap-2">
-            <Select value={selectedSector || "all"} onValueChange={(value) => setSelectedSector(value === "all" ? "" : value)}>
-              <SelectTrigger className="w-[200px]" data-testid="select-filter-sector">
-                <SelectValue placeholder="All sectors" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All sectors</SelectItem>
-                {sectors?.map((sector) => (
-                  <SelectItem key={sector.id} value={sector.id}>
-                    {sector.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <div className="flex items-center gap-2 flex-wrap">
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                <Input
+                  placeholder="Search companies or tickers..."
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  className="pl-9 w-[250px]"
+                />
+              </div>
+              <Select value={selectedSector || "all"} onValueChange={(value) => setSelectedSector(value === "all" ? "" : value)}>
+                <SelectTrigger className="w-[200px]" data-testid="select-filter-sector">
+                  <SelectValue placeholder="All sectors" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All sectors</SelectItem>
+                  {sectors?.map((sector) => (
+                    <SelectItem key={sector.id} value={sector.id}>
+                      {sector.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Collapsible open={filtersOpen} onOpenChange={setFiltersOpen}>
+                <CollapsibleTrigger asChild>
+                  <Button variant="outline" size="sm">
+                    <Filter className="h-4 w-4 mr-2" />
+                    Metric Filters
+                    <ChevronDown className={`h-4 w-4 ml-2 transition-transform ${filtersOpen ? 'rotate-180' : ''}`} />
+                  </Button>
+                </CollapsibleTrigger>
+                <CollapsibleContent className="mt-4">
+                  <div className="p-4 border rounded-lg bg-muted/30">
+                    <MetricFilter filters={metricFilters} onFiltersChange={setMetricFilters} />
+                  </div>
+                </CollapsibleContent>
+              </Collapsible>
             </div>
           </div>
         </CardHeader>
@@ -1231,7 +1430,7 @@ export default function CompanyManager() {
                       Update Sector
                     </DropdownMenuItem>
                     <DropdownMenuSeparator />
-                    <DropdownMenuItem 
+                    <DropdownMenuItem
                       onClick={() => setBulkDeleteOpen(true)}
                       className="text-destructive"
                     >
@@ -1245,35 +1444,85 @@ export default function CompanyManager() {
           )}
           {isLoading ? (
             <div className="text-center py-8 text-muted-foreground">Loading companies...</div>
-          ) : !companies || companies.length === 0 ? (
+          ) : !companiesWithMetricFilters || companiesWithMetricFilters.length === 0 ? (
             <div className="text-center py-8 text-muted-foreground">
-              No companies found. {selectedSector ? "Try selecting a different sector." : "Create one to get started."}
+              {searchTerm || activeMetricFilters.length > 0 ? "No companies match your filters." : (selectedSector ? "No companies found. Try selecting a different sector." : "No companies found. Create one to get started.")}
             </div>
           ) : (
-            <div className="overflow-x-auto">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead className="w-12">
-                      <Checkbox
-                        checked={companies && companies.length > 0 && selectedCompanies.size === companies.length}
-                        onCheckedChange={toggleSelectAll}
-                        aria-label="Select all companies"
-                      />
-                    </TableHead>
-                    <TableHead>Ticker</TableHead>
-                    <TableHead>Name</TableHead>
-                    <TableHead>Sector</TableHead>
-                    <TableHead className="text-right">Revenue</TableHead>
-                    <TableHead className="text-right">ROE %</TableHead>
-                    <TableHead className="text-right">P/E</TableHead>
-                    <TableHead className="text-right">Actions</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {companies.map((company) => (
-                    <TableRow 
-                      key={company.id} 
+            <>
+              <div className="overflow-x-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="w-12">
+                        <Checkbox
+                          checked={companiesWithMetricFilters && companiesWithMetricFilters.length > 0 && selectedCompanies.size === companiesWithMetricFilters.length}
+                          onCheckedChange={toggleSelectAll}
+                          aria-label="Select all companies"
+                        />
+                      </TableHead>
+                      <TableHead 
+                        className="cursor-pointer hover:bg-muted/50 select-none"
+                        onClick={() => handleSort("ticker")}
+                      >
+                        <div className="flex items-center">
+                          Ticker
+                          <SortIcon field="ticker" />
+                        </div>
+                      </TableHead>
+                      <TableHead 
+                        className="cursor-pointer hover:bg-muted/50 select-none"
+                        onClick={() => handleSort("name")}
+                      >
+                        <div className="flex items-center">
+                          Name
+                          <SortIcon field="name" />
+                        </div>
+                      </TableHead>
+                      <TableHead>Sector</TableHead>
+                      <TableHead 
+                        className="text-right cursor-pointer hover:bg-muted/50 select-none"
+                        onClick={() => handleSort("revenue")}
+                      >
+                        <div className="flex items-center justify-end">
+                          Revenue
+                          <SortIcon field="revenue" />
+                        </div>
+                      </TableHead>
+                      <TableHead 
+                        className="text-right cursor-pointer hover:bg-muted/50 select-none"
+                        onClick={() => handleSort("roe")}
+                      >
+                        <div className="flex items-center justify-end">
+                          ROE %
+                          <SortIcon field="roe" />
+                        </div>
+                      </TableHead>
+                      <TableHead 
+                        className="text-right cursor-pointer hover:bg-muted/50 select-none"
+                        onClick={() => handleSort("pe")}
+                      >
+                        <div className="flex items-center justify-end">
+                          P/E
+                          <SortIcon field="pe" />
+                        </div>
+                      </TableHead>
+                      <TableHead 
+                        className="text-right cursor-pointer hover:bg-muted/50 select-none"
+                        onClick={() => handleSort("updatedAt")}
+                      >
+                        <div className="flex items-center justify-end">
+                          Last Updated
+                          <SortIcon field="updatedAt" />
+                        </div>
+                      </TableHead>
+                      <TableHead className="text-right">Actions</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {paginatedCompanies.map((company) => (
+                    <TableRow
+                      key={company.id}
                       data-testid={`row-company-${company.ticker}`}
                       className={selectedCompanies.has(company.id) ? "bg-muted/50" : ""}
                     >
@@ -1297,6 +1546,9 @@ export default function CompanyManager() {
                       <TableCell className="text-right font-mono">{getFinancialValue(company, "revenue")}</TableCell>
                       <TableCell className="text-right font-mono">{getFinancialValue(company, "roe")}</TableCell>
                       <TableCell className="text-right font-mono">{getFinancialValue(company, "pe")}</TableCell>
+                      <TableCell className="text-right text-xs text-muted-foreground">
+                        {formatDistanceToNow(new Date(company.updatedAt), { addSuffix: true })}
+                      </TableCell>
                       <TableCell className="text-right">
                         <div className="flex justify-end gap-2">
                           <Button
@@ -1318,10 +1570,73 @@ export default function CompanyManager() {
                         </div>
                       </TableCell>
                     </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+              
+              {/* Pagination */}
+              {totalPages > 1 && (
+                <div className="mt-6">
+                  <Pagination>
+                    <PaginationContent>
+                      <PaginationItem>
+                        <PaginationPrevious
+                          href="#"
+                          onClick={(e) => {
+                            e.preventDefault();
+                            if (currentPage > 1) setCurrentPage(currentPage - 1);
+                          }}
+                          className={currentPage === 1 ? "pointer-events-none opacity-50" : ""}
+                        />
+                      </PaginationItem>
+                      {Array.from({ length: totalPages }, (_, i) => i + 1).map((page) => {
+                        if (
+                          page === 1 ||
+                          page === totalPages ||
+                          (page >= currentPage - 1 && page <= currentPage + 1)
+                        ) {
+                          return (
+                            <PaginationItem key={page}>
+                              <PaginationLink
+                                href="#"
+                                onClick={(e) => {
+                                  e.preventDefault();
+                                  setCurrentPage(page);
+                                }}
+                                isActive={currentPage === page}
+                              >
+                                {page}
+                              </PaginationLink>
+                            </PaginationItem>
+                          );
+                        } else if (page === currentPage - 2 || page === currentPage + 2) {
+                          return (
+                            <PaginationItem key={page}>
+                              <PaginationEllipsis />
+                            </PaginationItem>
+                          );
+                        }
+                        return null;
+                      })}
+                      <PaginationItem>
+                        <PaginationNext
+                          href="#"
+                          onClick={(e) => {
+                            e.preventDefault();
+                            if (currentPage < totalPages) setCurrentPage(currentPage + 1);
+                          }}
+                          className={currentPage === totalPages ? "pointer-events-none opacity-50" : ""}
+                        />
+                      </PaginationItem>
+                    </PaginationContent>
+                  </Pagination>
+                  <div className="text-center text-sm text-muted-foreground mt-2">
+                    Showing {startIndex + 1} to {Math.min(endIndex, sortedCompanies.length)} of {sortedCompanies.length} companies
+                  </div>
+                </div>
+              )}
+            </>
           )}
         </CardContent>
       </Card>

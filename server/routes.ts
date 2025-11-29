@@ -23,10 +23,11 @@ import {
   insertSignalSchema,
   insertCustomTableSchema,
   users,
+  quarterlyData,
   type InsertSectorMapping
 } from "@shared/schema";
 import { db } from "./db";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { z } from "zod";
 import { queryExecutor, type QueryCondition } from "./queryExecutor";
 import { FormulaEvaluator } from "./formulaEvaluator";
@@ -36,6 +37,7 @@ import { sendWelcomeEmail, sendAdminNotificationEmail } from "./email";
 import { taskManager } from "./taskManager";
 import { evaluateMainSignalForCompany } from "./mainSignalEvaluator";
 import { evaluateExcelFormulaForCompany, ExcelFormulaEvaluator } from "./excelFormulaEvaluator";
+import { loadVisibleMetrics, saveVisibleMetrics, getAllMetrics, getVisibleMetrics } from "./settingsManager";
 
 export async function registerRoutes(app: Express): Promise<Server> {
   // Authentication routes
@@ -75,6 +77,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const user = await storage.getUserByEmail(email);
       if (!user) {
         return res.status(401).json({ error: "Invalid credentials" });
+      }
+
+      // Check if user is enabled
+      if (user.enabled === false) {
+        return res.status(403).json({ error: "Account is disabled. Please contact an administrator." });
       }
 
       const validPassword = await verifyPassword(password, user.password);
@@ -203,6 +210,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ error: "User not found. Please register first." });
       }
 
+      // Check if user is enabled
+      if (user.enabled === false) {
+        return res.status(403).json({ error: "Account is disabled. Please contact an administrator." });
+      }
+
       const token = await createUserSession(user.id);
       res.cookie("auth_token", token, {
         httpOnly: true,
@@ -260,7 +272,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         email: z.string().email().optional(),
         name: z.string().optional(),
         role: z.enum(["admin", "analyst", "viewer"]).optional(),
-        password: z.string().min(6).optional()
+        password: z.string().min(6).optional(),
+        enabled: z.boolean().optional()
       });
 
       const data = updateSchema.parse(req.body);
@@ -270,6 +283,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (data.name) updateData.name = data.name;
       if (data.role) updateData.role = data.role;
       if (data.password) updateData.password = await hashPassword(data.password);
+      if (data.enabled !== undefined) updateData.enabled = data.enabled;
 
       const user = await storage.updateUser(req.params.id, updateData);
       if (!user) {
@@ -1836,14 +1850,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
       const { ticker, formula, selectedQuarters } = schema.parse(req.body);
 
-      const result = await evaluateExcelFormulaForCompany(ticker, formula, selectedQuarters);
+      // evaluateExcelFormulaForCompany returns { result, resultType, usedQuarters }
+      const evalResult = await evaluateExcelFormulaForCompany(ticker, formula, selectedQuarters);
 
       res.json({
         success: true,
         ticker,
         formula,
-        result,
-        resultType: typeof result,
+        result: evalResult.result,  // Extract the actual result value
+        resultType: evalResult.resultType,  // Use the pre-computed result type
+        usedQuarters: evalResult.usedQuarters,  // Include used quarters for reference
       });
     } catch (error: any) {
       res.status(400).json({
@@ -1853,7 +1869,564 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Get formula for a specific entity (company or sector)
+  app.get("/api/v1/formulas/entity/:type/:id", requireAuth, requirePermission("formulas:read"), async (req, res) => {
+    try {
+      const { type, id } = req.params;
+      
+      if (type !== "company" && type !== "sector") {
+        return res.status(400).json({ error: "Type must be 'company' or 'sector'" });
+      }
+
+      // Get all formulas
+      const allFormulas = await storage.getAllFormulas();
+      
+      // Filter applicable formulas based on type and id
+      const applicableFormulas = allFormulas
+        .filter(f => f.enabled)
+        .filter(f => {
+          if (f.scope === "global") return true;
+          if (f.scope === type && f.scopeValue === id) return true;
+          return false;
+        })
+        .sort((a, b) => {
+          // Sort by scope specificity: company > sector > global
+          const scopeScore = (scope: string) => {
+            if (scope === "company") return 3;
+            if (scope === "sector") return 2;
+            return 1;
+          };
+          const scoreA = scopeScore(a.scope);
+          const scoreB = scopeScore(b.scope);
+          if (scoreA !== scoreB) {
+            return scoreB - scoreA; // Higher score first
+          }
+          // Then by priority (lower number = higher priority)
+          return a.priority - b.priority;
+        });
+
+      // Return the highest priority formula, or null if none found
+      const formula = applicableFormulas[0] || null;
+      
+      res.json({ formula });
+    } catch (error: any) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
+  // ============================================
+  // Bulk Import Job Endpoints
+  // ============================================
+
+  // Get all bulk import jobs
+  app.get("/api/v1/bulk-import/jobs", requireAuth, requirePermission("companies:read"), async (req, res) => {
+    try {
+      const authReq = req as AuthRequest;
+      const limit = parseInt(req.query.limit as string) || 50;
+      const jobs = await storage.getAllBulkImportJobs(undefined, limit);
+      res.json(jobs);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Get a specific bulk import job
+  app.get("/api/v1/bulk-import/jobs/:id", requireAuth, requirePermission("companies:read"), async (req, res) => {
+    try {
+      const job = await storage.getBulkImportJob(req.params.id);
+      if (!job) {
+        return res.status(404).json({ error: "Job not found" });
+      }
+      const items = await storage.getBulkImportItemsByJob(job.id);
+      const stats = await storage.getBulkImportStats(job.id);
+      res.json({ ...job, items, stats });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Get items for a bulk import job
+  app.get("/api/v1/bulk-import/jobs/:id/items", requireAuth, requirePermission("companies:read"), async (req, res) => {
+    try {
+      const status = req.query.status as string;
+      let items;
+      if (status) {
+        items = await storage.getBulkImportItemsByStatus(req.params.id, status);
+      } else {
+        items = await storage.getBulkImportItemsByJob(req.params.id);
+      }
+      res.json(items);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Create a new bulk import job from CSV
+  app.post("/api/v1/bulk-import/jobs", requireAuth, requirePermission("companies:create"), async (req, res) => {
+    try {
+      const authReq = req as AuthRequest;
+      const schema = z.object({
+        fileName: z.string(),
+        items: z.array(z.object({
+          ticker: z.string(),
+          name: z.string(),
+          sector: z.string(),
+        })),
+      });
+
+      const { fileName, items } = schema.parse(req.body);
+
+      // Create the job
+      const job = await storage.createBulkImportJob({
+        userId: authReq.user!.id,
+        fileName,
+        status: "pending",
+        totalItems: items.length,
+        processedItems: 0,
+        successItems: 0,
+        failedItems: 0,
+        skippedItems: 0,
+      });
+
+      // Create items for the job
+      const importItems = items.map((item) => ({
+        jobId: job.id,
+        ticker: item.ticker,
+        companyName: item.name,
+        sectorName: item.sector,
+        status: "pending" as const,
+      }));
+
+      await storage.bulkCreateBulkImportItems(importItems);
+
+      res.json({ success: true, job });
+    } catch (error: any) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
+  // Start processing a bulk import job
+  app.post("/api/v1/bulk-import/jobs/:id/start", requireAuth, requirePermission("companies:create"), async (req, res) => {
+    try {
+      const job = await storage.getBulkImportJob(req.params.id);
+      if (!job) {
+        return res.status(404).json({ error: "Job not found" });
+      }
+
+      if (job.status === "running") {
+        return res.status(400).json({ error: "Job is already running" });
+      }
+
+      // Update job status
+      await storage.updateBulkImportJob(job.id, {
+        status: "running",
+        startedAt: new Date(),
+      });
+
+      // Start processing in background
+      processBulkImportJob(job.id).catch((error) => {
+        console.error("Bulk import job failed:", error);
+        storage.updateBulkImportJob(job.id, {
+          status: "failed",
+          error: error.message,
+          completedAt: new Date(),
+        });
+      });
+
+      res.json({ success: true, message: "Job started" });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Cancel a bulk import job
+  app.post("/api/v1/bulk-import/jobs/:id/cancel", requireAuth, requirePermission("companies:create"), async (req, res) => {
+    try {
+      const job = await storage.getBulkImportJob(req.params.id);
+      if (!job) {
+        return res.status(404).json({ error: "Job not found" });
+      }
+
+      await storage.updateBulkImportJob(job.id, {
+        status: "cancelled",
+        completedAt: new Date(),
+      });
+
+      res.json({ success: true, message: "Job cancelled" });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Pause a bulk import job
+  app.post("/api/v1/bulk-import/jobs/:id/pause", requireAuth, requirePermission("companies:create"), async (req, res) => {
+    try {
+      const job = await storage.getBulkImportJob(req.params.id);
+      if (!job) {
+        return res.status(404).json({ error: "Job not found" });
+      }
+
+      if (job.status !== "running") {
+        return res.status(400).json({ error: "Job is not running" });
+      }
+
+      await storage.updateBulkImportJob(job.id, {
+        status: "paused",
+      });
+
+      res.json({ success: true, message: "Job paused" });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Resume a bulk import job
+  app.post("/api/v1/bulk-import/jobs/:id/resume", requireAuth, requirePermission("companies:create"), async (req, res) => {
+    try {
+      const job = await storage.getBulkImportJob(req.params.id);
+      if (!job) {
+        return res.status(404).json({ error: "Job not found" });
+      }
+
+      if (job.status !== "paused") {
+        return res.status(400).json({ error: "Job is not paused" });
+      }
+
+      await storage.updateBulkImportJob(job.id, {
+        status: "running",
+      });
+
+      // Restart processing in background
+      processBulkImportJob(job.id).catch((error) => {
+        console.error("Bulk import job failed:", error);
+        storage.updateBulkImportJob(job.id, {
+          status: "failed",
+          error: error.message,
+          completedAt: new Date(),
+        });
+      });
+
+      res.json({ success: true, message: "Job resumed" });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Retry failed items in a bulk import job
+  app.post("/api/v1/bulk-import/jobs/:id/retry", requireAuth, requirePermission("companies:create"), async (req, res) => {
+    try {
+      const job = await storage.getBulkImportJob(req.params.id);
+      if (!job) {
+        return res.status(404).json({ error: "Job not found" });
+      }
+
+      // Reset failed items to pending
+      const items = await storage.getBulkImportItemsByJob(job.id);
+      const failedItems = items.filter(i => i.status === "failed");
+
+      for (const item of failedItems) {
+        await storage.updateBulkImportItem(item.id, {
+          status: "pending",
+          error: null
+        });
+      }
+
+      // Update job status to running and reset failed count
+      await storage.updateBulkImportJob(job.id, {
+        status: "running",
+        failedItems: 0, // Reset failed count as we're retrying them
+        completedAt: null, // Clear completed timestamp
+      });
+
+      // Restart processing in background
+      processBulkImportJob(job.id).catch((error) => {
+        console.error("Bulk import job failed:", error);
+        storage.updateBulkImportJob(job.id, {
+          status: "failed",
+          error: error.message,
+          completedAt: new Date(),
+        });
+      });
+
+      res.json({ success: true, message: "Job retry started", retriedItems: failedItems.length });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Delete a bulk import job
+  app.delete("/api/v1/bulk-import/jobs/:id", requireAuth, requirePermission("companies:delete"), async (req, res) => {
+    try {
+      await storage.deleteBulkImportJob(req.params.id);
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Export bulk import results as CSV
+  app.get("/api/v1/bulk-import/jobs/:id/export", requireAuth, requirePermission("companies:read"), async (req, res) => {
+    try {
+      const status = req.query.status as string; // 'success', 'failed', or undefined for all
+      const job = await storage.getBulkImportJob(req.params.id);
+      if (!job) {
+        return res.status(404).json({ error: "Job not found" });
+      }
+
+      let items;
+      if (status) {
+        items = await storage.getBulkImportItemsByStatus(job.id, status);
+      } else {
+        items = await storage.getBulkImportItemsByJob(job.id);
+      }
+
+      // Generate CSV
+      const csvRows = ["ticker,name,sector,status,resolved_ticker,error,quarters_scraped,metrics_scraped"];
+      for (const item of items) {
+        const row = [
+          item.ticker,
+          `"${item.companyName.replace(/"/g, '""')}"`,
+          `"${item.sectorName.replace(/"/g, '""')}"`,
+          item.status,
+          item.resolvedTicker || "",
+          `"${(item.error || "").replace(/"/g, '""')}"`,
+          item.quartersScraped?.toString() || "0",
+          item.metricsScraped?.toString() || "0",
+        ];
+        csvRows.push(row.join(","));
+      }
+
+      const csv = csvRows.join("\n");
+      const fileName = `bulk-import-${job.id}-${status || "all"}.csv`;
+
+      res.setHeader("Content-Type", "text/csv");
+      res.setHeader("Content-Disposition", `attachment; filename="${fileName}"`);
+      res.send(csv);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // ============================================
+  // Settings Endpoints
+  // ============================================
+
+  // Get default metrics configuration
+  app.get("/api/settings/default-metrics", requireAuth, requirePermission("settings:read"), async (req, res) => {
+    try {
+      const allMetrics = getAllMetrics();
+      const visibleMetrics = loadVisibleMetrics();
+      
+      // Ensure all metrics are in the visible metrics object
+      const metricsConfig: Record<string, boolean> = {};
+      allMetrics.forEach(metric => {
+        metricsConfig[metric] = visibleMetrics[metric] ?? false;
+      });
+      
+      res.json({
+        metrics: metricsConfig,
+        visibleMetrics: getVisibleMetrics()
+      });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Update default metrics configuration
+  app.put("/api/settings/default-metrics", requireAuth, requirePermission("settings:write"), async (req, res) => {
+    try {
+      const schema = z.object({
+        metrics: z.record(z.string(), z.boolean())
+      });
+      const { metrics } = schema.parse(req.body);
+      
+      const success = saveVisibleMetrics(metrics);
+      if (success) {
+        res.json({ 
+          success: true, 
+          message: "Default metrics updated successfully",
+          metrics 
+        });
+      } else {
+        res.status(500).json({ error: "Failed to save metrics configuration" });
+      }
+    } catch (error: any) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
+  // Get all available metrics from quarterly data
+  app.get("/api/metrics/all", requireAuth, requirePermission("data:read"), async (req, res) => {
+    try {
+      // Get all unique metric names from quarterly data using SQL DISTINCT
+      const result = await db.execute(sql`
+        SELECT DISTINCT metric_name 
+        FROM quarterly_data 
+        WHERE metric_name IS NOT NULL 
+        ORDER BY metric_name
+      `);
+      
+      const uniqueMetrics = result.rows
+        .map((row: any) => row.metric_name)
+        .filter(Boolean)
+        .sort();
+      
+      res.json({ metrics: uniqueMetrics });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   const httpServer = createServer(app);
 
   return httpServer;
+}
+
+// Background processor for bulk import jobs
+async function processBulkImportJob(jobId: string): Promise<void> {
+  console.log(`Starting bulk import job: ${jobId}`);
+
+  const job = await storage.getBulkImportJob(jobId);
+  if (!job || job.status !== "running") {
+    console.log(`Job ${jobId} is not running, skipping`);
+    return;
+  }
+
+  let successCount = 0;
+  let failedCount = 0;
+  let skippedCount = 0;
+  let processedCount = 0;
+
+  const items = await storage.getBulkImportItemsByJob(jobId);
+
+  for (const item of items) {
+    // Check if job was cancelled or paused
+    const currentJob = await storage.getBulkImportJob(jobId);
+    if (!currentJob || currentJob.status === "cancelled") {
+      console.log(`Job ${jobId} was cancelled, stopping`);
+      break;
+    }
+    if (currentJob.status === "paused") {
+      console.log(`Job ${jobId} was paused, stopping`);
+      break;
+    }
+
+    // Skip already successful items (for resume/retry)
+    if (item.status === "success") {
+      continue;
+    }
+
+    try {
+      // Update item status to processing
+      await storage.updateBulkImportItem(item.id, { status: "processing" });
+
+      // Step 1: Resolve sector (create if doesn't exist)
+      let sector = await storage.getSectorByName(item.sectorName);
+      if (!sector) {
+        sector = await storage.createSector({ name: item.sectorName });
+        console.log(`Created sector: ${item.sectorName}`);
+      }
+
+      // Step 2: Check if company already exists in this sector
+      let company = await storage.getCompanyByTickerAndSector(item.ticker, sector.id);
+
+      if (company) {
+        // Company already exists, just scrape data
+        console.log(`Company ${item.ticker} already exists in sector ${item.sectorName}, scraping data...`);
+      } else {
+        // Try to resolve the ticker via Screener.in API
+        let resolvedTicker = item.ticker;
+        try {
+          const searchResult = await scraper.searchTickerByCompanyName(item.companyName);
+          if (searchResult && searchResult.ticker) {
+            resolvedTicker = searchResult.ticker;
+            console.log(`Resolved ticker for ${item.companyName}: ${resolvedTicker}`);
+          }
+        } catch (e) {
+          console.log(`Could not resolve ticker for ${item.companyName}, using provided: ${item.ticker}`);
+        }
+
+        // Update resolved ticker
+        await storage.updateBulkImportItem(item.id, { resolvedTicker });
+
+        // Create company
+        company = await storage.createCompany({
+          ticker: resolvedTicker,
+          name: item.companyName,
+          sectorId: sector.id,
+        });
+        console.log(`Created company: ${resolvedTicker} in sector ${item.sectorName}`);
+      }
+
+      // Step 3: Scrape company data
+      try {
+        const scrapeResult = await scraper.scrapeCompany(
+          company.ticker,
+          company.id,
+          sector.id // Use sector.id as sectorOverride to preserve the sector
+        );
+
+        if (scrapeResult.success) {
+          await storage.updateBulkImportItem(item.id, {
+            status: "success",
+            sectorId: sector.id,
+            companyId: company.id,
+            quartersScraped: scrapeResult.quartersScraped || 0,
+            metricsScraped: scrapeResult.metricsScraped || 0,
+            processedAt: new Date(),
+          });
+          successCount++;
+          console.log(`Successfully scraped ${company.ticker}`);
+        } else {
+          throw new Error(scrapeResult.error || "Unknown scraping error");
+        }
+      } catch (scrapeError: any) {
+        // Company was created but scraping failed
+        await storage.updateBulkImportItem(item.id, {
+          status: "failed",
+          sectorId: sector.id,
+          companyId: company.id,
+          error: `Scraping failed: ${scrapeError.message}`,
+          processedAt: new Date(),
+        });
+        failedCount++;
+        console.error(`Failed to scrape ${company.ticker}: ${scrapeError.message}`);
+      }
+
+    } catch (error: any) {
+      await storage.updateBulkImportItem(item.id, {
+        status: "failed",
+        error: error.message,
+        processedAt: new Date(),
+      });
+      failedCount++;
+      console.error(`Failed to process ${item.ticker}: ${error.message}`);
+    }
+
+    processedCount++;
+
+    // Update job progress
+    await storage.updateBulkImportJob(jobId, {
+      processedItems: processedCount,
+      successItems: successCount,
+      failedItems: failedCount,
+      skippedItems: skippedCount,
+    });
+  }
+
+  // Check final status to determine if we should mark as completed
+  const finalJobCheck = await storage.getBulkImportJob(jobId);
+  if (finalJobCheck && finalJobCheck.status !== "cancelled" && finalJobCheck.status !== "paused") {
+    // Mark job as completed
+    await storage.updateBulkImportJob(jobId, {
+      status: "completed",
+      completedAt: new Date(),
+      processedItems: processedCount,
+      successItems: successCount,
+      failedItems: failedCount,
+      skippedItems: skippedCount,
+    });
+  }
+
+  console.log(`Bulk import job ${jobId} completed: ${successCount} success, ${failedCount} failed, ${skippedCount} skipped`);
 }

@@ -1,4 +1,4 @@
-import { LayoutDashboard, Building2, TrendingUp, Table, Search, Users, Settings, Building, Briefcase, LogOut, Clock } from "lucide-react";
+import { LayoutDashboard, Building2, TrendingUp, Table, Search, Users, Settings, Building, Briefcase, LogOut, Clock, Sliders } from "lucide-react";
 import {
   Sidebar,
   SidebarContent,
@@ -37,6 +37,7 @@ export default function AppSidebar({ userRole = "admin", userName = "Admin User"
   { title: "Scheduler", url: "/scheduler", icon: Clock, roles: ["admin"] },
     { title: "Query Builder", url: "/query-builder", icon: Search, roles: ["admin", "analyst"] },
     { title: "Formulas", url: "/formulas", icon: Settings, roles: ["admin"] },
+    { title: "Settings", url: "/settings", icon: Sliders, roles: ["admin", "analyst"] },
     { title: "Users", url: "/users", icon: Users, roles: ["admin"] },
   ];
 

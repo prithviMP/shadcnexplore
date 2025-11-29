@@ -6,7 +6,7 @@
 
 import { load } from "cheerio";
 import { storage } from "./storage";
-import type { InsertQuarterlyData } from "@shared/schema";
+import type { InsertQuarterlyData, InsertScrapingLog } from "@shared/schema";
 
 interface ScrapeResult {
   success: boolean;
@@ -203,6 +203,10 @@ class ScreenerScraper {
     const startedAt = new Date();
     let logId: string | null = null;
     
+    console.log(`[SCRAPER] Starting scrape for ticker: ${ticker.toUpperCase()}`);
+    console.log(`[SCRAPER] URL: ${url}`);
+    console.log(`[SCRAPER] Parameters: companyId=${companyId || 'none'}, sectorOverride=${sectorOverride || 'none'}, userId=${userId || 'none'}`);
+    
     try {
       // Create initial scraping log
       const log: InsertScrapingLog = {
@@ -217,10 +221,47 @@ class ScreenerScraper {
       };
       const createdLog = await storage.createScrapingLog(log);
       logId = createdLog.id;
+      console.log(`[SCRAPER] Created scraping log with ID: ${logId}`);
+      
+      // First, fetch company metadata using the same API as bulk import
+      console.log(`[SCRAPER] Fetching company metadata using fetchCompanyMetadata API (same as bulk import)...`);
+      const metadataStartTime = Date.now();
+      const metadata = await this.fetchCompanyMetadata(ticker);
+      const metadataDuration = Date.now() - metadataStartTime;
+      console.log(`[SCRAPER] Metadata fetch completed in ${metadataDuration}ms:`, {
+        exists: metadata.exists,
+        companyName: metadata.companyName,
+        detectedSector: metadata.detectedSector,
+      });
+      
+      if (!metadata.exists) {
+        console.warn(`[SCRAPER] Company not found for ticker: ${ticker}`);
+        // Update log with failure
+        if (logId) {
+          await storage.updateScrapingLog(logId, {
+            status: 'failed',
+            quartersScraped: 0,
+            metricsScraped: 0,
+            error: "Company not found on Screener.in",
+            completedAt: new Date(),
+          });
+        }
+        return {
+          success: false,
+          ticker,
+          quartersScraped: 0,
+          metricsScraped: 0,
+          error: "Company not found on Screener.in",
+        };
+      }
       
       // Add delay to avoid rate limiting (2-5 seconds, matching Python)
-      await this.delay(Math.random() * 3000 + 2000);
+      const delayMs = Math.random() * 3000 + 2000;
+      console.log(`[SCRAPER] Waiting ${Math.round(delayMs)}ms before fetching full page to avoid rate limiting...`);
+      await this.delay(delayMs);
 
+      console.log(`[SCRAPER] Fetching full company page URL: ${url}`);
+      const fetchStartTime = Date.now();
       const response = await fetch(url, {
         headers: {
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -231,16 +272,31 @@ class ScreenerScraper {
           'Upgrade-Insecure-Requests': '1',
         },
       });
+      const fetchDuration = Date.now() - fetchStartTime;
+      console.log(`[SCRAPER] HTTP Response: ${response.status} ${response.statusText} (took ${fetchDuration}ms)`);
+      console.log(`[SCRAPER] Response headers:`, {
+        'content-type': response.headers.get('content-type'),
+        'content-length': response.headers.get('content-length'),
+      });
 
       if (!response.ok) {
+        console.error(`[SCRAPER] HTTP Error: ${response.status} ${response.statusText}`);
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       }
 
+      const htmlStartTime = Date.now();
       const html = await response.text();
-      const $ = load(html);
+      const htmlDuration = Date.now() - htmlStartTime;
+      console.log(`[SCRAPER] Received HTML (${html.length} bytes) in ${htmlDuration}ms`);
       
-      // Extract company name and sector
-      const companyName = this.extractCompanyName($);
+      const parseStartTime = Date.now();
+      const $ = load(html);
+      const parseDuration = Date.now() - parseStartTime;
+      console.log(`[SCRAPER] Parsed HTML with Cheerio in ${parseDuration}ms`);
+      
+      // Use metadata from fetchCompanyMetadata (same as bulk import)
+      const companyName = metadata.companyName;
+      console.log(`[SCRAPER] Using company name from metadata: ${companyName}`);
       
       // Check if company already exists
       let existingCompany = companyId ? await storage.getCompany(companyId) : null;
@@ -249,6 +305,7 @@ class ScreenerScraper {
         // For now, just get first match - caller should provide companyId if there are multiple
         existingCompany = await storage.getCompanyByTicker(ticker);
       }
+      console.log(`[SCRAPER] Existing company: ${existingCompany ? `Found (ID: ${existingCompany.id}, Sector: ${existingCompany.sectorId || 'none'})` : 'Not found'}`);
       
       // Priority: Use sectorOverride (user-provided) if available
       // If company exists with a sector, NEVER update it from scraped data
@@ -257,13 +314,16 @@ class ScreenerScraper {
       if (sectorOverride) {
         // User provided sector - use it
         sectorName = sectorOverride;
+        console.log(`[SCRAPER] Using user-provided sector: ${sectorName}`);
       } else if (existingCompany?.sectorId) {
         // Company exists with a sector - use it, NEVER update from scraped data
         const sector = await storage.getSector(existingCompany.sectorId);
         sectorName = sector?.name || "Unknown";
+        console.log(`[SCRAPER] Using existing company sector: ${sectorName}`);
       } else {
-        // No existing company or no sector - extract from scraped data (only for NEW companies)
-        sectorName = this.extractSector($, ticker);
+        // No existing company or no sector - use detected sector from metadata (same as bulk import)
+        sectorName = metadata.detectedSector || "Unknown";
+        console.log(`[SCRAPER] Using detected sector from metadata: ${sectorName}`);
       }
       
       // Get or create company first to ensure we have companyId
@@ -289,12 +349,24 @@ class ScreenerScraper {
       }
       
       // Extract key financial metrics (P/E, ROCE, ROE, etc.)
+      console.log(`[SCRAPER] Extracting key financial metrics...`);
       const keyMetrics = this.extractKeyMetrics($);
+      console.log(`[SCRAPER] Extracted key metrics:`, Object.keys(keyMetrics).length > 0 ? Object.keys(keyMetrics).join(', ') : 'NONE');
+      if (Object.keys(keyMetrics).length > 0) {
+        console.log(`[SCRAPER] Key metrics details:`, keyMetrics);
+      }
       
       // Find quarterly data table
+      console.log(`[SCRAPER] Extracting quarterly data...`);
+      const extractStartTime = Date.now();
       const quarterlyData = this.extractQuarterlyData($, ticker, finalCompanyId || undefined);
+      const extractDuration = Date.now() - extractStartTime;
+      console.log(`[SCRAPER] Extracted ${quarterlyData.length} quarterly data rows in ${extractDuration}ms`);
       
       if (quarterlyData.length === 0) {
+        console.warn(`[SCRAPER] No quarterly data found for ticker: ${ticker}`);
+        console.warn(`[SCRAPER] Company name: ${companyName || 'NOT FOUND'}`);
+        console.warn(`[SCRAPER] Sector: ${sectorName || 'NOT FOUND'}`);
         return {
           success: false,
           ticker,
@@ -306,8 +378,19 @@ class ScreenerScraper {
         };
       }
       
+      // Count unique quarters and metrics before storing
+      const uniqueQuartersBefore = new Set(quarterlyData.map(d => d.quarter));
+      const uniqueMetricsBefore = new Set(quarterlyData.map(d => d.metricName));
+      console.log(`[SCRAPER] Quarterly data summary: ${uniqueQuartersBefore.size} unique quarters, ${uniqueMetricsBefore.size} unique metrics`);
+      console.log(`[SCRAPER] Quarters found:`, Array.from(uniqueQuartersBefore).sort().join(', '));
+      console.log(`[SCRAPER] Metrics found (first 20):`, Array.from(uniqueMetricsBefore).slice(0, 20).join(', '));
+      
       // Store in database
+      console.log(`[SCRAPER] Storing ${quarterlyData.length} quarterly data rows in database...`);
+      const storeStartTime = Date.now();
       await storage.bulkCreateQuarterlyData(quarterlyData);
+      const storeDuration = Date.now() - storeStartTime;
+      console.log(`[SCRAPER] Stored quarterly data in database in ${storeDuration}ms`);
       
       // Update company with key metrics if we have a company record
       // NEVER update sector from scraped data if company already has a sector
@@ -358,6 +441,7 @@ class ScreenerScraper {
       // Count unique quarters and metrics
       const uniqueQuarters = new Set(quarterlyData.map(d => d.quarter));
       const uniqueMetrics = new Set(quarterlyData.map(d => d.metricName));
+      console.log(`[SCRAPER] Final counts: ${uniqueQuarters.size} quarters, ${uniqueMetrics.size} metrics`);
 
       // Get sector ID for logging
       let sectorIdForLog = null;
@@ -369,6 +453,7 @@ class ScreenerScraper {
       // Update scraping log with success
       if (logId) {
         try {
+          console.log(`[SCRAPER] Updating scraping log ${logId} with success status...`);
           await storage.updateScrapingLog(logId, {
             companyId: finalCompanyId || null,
             sectorId: sectorIdForLog,
@@ -377,11 +462,16 @@ class ScreenerScraper {
             metricsScraped: uniqueMetrics.size,
             completedAt: new Date(),
           });
+          console.log(`[SCRAPER] Scraping log updated successfully`);
         } catch (e) {
           // If update fails, log error but continue
-          console.error("Error updating scraping log:", e);
+          console.error(`[SCRAPER] Error updating scraping log:`, e);
         }
       }
+
+      const totalDuration = Date.now() - startedAt.getTime();
+      console.log(`[SCRAPER] ✅ Scrape completed successfully for ${ticker} in ${totalDuration}ms`);
+      console.log(`[SCRAPER] Summary: ${uniqueQuarters.size} quarters, ${uniqueMetrics.size} metrics, Company: ${companyName}, Sector: ${sectorName}`);
 
       return {
         success: true,
@@ -392,11 +482,19 @@ class ScreenerScraper {
         metricsScraped: uniqueMetrics.size,
       };
     } catch (error: any) {
-      console.error(`Error scraping ${ticker}:`, error);
+      const totalDuration = Date.now() - startedAt.getTime();
+      console.error(`[SCRAPER] ❌ Error scraping ${ticker} after ${totalDuration}ms:`, error);
+      console.error(`[SCRAPER] Error details:`, {
+        message: error.message,
+        stack: error.stack,
+        name: error.name,
+        url: url,
+      });
       
       // Update scraping log with failure
       if (logId) {
         try {
+          console.log(`[SCRAPER] Updating scraping log ${logId} with failure status...`);
           await storage.updateScrapingLog(logId, {
             status: 'failed',
             quartersScraped: 0,
@@ -404,8 +502,9 @@ class ScreenerScraper {
             error: error.message || "Unknown error",
             completedAt: new Date(),
           });
+          console.log(`[SCRAPER] Scraping log updated with failure`);
         } catch (logError) {
-          console.error("Error updating scraping log:", logError);
+          console.error(`[SCRAPER] Error updating scraping log:`, logError);
         }
       }
       
@@ -424,6 +523,7 @@ class ScreenerScraper {
    */
   private extractCompanyName($: ReturnType<typeof load>): string {
     try {
+      console.log(`[SCRAPER] [extractCompanyName] Starting company name extraction...`);
       // Try multiple selectors for company name
       const selectors = ['h1', '.company-name', '[data-testid="company-name"]', 'title'];
       
@@ -432,11 +532,13 @@ class ScreenerScraper {
         if (element.length > 0) {
           let text = element.text().trim();
           if (text) {
+            console.log(`[SCRAPER] [extractCompanyName] Found text in selector "${selector}": ${text.substring(0, 100)}`);
             // Clean up the name
             if (text.toLowerCase().includes('share price')) {
               text = text.split('share price')[0].trim();
             }
             if (text.toLowerCase().includes('ltd') || text.toLowerCase().includes('limited')) {
+              console.log(`[SCRAPER] [extractCompanyName] Extracted company name: ${text}`);
               return text;
             }
           }
@@ -446,12 +548,15 @@ class ScreenerScraper {
       // Fallback: extract from title tag
       const title = $('title').text().trim();
       if (title && title.toLowerCase().includes('ltd')) {
-        return title.split(' - ')[0].trim();
+        const extracted = title.split(' - ')[0].trim();
+        console.log(`[SCRAPER] [extractCompanyName] Extracted company name from title: ${extracted}`);
+        return extracted;
       }
       
+      console.warn(`[SCRAPER] [extractCompanyName] Could not extract company name, using fallback`);
       return "Unknown Company";
     } catch (error) {
-      console.error("Error extracting company name:", error);
+      console.error(`[SCRAPER] [extractCompanyName] Error extracting company name:`, error);
       return "Unknown Company";
     }
   }
@@ -461,6 +566,7 @@ class ScreenerScraper {
    */
   private extractSector($: ReturnType<typeof load>, ticker: string): string {
     try {
+      console.log(`[SCRAPER] [extractSector] Starting sector extraction for ${ticker}...`);
       // Look for sector information in various places
       const sectorSelectors = [
         '.sector',
@@ -474,6 +580,7 @@ class ScreenerScraper {
         if (element.length > 0) {
           const text = element.text().trim();
           if (text && text.length > 0 && text.length < 100) {
+            console.log(`[SCRAPER] [extractSector] Found sector using selector "${selector}": ${text}`);
             return text;
           }
         }
@@ -483,7 +590,9 @@ class ScreenerScraper {
       const bodyText = $('body').text();
       const sectorMatch = bodyText.match(/sector[:\s]+([A-Za-z\s&]+)/i);
       if (sectorMatch && sectorMatch[1]) {
-        return sectorMatch[1].trim();
+        const extracted = sectorMatch[1].trim();
+        console.log(`[SCRAPER] [extractSector] Found sector in body text: ${extracted}`);
+        return extracted;
       }
       
       // Fallback sector mapping based on ticker (common Indian companies)
@@ -499,9 +608,11 @@ class ScreenerScraper {
         'BHARTIARTL': 'Telecom Services', 'JIO': 'Telecom Services',
       };
       
-      return sectorMapping[ticker.toUpperCase()] || 'Others';
+      const fallbackSector = sectorMapping[ticker.toUpperCase()] || 'Others';
+      console.log(`[SCRAPER] [extractSector] Using fallback sector mapping: ${fallbackSector}`);
+      return fallbackSector;
     } catch (error) {
-      console.error("Error extracting sector:", error);
+      console.error(`[SCRAPER] [extractSector] Error extracting sector:`, error);
       return 'Others';
     }
   }
@@ -517,31 +628,45 @@ class ScreenerScraper {
     const results: InsertQuarterlyData[] = [];
     const scrapeTimestamp = new Date();
 
+    console.log(`[SCRAPER] [extractQuarterlyData] Starting extraction for ${ticker}`);
+    
     // Find the quarterly results section
     let quarterlySection = $('#quarters').first();
+    console.log(`[SCRAPER] [extractQuarterlyData] Found #quarters section: ${quarterlySection.length > 0 ? 'YES' : 'NO'}`);
+    
     let table = quarterlySection.find('table').first();
+    console.log(`[SCRAPER] [extractQuarterlyData] Found table in #quarters: ${table.length > 0 ? 'YES' : 'NO'}`);
     
     if (table.length === 0) {
+      console.log(`[SCRAPER] [extractQuarterlyData] Searching all tables for quarterly data...`);
+      let tablesChecked = 0;
       // Look for table with quarterly data by checking content
       $('table').each((_, elem) => {
+        tablesChecked++;
         const tableText = $(elem).text();
         if (tableText.includes('Sales') && tableText.includes('Net Profit') && 
             (tableText.includes('2022') || tableText.includes('2023') || tableText.includes('2024') || 
              tableText.includes('Sep') || tableText.includes('Dec') || tableText.includes('Mar') || tableText.includes('Jun'))) {
           table = $(elem);
+          console.log(`[SCRAPER] [extractQuarterlyData] Found quarterly table at index ${tablesChecked}`);
           return false; // Break
         }
       });
+      console.log(`[SCRAPER] [extractQuarterlyData] Checked ${tablesChecked} tables`);
     }
 
     if (table.length === 0) {
+      console.warn(`[SCRAPER] [extractQuarterlyData] No quarterly data table found for ${ticker}`);
       return results;
     }
+    
+    console.log(`[SCRAPER] [extractQuarterlyData] Found quarterly table with ${table.find('tr').length} rows`);
 
     // Extract quarter headers - more robust parsing
     const headerRow = table.find('thead tr, tr').first();
     const quarterHeaders: string[] = [];
     
+    console.log(`[SCRAPER] [extractQuarterlyData] Extracting quarter headers from header row...`);
     headerRow.find('th, td').each((idx, elem) => {
       if (idx === 0) return; // Skip first column (metric names)
       const text = $(elem).text().trim();
@@ -555,29 +680,46 @@ class ScreenerScraper {
         const normalized = this.normalizeQuarterFormat(text);
         if (normalized && !quarterHeaders.includes(normalized)) {
           quarterHeaders.push(normalized);
+          console.log(`[SCRAPER] [extractQuarterlyData] Found quarter header: ${text} -> ${normalized}`);
         }
       }
     });
 
     if (quarterHeaders.length === 0) {
+      console.warn(`[SCRAPER] [extractQuarterlyData] No quarter headers found in table`);
       return results;
     }
+    
+    console.log(`[SCRAPER] [extractQuarterlyData] Found ${quarterHeaders.length} quarter headers: ${quarterHeaders.join(', ')}`);
 
     // Extract metric rows
     const rows = table.find('tbody tr, tr').slice(1); // Skip header row
+    console.log(`[SCRAPER] [extractQuarterlyData] Found ${rows.length} data rows to process`);
     
+    let metricsProcessed = 0;
+    let metricsSkipped = 0;
     rows.each((_, rowElem) => {
       const cells = $(rowElem).find('td, th');
-      if (cells.length < 2) return;
+      if (cells.length < 2) {
+        metricsSkipped++;
+        return;
+      }
 
       const metricName = $(cells[0]).text().trim();
-      if (!metricName) return;
+      if (!metricName) {
+        metricsSkipped++;
+        return;
+      }
 
       // Map metric names to standardized names (matching Python implementation)
       const normalizedMetric = this.normalizeMetricName(metricName);
-      if (!normalizedMetric) return;
+      if (!normalizedMetric) {
+        metricsSkipped++;
+        return;
+      }
 
       // Extract values for each quarter
+      let valuesExtracted = 0;
       cells.slice(1, quarterHeaders.length + 1).each((idx, cellElem) => {
         if (idx >= quarterHeaders.length) return;
         
@@ -593,13 +735,29 @@ class ScreenerScraper {
             metricValue: value.toString(),
             scrapeTimestamp,
           });
+          valuesExtracted++;
         }
       });
+      
+      if (valuesExtracted > 0) {
+        metricsProcessed++;
+      } else {
+        metricsSkipped++;
+      }
     });
+    
+    console.log(`[SCRAPER] [extractQuarterlyData] Processed ${metricsProcessed} metrics, skipped ${metricsSkipped} metrics`);
+    console.log(`[SCRAPER] [extractQuarterlyData] Extracted ${results.length} total data points before growth metrics`);
 
     // Calculate and add YoY and QoQ growth metrics if we have Sales and EPS data
+    const beforeGrowthMetrics = results.length;
     this.addGrowthMetrics(results, quarterHeaders, ticker, companyId, scrapeTimestamp);
+    const growthMetricsAdded = results.length - beforeGrowthMetrics;
+    if (growthMetricsAdded > 0) {
+      console.log(`[SCRAPER] [extractQuarterlyData] Added ${growthMetricsAdded} growth metrics`);
+    }
 
+    console.log(`[SCRAPER] [extractQuarterlyData] Total data points extracted: ${results.length}`);
     return results;
   }
 
@@ -610,18 +768,22 @@ class ScreenerScraper {
   private extractKeyMetrics($: ReturnType<typeof load>): Record<string, number | string> {
     const metrics: Record<string, number | string> = {};
     
+    console.log(`[SCRAPER] [extractKeyMetrics] Starting key metrics extraction...`);
+    
     try {
       // Find the key metrics section - typically in a table or div with class containing "ratios" or similar
       // Screener.in displays these in a structured format
       
       // Method 1: Look for specific text patterns
       const pageText = $.text();
+      console.log(`[SCRAPER] [extractKeyMetrics] Page text length: ${pageText.length} characters`);
       
       // Extract Market Cap
       const marketCapMatch = pageText.match(/Market Cap\s+₹\s*([\d.]+)\s*Cr/i);
       if (marketCapMatch) {
         const value = parseFloat(marketCapMatch[1]) * 10000000; // Convert crores to actual value
         metrics.marketCap = value;
+        console.log(`[SCRAPER] [extractKeyMetrics] Found Market Cap: ₹${marketCapMatch[1]} Cr`);
       }
       
       // Extract Current Price
@@ -674,9 +836,10 @@ class ScreenerScraper {
       }
       
     } catch (error) {
-      console.error('Error extracting key metrics:', error);
+      console.error(`[SCRAPER] [extractKeyMetrics] Error extracting key metrics:`, error);
     }
     
+    console.log(`[SCRAPER] [extractKeyMetrics] Extracted ${Object.keys(metrics).length} key metrics: ${Object.keys(metrics).join(', ')}`);
     return metrics;
   }
 

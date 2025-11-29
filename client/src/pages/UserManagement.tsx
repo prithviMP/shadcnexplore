@@ -11,6 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
 import { Plus, Pencil, Trash2, AlertCircle } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -32,10 +33,7 @@ export default function UserManagement() {
 
   const updateRoleMutation = useMutation({
     mutationFn: async ({ userId, role }: { userId: string; role: string }) => {
-      await apiRequest(`/api/users/${userId}`, {
-        method: "PUT",
-        body: JSON.stringify({ role }),
-      });
+      await apiRequest("PUT", `/api/users/${userId}`, { role });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/users"] });
@@ -53,11 +51,29 @@ export default function UserManagement() {
     },
   });
 
+  const updateEnabledMutation = useMutation({
+    mutationFn: async ({ userId, enabled }: { userId: string; enabled: boolean }) => {
+      await apiRequest("PUT", `/api/users/${userId}`, { enabled });
+    },
+    onSuccess: (_, variables) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/users"] });
+      toast({
+        title: "Success",
+        description: `User ${variables.enabled ? "enabled" : "disabled"} successfully`,
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to update user status",
+        variant: "destructive",
+      });
+    },
+  });
+
   const deleteMutation = useMutation({
     mutationFn: async (userId: string) => {
-      await apiRequest(`/api/users/${userId}`, {
-        method: "DELETE",
-      });
+      await apiRequest("DELETE", `/api/users/${userId}`);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/users"] });
@@ -77,10 +93,7 @@ export default function UserManagement() {
 
   const createMutation = useMutation({
     mutationFn: async (userData: typeof newUser) => {
-      await apiRequest("/api/users", {
-        method: "POST",
-        body: JSON.stringify(userData),
-      });
+      await apiRequest("POST", "/api/users", userData);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/users"] });
@@ -102,6 +115,10 @@ export default function UserManagement() {
 
   const handleRoleChange = (userId: string, newRole: string) => {
     updateRoleMutation.mutate({ userId, role: newRole });
+  };
+
+  const handleEnabledChange = (userId: string, enabled: boolean) => {
+    updateEnabledMutation.mutate({ userId, enabled });
   };
 
   const handleDelete = (userId: string) => {
@@ -249,6 +266,7 @@ export default function UserManagement() {
                   <TableHead className="font-semibold">User</TableHead>
                   <TableHead className="font-semibold">Email</TableHead>
                   <TableHead className="font-semibold">Role</TableHead>
+                  <TableHead className="font-semibold">Status</TableHead>
                   <TableHead className="text-right font-semibold">Actions</TableHead>
                 </TableRow>
               </TableHeader>
@@ -285,6 +303,19 @@ export default function UserManagement() {
                           </SelectContent>
                         </Select>
                       </TableCell>
+                      <TableCell>
+                        <div className="flex items-center gap-2">
+                          <Switch
+                            checked={user.enabled ?? true}
+                            onCheckedChange={(checked) => handleEnabledChange(user.id, checked)}
+                            disabled={updateEnabledMutation.isPending}
+                            data-testid={`switch-enabled-${user.id}`}
+                          />
+                          <span className="text-sm text-muted-foreground">
+                            {user.enabled ?? true ? "Enabled" : "Disabled"}
+                          </span>
+                        </div>
+                      </TableCell>
                       <TableCell className="text-right">
                         <div className="flex justify-end gap-2">
                           <Button 
@@ -303,7 +334,7 @@ export default function UserManagement() {
                   ))
                 ) : (
                   <TableRow>
-                    <TableCell colSpan={4} className="text-center text-muted-foreground py-8">
+                    <TableCell colSpan={5} className="text-center text-muted-foreground py-8">
                       No users found. Add a user to get started.
                     </TableCell>
                   </TableRow>
