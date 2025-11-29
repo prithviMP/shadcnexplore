@@ -30,6 +30,7 @@ export type Permission =
   | "data:export"
   | "scraper:trigger"
   | "scraper:view"
+  | "scraper:read"
   // User Management
   | "users:read"
   | "users:create"
@@ -82,6 +83,7 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<string, Permission[]> = {
     "data:export",
     "scraper:trigger",
     "scraper:view",
+    "scraper:read",
     "users:read",
     "users:create",
     "users:update",
@@ -114,6 +116,7 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<string, Permission[]> = {
     "data:read",
     "data:export",
     "scraper:view",
+    "scraper:read", // Allow analysts to view scheduler history
     "tables:read",
     "tables:create",
     "tables:update",
