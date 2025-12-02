@@ -37,7 +37,7 @@ import { sendWelcomeEmail, sendAdminNotificationEmail } from "./email";
 import { taskManager } from "./taskManager";
 import { evaluateMainSignalForCompany } from "./mainSignalEvaluator";
 import { evaluateExcelFormulaForCompany, ExcelFormulaEvaluator } from "./excelFormulaEvaluator";
-import { loadVisibleMetrics, saveVisibleMetrics, getAllMetrics, getVisibleMetrics } from "./settingsManager";
+import { loadVisibleMetrics, saveVisibleMetrics, getAllMetrics, getVisibleMetrics, DEFAULT_VISIBLE_METRICS } from "./settingsManager";
 
 export async function registerRoutes(app: Express): Promise<Server> {
   // Authentication routes
@@ -2218,9 +2218,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const visibleMetrics = loadVisibleMetrics();
       
       // Ensure all metrics are in the visible metrics object
+      // Start with defaults, then override with saved values
       const metricsConfig: Record<string, boolean> = {};
       allMetrics.forEach(metric => {
-        metricsConfig[metric] = visibleMetrics[metric] ?? false;
+        // Use saved value if exists, otherwise use default, otherwise false
+        metricsConfig[metric] = visibleMetrics[metric] ?? DEFAULT_VISIBLE_METRICS[metric] ?? false;
+      });
+      
+      // Ensure we have at least the default metrics
+      Object.keys(DEFAULT_VISIBLE_METRICS).forEach(metric => {
+        if (!(metric in metricsConfig)) {
+          metricsConfig[metric] = DEFAULT_VISIBLE_METRICS[metric];
+        }
       });
       
       res.json({

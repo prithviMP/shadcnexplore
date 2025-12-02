@@ -6,7 +6,7 @@ const CONFIG_DIR = join(process.cwd(), "config");
 const VISIBLE_METRICS_FILE = join(CONFIG_DIR, "visible_metrics.json");
 
 // Default metrics configuration
-const DEFAULT_VISIBLE_METRICS: Record<string, boolean> = {
+export const DEFAULT_VISIBLE_METRICS: Record<string, boolean> = {
   "Sales": true,
   "Sales Growth(YoY) %": true,
   "Sales Growth(QoQ) %": true,
@@ -44,13 +44,25 @@ export function loadVisibleMetrics(): Record<string, boolean> {
     ensureConfigDir();
     if (existsSync(VISIBLE_METRICS_FILE)) {
       const content = readFileSync(VISIBLE_METRICS_FILE, "utf-8");
-      return JSON.parse(content);
+      const parsed = JSON.parse(content);
+      // If file exists but is empty or invalid, use defaults
+      if (!parsed || typeof parsed !== 'object' || Object.keys(parsed).length === 0) {
+        saveVisibleMetrics(DEFAULT_VISIBLE_METRICS);
+        return DEFAULT_VISIBLE_METRICS;
+      }
+      return parsed;
     }
     // If file doesn't exist, initialize with defaults
     saveVisibleMetrics(DEFAULT_VISIBLE_METRICS);
     return DEFAULT_VISIBLE_METRICS;
   } catch (error: any) {
     console.error("Error loading visible metrics:", error);
+    // If there's an error, ensure defaults are saved and returned
+    try {
+      saveVisibleMetrics(DEFAULT_VISIBLE_METRICS);
+    } catch (saveError) {
+      console.error("Error saving default metrics:", saveError);
+    }
     return DEFAULT_VISIBLE_METRICS;
   }
 }
@@ -71,12 +83,16 @@ export function saveVisibleMetrics(metrics: Record<string, boolean>): boolean {
 
 /**
  * Get list of all available metrics
+ * Always returns at least the default metrics
  */
 export function getAllMetrics(): string[] {
   const visibleMetrics = loadVisibleMetrics();
-  if (Object.keys(visibleMetrics).length > 0) {
-    return Object.keys(visibleMetrics);
+  const metricKeys = Object.keys(visibleMetrics);
+  // If we have metrics, use them; otherwise use defaults
+  if (metricKeys.length > 0) {
+    return metricKeys;
   }
+  // Ensure we always return default metrics
   return Object.keys(DEFAULT_VISIBLE_METRICS);
 }
 

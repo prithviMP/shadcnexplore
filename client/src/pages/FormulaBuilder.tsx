@@ -34,11 +34,12 @@ interface QuarterlyDataResponse {
 export default function FormulaBuilder() {
   const { toast } = useToast();
   const [, setLocation] = useLocation();
-  const [entityType, setEntityType] = useState<"company" | "sector">("company");
+  const [entityType, setEntityType] = useState<"global" | "company" | "sector">("company");
   const [selectedEntityId, setSelectedEntityId] = useState<string | null>(null);
   const [formula, setFormula] = useState<string>("");
   const [formulaName, setFormulaName] = useState<string>("");
   const [formulaSignal, setFormulaSignal] = useState<string>("BUY");
+  const [priority, setPriority] = useState<number>(999);
   const [selectedFormulaId, setSelectedFormulaId] = useState<string>("");
   const [useExistingFormula, setUseExistingFormula] = useState<boolean>(false);
   const [selectedQuarters, setSelectedQuarters] = useState<Set<string>>(new Set());
@@ -58,8 +59,8 @@ export default function FormulaBuilder() {
     const id = params.get("id");
     const formulaId = params.get("formulaId");
 
-    if (type === "company" || type === "sector") {
-      setEntityType(type);
+    if (type === "company" || type === "sector" || type === "global") {
+      setEntityType(type as "global" | "company" | "sector");
     }
     if (id) {
       setSelectedEntityId(id);
@@ -99,6 +100,39 @@ export default function FormulaBuilder() {
   const { data: quarterlyData, isLoading: quarterlyLoading } = useQuery<QuarterlyDataResponse>({
     queryKey: ["/api/v1/formula-builder/quarterly-data", entityType, selectedEntityId],
     queryFn: async () => {
+      // For global scope, we can use the first company or sector for preview
+      if (entityType === "global") {
+        // Use first company for preview if available
+        if (companies && companies.length > 0) {
+          const firstCompany = companies[0];
+          const res = await apiRequest("GET", `/api/v1/companies/${firstCompany.ticker}/data`);
+          const data = await res.json();
+          
+          if (!data || !data.quarters || data.quarters.length === 0) {
+            throw new Error("No quarterly data available for preview");
+          }
+
+          const quarters = data.quarters.map((q: any) => q.quarter);
+          const metrics = data.quarters.length > 0 ? Object.keys(data.quarters[0].metrics || {}) : [];
+
+          return {
+            quarters: sortQuarterStrings(quarters),
+            metrics,
+            companies: [{
+              ticker: firstCompany.ticker,
+              companyId: firstCompany.id,
+              companyName: firstCompany.name || firstCompany.ticker,
+              quarters: data.quarters.reduce((acc: Record<string, Record<string, string | null>>, q: any) => {
+                acc[q.quarter] = q.metrics || {};
+                return acc;
+              }, {})
+            }],
+            raw: data.raw || []
+          };
+        }
+        throw new Error("No companies available for preview");
+      }
+
       if (!selectedEntityId) throw new Error("No entity selected");
 
       if (entityType === "company" && selectedCompany) {
@@ -135,7 +169,7 @@ export default function FormulaBuilder() {
       }
       throw new Error("Invalid entity type");
     },
-    enabled: !!selectedEntityId && ((entityType === "company" && !!selectedCompany) || (entityType === "sector" && !!selectedSector))
+    enabled: entityType === "global" || (!!selectedEntityId && ((entityType === "company" && !!selectedCompany) || (entityType === "sector" && !!selectedSector)))
   });
 
   // Sort quarterly data
@@ -152,11 +186,20 @@ export default function FormulaBuilder() {
   const { data: existingFormulaData } = useQuery<{ formula: Formula | null }>({
     queryKey: ["/api/v1/formulas/entity", entityType, selectedEntityId],
     queryFn: async () => {
+      if (entityType === "global") {
+        // For global, get the highest priority global formula
+        const res = await apiRequest("GET", `/api/formulas`);
+        const allFormulas: Formula[] = await res.json();
+        const globalFormulas = allFormulas
+          .filter(f => f.enabled && f.scope === "global")
+          .sort((a, b) => a.priority - b.priority);
+        return { formula: globalFormulas[0] || null };
+      }
       if (!selectedEntityId) return { formula: null };
       const res = await apiRequest("GET", `/api/v1/formulas/entity/${entityType}/${selectedEntityId}`);
       return res.json();
     },
-    enabled: !!selectedEntityId
+    enabled: entityType === "global" || !!selectedEntityId
   });
 
   // Fetch global formula as fallback
@@ -178,14 +221,16 @@ export default function FormulaBuilder() {
       setFormula(existingFormulaData.formula.condition);
       setFormulaName(existingFormulaData.formula.name);
       setFormulaSignal(existingFormulaData.formula.signal);
+      setPriority(existingFormulaData.formula.priority);
       setHasAutoEvaluated(false); // Reset to allow auto-evaluation
-    } else if (!useExistingFormula && globalFormula) {
+    } else if (!useExistingFormula && globalFormula && entityType === "global") {
       setFormula(globalFormula.condition);
       setFormulaName(globalFormula.name || "");
       setFormulaSignal(globalFormula.signal);
+      setPriority(globalFormula.priority);
       setHasAutoEvaluated(false); // Reset to allow auto-evaluation
     }
-  }, [existingFormulaData, globalFormula, selectedEntityId, useExistingFormula]); // Reset when entity changes
+  }, [existingFormulaData, globalFormula, selectedEntityId, useExistingFormula, entityType]); // Reset when entity changes
 
   // Handle selected formula change
   useEffect(() => {
@@ -195,6 +240,7 @@ export default function FormulaBuilder() {
         setFormula(selectedFormula.condition);
         setFormulaName(selectedFormula.name);
         setFormulaSignal(selectedFormula.signal);
+        setPriority(selectedFormula.priority);
         setUseExistingFormula(true);
         setHasAutoEvaluated(false);
       }
@@ -298,7 +344,32 @@ export default function FormulaBuilder() {
     try {
       const results: Record<string, { result: string | number | boolean; type: string }> = {};
 
-      if (entityType === "company" && selectedCompany) {
+      if (entityType === "global" && sortedQuarterlyData && sortedQuarterlyData.companies.length > 0) {
+        // For global, evaluate on the preview company
+        const previewCompany = sortedQuarterlyData.companies[0];
+        try {
+          const res = await apiRequest("POST", "/api/v1/formulas/test-excel", {
+            ticker: previewCompany.ticker,
+            formula: formula,
+            selectedQuarters: Array.from(selectedQuarters)
+          });
+          const data = await res.json();
+
+          let actualResult = data.result;
+          let actualType = data.resultType;
+
+          if (actualResult && typeof actualResult === 'object' && 'result' in actualResult) {
+            actualType = actualResult.resultType || actualType;
+            actualResult = actualResult.result;
+          }
+
+          results[previewCompany.ticker] = { result: actualResult, type: actualType };
+          results["result"] = { result: actualResult, type: actualType };
+        } catch (err) {
+          console.error(`Failed to evaluate for ${previewCompany.ticker}`, err);
+          results[previewCompany.ticker] = { result: "Error", type: "error" };
+        }
+      } else if (entityType === "company" && selectedCompany) {
         // Evaluate for single company
         const res = await apiRequest("POST", "/api/v1/formulas/test-excel", {
           ticker: selectedCompany.ticker,
@@ -363,10 +434,9 @@ export default function FormulaBuilder() {
 
   // Save formula mutation
   const saveFormulaMutation = useMutation({
-    mutationFn: async (data: { name: string; condition: string; signal: string; scope: string; scopeValue: string | null; priority?: number }) => {
+    mutationFn: async (data: { name: string; condition: string; signal: string; scope: string; scopeValue: string | null; priority: number }) => {
       const res = await apiRequest("POST", "/api/formulas", {
         ...data,
-        priority: data.priority || (entityType === "company" ? 1 : entityType === "sector" ? 2 : 999),
         enabled: true
       });
       return res.json();
@@ -402,7 +472,7 @@ export default function FormulaBuilder() {
       return;
     }
 
-    if (!selectedEntityId) {
+    if (entityType !== "global" && !selectedEntityId) {
       toast({
         title: "No entity selected",
         description: "Please select a company or sector",
@@ -419,14 +489,17 @@ export default function FormulaBuilder() {
         condition: formula,
         signal: formulaSignal,
         scope: entityType,
-        scopeValue: selectedEntityId
+        scopeValue: entityType === "global" ? null : selectedEntityId,
+        priority: priority
       }).then(() => {
         toast({
           title: "Formula updated",
-          description: `Formula has been updated for this ${entityType}`
+          description: `Formula has been updated${entityType === "global" ? " as global" : ` for this ${entityType}`}`
         });
         queryClient.invalidateQueries({ queryKey: ["/api/formulas"] });
-        queryClient.invalidateQueries({ queryKey: ["/api/v1/formulas/entity", entityType, selectedEntityId] });
+        if (entityType !== "global") {
+          queryClient.invalidateQueries({ queryKey: ["/api/v1/formulas/entity", entityType, selectedEntityId] });
+        }
       }).catch((error: Error) => {
         toast({
           title: "Failed to update formula",
@@ -441,7 +514,8 @@ export default function FormulaBuilder() {
         condition: formula,
         signal: formulaSignal,
         scope: entityType,
-        scopeValue: selectedEntityId
+        scopeValue: entityType === "global" ? null : selectedEntityId,
+        priority: priority
       });
     }
   };
@@ -468,13 +542,18 @@ export default function FormulaBuilder() {
         </CardHeader>
         <CardContent className="space-y-4">
           <RadioGroup value={entityType} onValueChange={(value) => {
-            setEntityType(value as "company" | "sector");
+            setEntityType(value as "global" | "company" | "sector");
             setSelectedEntityId(null);
             setFormulaResults({});
             setFormula("");
             setFormulaName("");
+            setPriority(999);
             setHasAutoEvaluated(false);
           }}>
+            <div className="flex items-center space-x-2">
+              <RadioGroupItem value="global" id="global" />
+              <Label htmlFor="global">Global</Label>
+            </div>
             <div className="flex items-center space-x-2">
               <RadioGroupItem value="company" id="company" />
               <Label htmlFor="company">Company</Label>
@@ -515,11 +594,21 @@ export default function FormulaBuilder() {
             </Select>
           )}
 
-          {selectedEntityId && (
+          {entityType === "global" && (
+            <div className="p-3 bg-muted rounded-md">
+              <p className="text-sm">
+                <span className="font-medium">Global Formula:</span> This formula will apply to all companies and sectors. Use priority to override other formulas.
+              </p>
+            </div>
+          )}
+
+          {(selectedEntityId || entityType === "global") && (
             <div className="p-3 bg-muted rounded-md">
               <p className="text-sm">
                 <span className="font-medium">Selected:</span>{" "}
-                {entityType === "company"
+                {entityType === "global"
+                  ? "Global (applies to all entities)"
+                  : entityType === "company"
                   ? `${selectedCompany?.ticker} - ${selectedCompany?.name}`
                   : selectedSector?.name}
               </p>
@@ -539,7 +628,7 @@ export default function FormulaBuilder() {
       </Card>
 
       {/* Formula Input */}
-      {selectedEntityId && (
+      {(selectedEntityId || entityType === "global") && (
         <Card>
           <CardHeader>
             <CardTitle>Formula</CardTitle>
@@ -590,6 +679,26 @@ export default function FormulaBuilder() {
                 }}
                 placeholder="e.g., Custom Formula for IT Sector"
               />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="priority">Priority</Label>
+              <Input
+                id="priority"
+                type="number"
+                min="0"
+                max="999"
+                value={priority}
+                onChange={(e) => {
+                  const val = parseInt(e.target.value) || 999;
+                  setPriority(val);
+                  setUseExistingFormula(false);
+                  setSelectedFormulaId("");
+                }}
+                placeholder="999"
+              />
+              <p className="text-xs text-muted-foreground">
+                Lower number = higher priority. Global formulas with lower priority will override sector/company formulas.
+              </p>
             </div>
             <div className="space-y-2">
               <Label htmlFor="formula">Formula Condition</Label>
@@ -655,7 +764,7 @@ export default function FormulaBuilder() {
       )}
 
       {/* Quarterly Data Spreadsheet */}
-      {selectedEntityId && (
+      {(selectedEntityId || entityType === "global") && (
         <Card>
           <CardHeader>
             <CardTitle>Quarterly Data</CardTitle>
@@ -692,7 +801,7 @@ export default function FormulaBuilder() {
         </Card>
       )}
 
-      {!selectedEntityId && (
+      {!selectedEntityId && entityType !== "global" && (
         <Card>
           <CardContent className="py-8 text-center text-muted-foreground">
             Please select a {entityType} to begin building a formula

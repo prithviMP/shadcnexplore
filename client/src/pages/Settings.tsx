@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -17,19 +17,58 @@ interface DefaultMetricsResponse {
   visibleMetrics: string[];
 }
 
+// Default metrics configuration (must match backend)
+const DEFAULT_METRICS: Record<string, boolean> = {
+  "Sales": true,
+  "Sales Growth(YoY) %": true,
+  "Sales Growth(QoQ) %": true,
+  "Expenses": false,
+  "Operating Profit": false,
+  "OPM %": true,
+  "Financing Profit": false,
+  "Financing Margin %": false,
+  "Other Income": false,
+  "Interest": false,
+  "Depreciation": false,
+  "Profit before tax": false,
+  "Tax %": false,
+  "Net Profit": false,
+  "EPS in Rs": true,
+  "EPS Growth(YoY) %": true,
+  "EPS Growth(QoQ) %": true,
+  "Gross NPA %": false,
+};
+
 export default function Settings() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [searchTerm, setSearchTerm] = useState("");
-  const [localMetrics, setLocalMetrics] = useState<Record<string, boolean>>({});
+  const [localMetrics, setLocalMetrics] = useState<Record<string, boolean>>(DEFAULT_METRICS);
 
   // Fetch default metrics configuration
   const { data: metricsData, isLoading } = useQuery<DefaultMetricsResponse>({
     queryKey: ["/api/settings/default-metrics"],
-    onSuccess: (data) => {
-      setLocalMetrics(data.metrics);
-    },
   });
+
+  // Update localMetrics when data loads
+  useEffect(() => {
+    if (metricsData?.metrics) {
+      const metrics = metricsData.metrics;
+      // Only update if we have metrics
+      if (Object.keys(metrics).length > 0) {
+        setLocalMetrics(metrics);
+      }
+    } else if (!isLoading) {
+      // If query finished loading but no data, ensure we have defaults
+      setLocalMetrics(prev => {
+        // Only set defaults if current state is empty
+        if (Object.keys(prev).length === 0) {
+          return { ...DEFAULT_METRICS };
+        }
+        return prev;
+      });
+    }
+  }, [metricsData, isLoading]);
 
   // Save metrics mutation
   const saveMutation = useMutation({
@@ -37,11 +76,16 @@ export default function Settings() {
       const res = await apiRequest("PUT", "/api/settings/default-metrics", { metrics });
       return res.json();
     },
-    onSuccess: () => {
+    onSuccess: (data) => {
+      // Update local state with saved metrics to ensure consistency
+      if (data.metrics) {
+        setLocalMetrics(data.metrics);
+      }
       toast({
         title: "Settings saved",
         description: "Default metrics configuration has been updated successfully.",
       });
+      // Refetch to ensure we have the latest data
       queryClient.invalidateQueries({ queryKey: ["/api/settings/default-metrics"] });
     },
     onError: (error: any) => {
@@ -55,27 +99,7 @@ export default function Settings() {
 
   // Reset to default metrics
   const resetToDefault = () => {
-    const defaultMetrics: Record<string, boolean> = {
-      "Sales": false,
-      "Sales Growth(YoY) %": true,
-      "Sales Growth(QoQ) %": true,
-      "Expenses": false,
-      "Operating Profit": false,
-      "OPM %": false,
-      "Financing Profit": false,
-      "Financing Margin %": false,
-      "Other Income": false,
-      "Interest": false,
-      "Depreciation": false,
-      "Profit before tax": false,
-      "Tax %": false,
-      "Net Profit": false,
-      "EPS in Rs": true,
-      "EPS Growth(YoY) %": true,
-      "EPS Growth(QoQ) %": true,
-      "Gross NPA %": false,
-    };
-    setLocalMetrics(defaultMetrics);
+    setLocalMetrics({ ...DEFAULT_METRICS });
   };
 
   const handleSave = () => {
@@ -112,7 +136,10 @@ export default function Settings() {
 
   const selectedCount = Object.values(localMetrics).filter(Boolean).length;
   const totalCount = Object.keys(localMetrics).length;
-  const hasChanges = JSON.stringify(localMetrics) !== JSON.stringify(metricsData?.metrics || {});
+  // Compare with loaded data or empty object if not loaded yet
+  const hasChanges = metricsData?.metrics 
+    ? JSON.stringify(localMetrics) !== JSON.stringify(metricsData.metrics)
+    : Object.keys(localMetrics).length > 0;
 
   if (isLoading) {
     return (

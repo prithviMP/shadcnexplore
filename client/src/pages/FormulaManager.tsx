@@ -17,7 +17,7 @@ import { useToast } from "@/hooks/use-toast";
 import { Plus, Pencil, Trash2, TestTube, Loader2, Play, Search, Calculator, BarChart3 } from "lucide-react";
 import SignalBadge from "@/components/SignalBadge";
 import { queryClient, apiRequest } from "@/lib/queryClient";
-import { insertFormulaSchema, type Formula, type Company } from "@shared/schema";
+import { insertFormulaSchema, type Formula, type Company, type Sector } from "@shared/schema";
 import { z } from "zod";
 import { sortQuarters, formatQuarterWithLabel } from "@/utils/quarterUtils";
 
@@ -81,6 +81,45 @@ export default function FormulaManager() {
   const { data: companies = [] } = useQuery<Company[]>({
     queryKey: ["/api/companies"],
   });
+
+  // Fetch sectors to map IDs to names
+  const { data: sectors = [] } = useQuery<Sector[]>({
+    queryKey: ["/api/sectors"],
+  });
+
+  // Create a map of sector ID to sector name
+  const sectorMap = useMemo(() => {
+    const map = new Map<string, string>();
+    sectors.forEach(sector => {
+      map.set(sector.id, sector.name);
+    });
+    return map;
+  }, [sectors]);
+
+  // Helper function to format scope display
+  const formatScopeDisplay = (scope: string, scopeValue: string | null): string => {
+    if (scope === "global") {
+      return "global";
+    }
+    if (scope === "sector" && scopeValue) {
+      // Check if scopeValue is a sector ID (UUID format) or already a name
+      const sectorName = sectorMap.get(scopeValue);
+      if (sectorName) {
+        return `sector: ${sectorName}`;
+      }
+      // If not found in map, it might already be a name (legacy data)
+      return `sector: ${scopeValue}`;
+    }
+    if (scope === "company" && scopeValue) {
+      // For companies, show company ticker
+      const company = companies.find(c => c.id === scopeValue);
+      if (company) {
+        return `company: ${company.ticker}`;
+      }
+      return `company: ${scopeValue}`;
+    }
+    return scope;
+  };
 
   // Get the selected company's ticker
   const selectedCompany = useMemo(() => {
@@ -397,8 +436,7 @@ export default function FormulaManager() {
                       <TableCell className="font-medium">{formula.name}</TableCell>
                       <TableCell>
                         <Badge variant="outline" className="text-xs bg-slate-100 dark:bg-slate-800">
-                          {formula.scope}
-                          {formula.scopeValue && `: ${formula.scopeValue}`}
+                          {formatScopeDisplay(formula.scope, formula.scopeValue)}
                         </Badge>
                       </TableCell>
                       <TableCell className="font-mono text-xs max-w-xs truncate">{formula.condition}</TableCell>
