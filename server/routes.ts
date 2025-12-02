@@ -2327,38 +2327,55 @@ async function processBulkImportJob(jobId: string): Promise<void> {
         console.log(`Created sector: ${item.sectorName}`);
       }
 
-      // Step 2: Check if company already exists in this sector
-      let company = await storage.getCompanyByTickerAndSector(item.ticker, sector.id);
+      // Step 2: Use the provided ticker directly (already verified via CSV ticker updater script)
+      // Skip ticker verification/resolution since tickers are pre-verified
+      const resolvedTicker = item.ticker.toUpperCase();
+      
+      // Update resolved ticker (same as provided ticker since it's already verified)
+      await storage.updateBulkImportItem(item.id, { resolvedTicker });
+      
+      console.log(`Using verified ticker ${resolvedTicker} for ${item.companyName} (skipping verification)`);
+
+      // Step 3: Check if company already exists in this sector
+      let company = await storage.getCompanyByTickerAndSector(resolvedTicker, sector.id);
 
       if (company) {
         // Company already exists, just scrape data
-        console.log(`Company ${item.ticker} already exists in sector ${item.sectorName}, scraping data...`);
+        console.log(`Company ${resolvedTicker} already exists in sector ${item.sectorName}, scraping data...`);
       } else {
-        // Try to resolve the ticker via Screener.in API
-        let resolvedTicker = item.ticker;
-        try {
-          const searchResult = await scraper.searchTickerByCompanyName(item.companyName);
-          if (searchResult && searchResult.ticker) {
-            resolvedTicker = searchResult.ticker;
-            console.log(`Resolved ticker for ${item.companyName}: ${resolvedTicker}`);
+        // Check if resolved ticker exists in ANY sector (to avoid duplicates)
+        const existingCompanyAnySector = await storage.getCompanyByTicker(resolvedTicker);
+        if (existingCompanyAnySector) {
+          // Company exists in a different sector - skip creation and just scrape
+          console.log(`Company ${resolvedTicker} already exists in sector ${existingCompanyAnySector.sectorId}, skipping creation. Will scrape data for existing company.`);
+          company = existingCompanyAnySector;
+        } else {
+          // Create new company with verified ticker
+          try {
+            company = await storage.createCompany({
+              ticker: resolvedTicker,
+              name: item.companyName,
+              sectorId: sector.id,
+            });
+            console.log(`Created company: ${resolvedTicker} in sector ${item.sectorName}`);
+          } catch (createError: any) {
+            // If creation fails due to duplicate, try to find the existing company
+            if (createError.message?.includes("duplicate key") || createError.message?.includes("unique constraint")) {
+              console.log(`Company ${resolvedTicker} already exists (duplicate key error), finding existing company...`);
+              company = await storage.getCompanyByTickerAndSector(resolvedTicker, sector.id) || 
+                       await storage.getCompanyByTicker(resolvedTicker);
+              if (!company) {
+                throw createError; // Re-throw if we can't find it
+              }
+              console.log(`Found existing company: ${resolvedTicker} (ID: ${company.id})`);
+            } else {
+              throw createError; // Re-throw if it's a different error
+            }
           }
-        } catch (e) {
-          console.log(`Could not resolve ticker for ${item.companyName}, using provided: ${item.ticker}`);
         }
-
-        // Update resolved ticker
-        await storage.updateBulkImportItem(item.id, { resolvedTicker });
-
-        // Create company
-        company = await storage.createCompany({
-          ticker: resolvedTicker,
-          name: item.companyName,
-          sectorId: sector.id,
-        });
-        console.log(`Created company: ${resolvedTicker} in sector ${item.sectorName}`);
       }
 
-      // Step 3: Scrape company data
+      // Step 4: Scrape company data
       try {
         const scrapeResult = await scraper.scrapeCompany(
           company.ticker,

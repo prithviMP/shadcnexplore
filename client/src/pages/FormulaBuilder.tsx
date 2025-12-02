@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 import { queryClient, apiRequest } from "@/lib/queryClient";
@@ -49,13 +49,15 @@ export default function FormulaBuilder() {
   const [isEvaluating, setIsEvaluating] = useState(false);
   const [hasAutoEvaluated, setHasAutoEvaluated] = useState(false);
 
+  const formulaInputRef = useRef<HTMLTextAreaElement>(null);
+
   // Parse URL query parameters
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const type = params.get("type");
     const id = params.get("id");
     const formulaId = params.get("formulaId");
-    
+
     if (type === "company" || type === "sector") {
       setEntityType(type);
     }
@@ -98,20 +100,20 @@ export default function FormulaBuilder() {
     queryKey: ["/api/v1/formula-builder/quarterly-data", entityType, selectedEntityId],
     queryFn: async () => {
       if (!selectedEntityId) throw new Error("No entity selected");
-      
+
       if (entityType === "company" && selectedCompany) {
         // Fetch company quarterly data
         const res = await apiRequest("GET", `/api/v1/companies/${selectedCompany.ticker}/data`);
         const data = await res.json();
-        
+
         if (!data || !data.quarters || data.quarters.length === 0) {
           throw new Error("No quarterly data available for this company");
         }
-        
+
         // Transform to QuarterlyDataResponse format
         const quarters = data.quarters.map((q: any) => q.quarter);
         const metrics = data.quarters.length > 0 ? Object.keys(data.quarters[0].metrics || {}) : [];
-        
+
         return {
           quarters: sortQuarterStrings(quarters),
           metrics,
@@ -141,6 +143,7 @@ export default function FormulaBuilder() {
     if (!quarterlyData) return null;
     return {
       ...quarterlyData,
+      sectorId: quarterlyData.sectorId || "",
       quarters: sortQuarterStrings(quarterlyData.quarters)
     };
   }, [quarterlyData]);
@@ -207,7 +210,7 @@ export default function FormulaBuilder() {
         : sortedQuarterlyData.quarters;
       setSelectedQuartersForTable(quartersToShow);
       setSelectedQuarters(new Set(quartersToShow));
-      
+
       // Default to first 6 metrics or all if less than 6
       setSelectedMetrics(sortedQuarterlyData.metrics.slice(0, Math.min(6, sortedQuarterlyData.metrics.length)));
       setHasAutoEvaluated(false); // Reset auto-evaluation flag when data changes
@@ -231,22 +234,50 @@ export default function FormulaBuilder() {
   const handleCellSelect = (metric: string, quarter: string) => {
     if (!sortedQuarterlyData) return;
 
-    const allQuarters = sortedQuarterlyData.quarters;
-    const index = allQuarters.indexOf(quarter);
-    const relativeIndex = index - (allQuarters.length - 1);
+    const index = selectedQuartersForTable.indexOf(quarter);
+    if (index === -1) return;
+    // Q1 = Oldest in selected window
+    const qIndex = index + 1;
 
     // Create reference string
-    const sanitizedMetric = metric.replace(/[^a-zA-Z0-9]/g, "_");
-    const reference = `${sanitizedMetric}(${relativeIndex})`;
+    const sanitizedMetric = metric.replace(/[^a-zA-Z0-9]/g, "");
+    const reference = `${sanitizedMetric}[Q${qIndex}]`;
 
-    // Add to formula
-    setFormula(prev => prev + (prev ? " " : "") + reference);
-    
+    // Insert into formula at cursor position or replace selection
+    if (formulaInputRef.current) {
+      const textarea = formulaInputRef.current;
+      const start = textarea.selectionStart;
+      const end = textarea.selectionEnd;
+      const text = textarea.value;
+      const scrollTop = textarea.scrollTop; // Capture scroll position
+
+      const newText = text.substring(0, start) + reference + text.substring(end);
+
+      setFormula(newText);
+      setUseExistingFormula(false);
+      setSelectedFormulaId("");
+
+      // Restore focus and cursor position after update
+      setTimeout(() => {
+        if (formulaInputRef.current) {
+          formulaInputRef.current.focus();
+          const newCursorPos = start + reference.length;
+          formulaInputRef.current.setSelectionRange(newCursorPos, newCursorPos);
+          formulaInputRef.current.scrollTop = scrollTop; // Restore scroll position
+        }
+      }, 0);
+    } else {
+      // Fallback
+      setFormula(prev => prev + (prev ? " " : "") + reference);
+      setUseExistingFormula(false);
+      setSelectedFormulaId("");
+    }
+
     // Add quarter to selected set
     const newSet = new Set(selectedQuarters);
     newSet.add(quarter);
     setSelectedQuarters(newSet);
-    
+
     // Add to selected cells for visual feedback
     setSelectedCells(prev => new Set(prev).add(`${metric}:${quarter}`));
   };
@@ -275,15 +306,15 @@ export default function FormulaBuilder() {
           selectedQuarters: Array.from(selectedQuarters)
         });
         const data = await res.json();
-        
+
         let actualResult = data.result;
         let actualType = data.resultType;
-        
+
         if (actualResult && typeof actualResult === 'object' && 'result' in actualResult) {
           actualType = actualResult.resultType || actualType;
           actualResult = actualResult.result;
         }
-        
+
         results[selectedCompany.ticker] = { result: actualResult, type: actualType };
         // For single company view, also store under "result" key for display
         results["result"] = { result: actualResult, type: actualType };
@@ -297,15 +328,15 @@ export default function FormulaBuilder() {
               selectedQuarters: Array.from(selectedQuarters)
             });
             const data = await res.json();
-            
+
             let actualResult = data.result;
             let actualType = data.resultType;
-            
+
             if (actualResult && typeof actualResult === 'object' && 'result' in actualResult) {
               actualType = actualResult.resultType || actualType;
               actualResult = actualResult.result;
             }
-            
+
             results[company.ticker] = { result: actualResult, type: actualType };
           } catch (err) {
             console.error(`Failed to evaluate for ${company.ticker}`, err);
@@ -488,7 +519,7 @@ export default function FormulaBuilder() {
             <div className="p-3 bg-muted rounded-md">
               <p className="text-sm">
                 <span className="font-medium">Selected:</span>{" "}
-                {entityType === "company" 
+                {entityType === "company"
                   ? `${selectedCompany?.ticker} - ${selectedCompany?.name}`
                   : selectedSector?.name}
               </p>
@@ -517,8 +548,8 @@ export default function FormulaBuilder() {
           <CardContent className="space-y-4">
             <div className="space-y-2">
               <Label>Select Existing Formula or Create New</Label>
-              <Select 
-                value={selectedFormulaId || "new"} 
+              <Select
+                value={selectedFormulaId || "new"}
                 onValueChange={(value) => {
                   if (value === "new") {
                     setSelectedFormulaId("");
@@ -570,8 +601,9 @@ export default function FormulaBuilder() {
                   setUseExistingFormula(false); // User is editing, so it's a new formula
                   setSelectedFormulaId(""); // Clear selection when editing
                 }}
-                placeholder='e.g., IF(AND(Sales(0)>0, EPS(0)>10), "BUY", "HOLD")'
+                placeholder='e.g., IF(AND(SalesGrowth[Q1]>0, EPS[Q1]>10), "BUY", "HOLD")'
                 className="font-mono text-sm min-h-32"
+                ref={formulaInputRef}
               />
             </div>
             <div className="flex items-center gap-4">

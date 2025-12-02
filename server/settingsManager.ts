@@ -2,17 +2,17 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync } from "fs";
 import { join } from "path";
 
 // Path to config directory (relative to project root)
-const CONFIG_DIR = join(process.cwd(), "..", "config");
+const CONFIG_DIR = join(process.cwd(), "config");
 const VISIBLE_METRICS_FILE = join(CONFIG_DIR, "visible_metrics.json");
 
 // Default metrics configuration
 const DEFAULT_VISIBLE_METRICS: Record<string, boolean> = {
-  "Sales": false,
+  "Sales": true,
   "Sales Growth(YoY) %": true,
   "Sales Growth(QoQ) %": true,
   "Expenses": false,
   "Operating Profit": false,
-  "OPM %": false,
+  "OPM %": true,
   "Financing Profit": false,
   "Financing Margin %": false,
   "Other Income": false,

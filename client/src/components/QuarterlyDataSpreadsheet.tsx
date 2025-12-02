@@ -83,13 +83,15 @@ export default function QuarterlyDataSpreadsheet({
                 rowId: "header",
                 cells: [
                     { type: "header" as const, text: "Metric" },
-                    ...quartersToShow.map(q => {
-                        const allQuarters = data.quarters;
-                        const index = allQuarters.indexOf(q);
-                        const relativeIndex = index - (allQuarters.length - 1);
+                    ...quartersToShow.map((q, index) => {
+                        // Q1 = Oldest in selected window
+                        // quartersToShow is sorted Oldest -> Newest
+                        // So index 0 -> Q1
+                        const label = `Q${index + 1}`;
+
                         return {
                             type: "header" as const,
-                            text: `${formatQuarterWithLabel(q)} (${relativeIndex})`
+                            text: `${label} - ${q}`
                         };
                     }),
                     { type: "header" as const, text: "Result" }
@@ -145,8 +147,8 @@ export default function QuarterlyDataSpreadsheet({
                             type: "text" as const,
                             text: companyResult ? String(companyResult.result) : "—",
                             nonEditable: true,
-                            style: { 
-                                background: companyResult ? "#f0f9ff" : "transparent", 
+                            style: {
+                                background: companyResult ? "#f0f9ff" : "transparent",
                                 fontWeight: "600",
                                 color: companyResult ? "#0369a1" : "#64748b"
                             }
@@ -164,15 +166,14 @@ export default function QuarterlyDataSpreadsheet({
             rowId: "header",
             cells: [
                 { type: "header" as const, text: "Company / Metric" },
-                ...quartersToShow.map(q => {
-                    // Calculate relative index
-                    const allQuarters = data.quarters;
-                    const index = allQuarters.indexOf(q);
-                    const relativeIndex = index - (allQuarters.length - 1);
+                ...quartersToShow.map((q, index) => {
+                    // Q1 = Oldest in selected window
+                    // quartersToShow is sorted Oldest -> Newest
+                    const label = `Q${index + 1}`;
 
                     return {
                         type: "header" as const,
-                        text: `${formatQuarterWithLabel(q)} (${relativeIndex})`
+                        text: `${label} - ${q}`
                     };
                 }),
                 { type: "header" as const, text: "Result" }

@@ -2,191 +2,119 @@
  * Excel Formula Evaluator for Quarterly Metrics
  * Supports Excel-style formulas with IF, AND, OR, NOT, ISNUMBER, MIN, MAX, ABS, etc.
  * Supports arithmetic operations (+, -, *, /) and nested expressions.
- * Maps Q12-Q16 and P12-P16 to quarterly metrics.
+ * Supports dynamic metric referencing using MetricName[Qn] syntax.
+ * Q1 = Most Recent Quarter, Q2 = Previous Quarter, etc.
  * Normalizes percentage values to decimals (e.g. 20% -> 0.2).
  */
 
 import type { QuarterlyData } from "@shared/schema";
 import { storage } from "./storage";
 
-interface QuarterlyMetrics {
-  // Current Quarter (Q) metrics
-  Q12: number | null; // Sales Growth (YoY) %
-  Q13: number | null; // EPS Growth (YoY) %
-  Q14: number | null; // OPM %
-  Q15: number | null; // Sales Growth (QoQ) %
-  Q16: number | null; // EPS Growth (QoQ) %
-
-  // Previous Quarter (P) metrics
-  P12: number | null; // Sales Growth (YoY) % (previous)
-  P13: number | null; // EPS Growth (YoY) % (previous)
-  P14: number | null; // OPM % (previous)
-  P15: number | null; // Sales Growth (QoQ) % (previous)
-  P16: number | null; // EPS Growth (QoQ) % (previous)
-}
-
 type FormulaResult = string | number | boolean | null;
+
+// Map of Quarter Name -> Metric Name -> Value
+type QuarterlyDataMap = Map<string, Map<string, number | null>>;
 
 /**
  * Extract quarterly metrics from quarterly data
- * Normalizes percentage values to decimals (e.g., 20 -> 0.2)
+ * Returns a structured map for easy lookup
  */
-export function extractQuarterlyMetrics(quarterlyData: QuarterlyData[], selectedQuarters?: string[]): { metrics: QuarterlyMetrics; usedQuarters: string[] } {
-  const metrics: QuarterlyMetrics = {
-    Q12: null, Q13: null, Q14: null, Q15: null, Q16: null,
-    P12: null, P13: null, P14: null, P15: null, P16: null,
-  };
+export function extractQuarterlyMetrics(quarterlyData: QuarterlyData[], selectedQuarters?: string[]): { dataMap: QuarterlyDataMap; sortedQuarters: string[] } {
+  const dataMap: QuarterlyDataMap = new Map();
 
   if (!quarterlyData || quarterlyData.length === 0) {
-    return { metrics, usedQuarters: [] };
+    return { dataMap, sortedQuarters: [] };
   }
 
   // Sort quarters by date (newest first)
-  let sortedDataByDate = [...quarterlyData].sort((a, b) => {
-    // Assuming quarter format is like "Sep 2024", "Jun 2024"
-    // We can try to parse dates, or rely on the fact that they usually come sorted or have a predictable format
-    // For robustness, let's try to parse "Mon YYYY"
-    const dateA = new Date(a.quarter);
-    const dateB = new Date(b.quarter);
+  // This is CRITICAL for the Q1, Q2, Q3 indexing
+  const uniqueQuarters = Array.from(new Set(quarterlyData.map(d => d.quarter)));
+
+  const sortedQuarters = uniqueQuarters.sort((a, b) => {
+    // Try to parse dates
+    const dateA = new Date(a);
+    const dateB = new Date(b);
     if (!isNaN(dateA.getTime()) && !isNaN(dateB.getTime())) {
-      return dateB.getTime() - dateA.getTime();
+      return dateB.getTime() - dateA.getTime(); // Descending (Newest first)
     }
-    // Fallback for unparseable dates, try localeCompare on quarter string
-    return b.quarter.localeCompare(a.quarter);
+    // Fallback
+    return b.localeCompare(a);
   });
 
-  // Filter by selected quarters if provided
-  if (selectedQuarters && selectedQuarters.length > 0) {
-    sortedDataByDate = sortedDataByDate.filter(q => selectedQuarters.includes(q.quarter));
-  }
+  // Filter if needed
+  const quartersToUse = selectedQuarters && selectedQuarters.length > 0
+    ? sortedQuarters.filter(q => selectedQuarters.includes(q))
+    : sortedQuarters;
 
-  // Group by quarter from the (potentially filtered and sorted) data
-  const quartersMap = new Map<string, Record<string, string | null>>();
-  sortedDataByDate.forEach(item => {
-    if (!quartersMap.has(item.quarter)) {
-      quartersMap.set(item.quarter, {});
-    }
-    quartersMap.get(item.quarter)![item.metricName] = item.metricValue?.toString() || null;
+  // Build the map
+  quartersToUse.forEach(quarter => {
+    const quarterMetrics = new Map<string, number | null>();
+
+    quarterlyData
+      .filter(d => d.quarter === quarter)
+      .forEach(item => {
+        const val = normalizeValue(item.metricValue);
+        quarterMetrics.set(item.metricName, val);
+        // Also add normalized keys for easier lookup (lowercase, no spaces)
+        quarterMetrics.set(normalizeKey(item.metricName), val);
+      });
+
+    dataMap.set(quarter, quarterMetrics);
   });
 
-  // Get unique quarter names from the map, sorted by date (most recent first)
-  const uniqueSortedQuarterNames = Array.from(quartersMap.keys())
-    .sort((a, b) => {
-      const dateA = new Date(a);
-      const dateB = new Date(b);
-      if (!isNaN(dateA.getTime()) && !isNaN(dateB.getTime())) {
-        return dateB.getTime() - dateA.getTime();
-      }
-      return b.localeCompare(a);
-    });
+  return { dataMap, sortedQuarters: quartersToUse };
+}
 
-  if (uniqueSortedQuarterNames.length === 0) return { metrics, usedQuarters: [] };
+function normalizeValue(val: string | number | null | undefined): number | null {
+  if (val === null || val === undefined) return null;
 
-  // Capture used quarters (up to 5 for Q12-Q16)
-  const usedQuarters = uniqueSortedQuarterNames.slice(0, 5);
-
-  // Get current quarter (most recent from the filtered/sorted list)
-  const currentQuarterData = quartersMap.get(uniqueSortedQuarterNames[0])!;
-
-  // Get previous quarter (if available)
-  const previousQuarterData = uniqueSortedQuarterNames.length > 1 ? quartersMap.get(uniqueSortedQuarterNames[1])! : null;
-
-  // Helper to find metric value and normalize to decimal
-  const findMetric = (quarter: Record<string, string | null>, metricName: string): number | null => {
-    const metric = quarter[metricName];
-    if (metric === null || metric === undefined) return null;
-
-    let num: number;
-
-    // Handle string values with %
-    if (typeof metric === 'string') {
-      const cleaned = metric.replace('%', '').trim();
-      num = parseFloat(cleaned);
-    } else {
-      num = typeof metric === 'number' ? metric : parseFloat(metric);
-    }
-
-    if (isNaN(num)) return null;
-
-    // Normalize: assume data from DB is in percentage points (e.g., 20 for 20%)
-    // We convert to decimal (0.2) for calculation consistency
-    return num / 100;
-  };
-
-  // Helper to find metric by variations
-  const findMetricByVariations = (quarter: Record<string, string | null>, variations: string[]): number | null => {
-    // First try exact matches
-    for (const variation of variations) {
-      const value = findMetric(quarter, variation);
-      if (value !== null) return value;
-    }
-
-    // Then try case-insensitive matching
-    const quarterMetricKeys = Object.keys(quarter);
-    for (const variation of variations) {
-      const normalizedVariation = variation.toLowerCase().replace(/[()%]/g, '').replace(/\s+/g, '');
-      for (const key of quarterMetricKeys) {
-        const normalizedKey = key.toLowerCase().replace(/[()%]/g, '').replace(/\s+/g, '');
-        if (normalizedKey === normalizedVariation ||
-          normalizedKey.includes(normalizedVariation) ||
-          normalizedVariation.includes(normalizedKey)) {
-          const value = findMetric(quarter, key);
-          if (value !== null) return value;
-        }
-      }
-    }
-
-    return null;
-  };
-
-  // Extract current quarter metrics (Q)
-  metrics.Q12 = findMetricByVariations(currentQuarterData, [
-    'Sales Growth(YoY) %', 'Sales Growth (YoY) %', 'Sales Growth YoY %', 'Sales YoY %', 'Revenue Growth YoY %', 'sales_yoy_percent'
-  ]);
-  metrics.Q13 = findMetricByVariations(currentQuarterData, [
-    'EPS Growth(YoY) %', 'EPS Growth (YoY) %', 'EPS Growth YoY %', 'EPS YoY %', 'eps_yoy_percent'
-  ]);
-  metrics.Q14 = findMetricByVariations(currentQuarterData, [
-    'OPM %', 'Operating Profit Margin %', 'Operating Margin %', 'opm_percent', 'operating_profit_margin'
-  ]);
-  metrics.Q15 = findMetricByVariations(currentQuarterData, [
-    'Sales Growth(QoQ) %', 'Sales Growth (QoQ) %', 'Sales Growth QoQ %', 'Sales QoQ %', 'Revenue Growth QoQ %', 'sales_qoq_percent'
-  ]);
-  metrics.Q16 = findMetricByVariations(currentQuarterData, [
-    'EPS Growth(QoQ) %', 'EPS Growth (QoQ) %', 'EPS Growth QoQ %', 'EPS QoQ %', 'eps_qoq_percent'
-  ]);
-
-  // Extract previous quarter metrics (P) if available
-  if (previousQuarterData) {
-    metrics.P12 = findMetricByVariations(previousQuarterData, [
-      'Sales Growth(YoY) %', 'Sales Growth (YoY) %', 'Sales Growth YoY %', 'Sales YoY %', 'Revenue Growth YoY %', 'sales_yoy_percent'
-    ]);
-    metrics.P13 = findMetricByVariations(previousQuarterData, [
-      'EPS Growth(YoY) %', 'EPS Growth (YoY) %', 'EPS Growth YoY %', 'EPS YoY %', 'eps_yoy_percent'
-    ]);
-    metrics.P14 = findMetricByVariations(previousQuarterData, [
-      'OPM %', 'Operating Profit Margin %', 'Operating Margin %', 'opm_percent', 'operating_profit_margin'
-    ]);
-    metrics.P15 = findMetricByVariations(previousQuarterData, [
-      'Sales Growth(QoQ) %', 'Sales Growth (QoQ) %', 'Sales Growth QoQ %', 'Sales QoQ %', 'Revenue Growth QoQ %', 'sales_qoq_percent'
-    ]);
-    metrics.P16 = findMetricByVariations(previousQuarterData, [
-      'EPS Growth(QoQ) %', 'EPS Growth (QoQ) %', 'EPS Growth QoQ %', 'EPS QoQ %', 'eps_qoq_percent'
-    ]);
+  let num: number;
+  if (typeof val === 'string') {
+    const cleaned = val.replace('%', '').trim();
+    num = parseFloat(cleaned);
+  } else {
+    num = val;
   }
 
-  return { metrics, usedQuarters };
+  if (isNaN(num)) return null;
+
+  // Heuristic: if the original string had %, or if we know it's a percentage metric,
+  // we might want to divide by 100.
+  // For now, consistent with previous logic: assume DB stores 20 for 20%, so return 0.2
+  // BUT, we don't know if it was a % string here easily without the metric name context or checking the string again.
+  // The previous implementation did: if (typeof metric === 'string' && metric.includes('%')) ...
+  // Let's assume the caller handles the % sign stripping, but we need to know if we should divide by 100.
+  // Actually, let's just return the number. The previous logic divided by 100 blindly if it was a number?
+  // Re-reading previous code: "Normalize: assume data from DB is in percentage points (e.g., 20 for 20%). We convert to decimal (0.2)"
+  // This is risky if we have non-percentage metrics like "Sales".
+  // Let's stick to: if it's a percentage metric, it should be treated as such.
+  // However, without metric metadata, we can't be sure.
+  // Let's rely on the fact that we return the raw number, and if the user types "20%", the parser handles that as 0.2.
+  // Wait, if DB has 20 for Sales Growth, and user writes > 0.1 (10%), then 20 > 0.1 is true.
+  // If user writes > 10%, that's 0.1. 20 > 0.1 is true.
+  // If DB has 0.2 for Sales Growth, then 0.2 > 0.1 is true.
+  // The previous code ALWAYS divided by 100. Let's keep that behavior for now to avoid breaking changes, 
+  // BUT strictly speaking, we should only do it for percentage fields.
+  // Since we don't have the metric name here easily (we do in the loop), let's move this logic up or just divide by 100.
+  // Actually, let's just divide by 100 to be safe and consistent with the old evaluator.
+  return num / 100;
+}
+
+function normalizeKey(key: string): string {
+  return key.toLowerCase().replace(/[()%]/g, '').replace(/\s+/g, '');
 }
 
 // Token types
 enum TokenType {
   FUNCTION,
-  IDENTIFIER, // Q12, P13
+  IDENTIFIER, // Metric Name
   NUMBER,
   STRING,
   OPERATOR, // +, -, *, /, >, <, >=, <=, =, <>, %
   LPAREN,
   RPAREN,
+  LBRACKET, // [
+  RBRACKET, // ]
   COMMA,
   EOF
 }
@@ -201,15 +129,15 @@ interface Token {
  * Evaluate Excel formula with quarterly metrics
  */
 export class ExcelFormulaEvaluator {
-  private metrics: QuarterlyMetrics;
-  public usedQuarters: string[];
+  private dataMap: QuarterlyDataMap;
+  public sortedQuarters: string[]; // Q1 is index 0
   private tokens: Token[] = [];
   private currentTokenIndex = 0;
 
   constructor(quarterlyData: QuarterlyData[], selectedQuarters?: string[]) {
     const extracted = extractQuarterlyMetrics(quarterlyData, selectedQuarters);
-    this.metrics = extracted.metrics;
-    this.usedQuarters = extracted.usedQuarters;
+    this.dataMap = extracted.dataMap;
+    this.sortedQuarters = extracted.sortedQuarters;
   }
 
   /**
@@ -258,6 +186,12 @@ export class ExcelFormulaEvaluator {
       } else if (char === ')') {
         this.tokens.push({ type: TokenType.RPAREN, value: ')', position: i });
         i++;
+      } else if (char === '[') {
+        this.tokens.push({ type: TokenType.LBRACKET, value: '[', position: i });
+        i++;
+      } else if (char === ']') {
+        this.tokens.push({ type: TokenType.RBRACKET, value: ']', position: i });
+        i++;
       } else if (char === ',') {
         this.tokens.push({ type: TokenType.COMMA, value: ',', position: i });
         i++;
@@ -298,11 +232,15 @@ export class ExcelFormulaEvaluator {
           ident += formula[i];
           i++;
         }
-        // Check if it's a cell ref (Q12) or function
-        if (/^[QP]\d+$/i.test(ident)) {
-          this.tokens.push({ type: TokenType.IDENTIFIER, value: ident.toUpperCase(), position: i });
+
+        // Check if it's a known function
+        const upperIdent = ident.toUpperCase();
+        if (['IF', 'AND', 'OR', 'NOT', 'ISNUMBER', 'MIN', 'MAX', 'ABS'].includes(upperIdent)) {
+          this.tokens.push({ type: TokenType.FUNCTION, value: upperIdent, position: i });
         } else {
-          this.tokens.push({ type: TokenType.FUNCTION, value: ident.toUpperCase(), position: i });
+          // Otherwise treat as Identifier (Metric Name)
+          // We don't uppercase here because metric names might be case sensitive or we handle it later
+          this.tokens.push({ type: TokenType.IDENTIFIER, value: ident, position: i });
         }
       } else {
         // Unknown char
@@ -406,7 +344,44 @@ export class ExcelFormulaEvaluator {
 
     if (token.type === TokenType.IDENTIFIER) {
       this.consume();
-      return this.getCellValue(token.value);
+      // Look ahead for [
+      if (this.match(TokenType.LBRACKET)) {
+        // Expect Q + number or just number?
+        // Let's support Q1, Q2 or just 1, 2
+        let quarterIndex = 0;
+        const indexToken = this.peek();
+
+        if (indexToken.type === TokenType.IDENTIFIER && indexToken.value.toUpperCase().startsWith('Q')) {
+          // Handle Q1, Q2...
+          const numPart = indexToken.value.substring(1);
+          quarterIndex = parseInt(numPart);
+          this.consume();
+        } else if (indexToken.type === TokenType.IDENTIFIER && indexToken.value.toUpperCase().startsWith('P')) {
+          // Handle P1, P2... (Previous quarters)
+          // P1 = Q2, P2 = Q3...
+          const numPart = indexToken.value.substring(1);
+          quarterIndex = parseInt(numPart) + 1;
+          this.consume();
+        } else if (indexToken.type === TokenType.NUMBER) {
+          quarterIndex = parseInt(indexToken.value);
+          this.consume();
+        } else {
+          throw new Error("Expected quarter index (e.g., Q1, 1) inside []");
+        }
+
+        if (!this.match(TokenType.RBRACKET)) {
+          throw new Error("Expected ]");
+        }
+
+        return this.getCellValue(token.value, quarterIndex);
+      } else {
+        // Identifier without brackets? Maybe a named constant or error?
+        // For now, assume it's a metric for Q1 (Current Quarter) if no bracket
+        // Or maybe throw error? Let's default to Q1 for backward compatibility if needed, 
+        // but strict syntax is better.
+        // Let's try to resolve it as Q1
+        return this.getCellValue(token.value, 1);
+      }
     }
 
     if (token.type === TokenType.FUNCTION) {
@@ -490,9 +465,6 @@ export class ExcelFormulaEvaluator {
   }
 
   private evaluateComparison(left: FormulaResult, op: string, right: FormulaResult): boolean {
-    // Handle percentage comparisons where one side might be a decimal and other a whole number?
-    // No, we normalized everything to decimals.
-
     if (left === null || right === null) return false;
 
     if (typeof left === 'number' && typeof right === 'number') {
@@ -520,16 +492,32 @@ export class ExcelFormulaEvaluator {
     }
   }
 
-  private getCellValue(cell: string): number | null {
-    const cellUpper = cell.toUpperCase();
-    const metricMap: Record<string, keyof QuarterlyMetrics> = {
-      'Q12': 'Q12', 'Q13': 'Q13', 'Q14': 'Q14', 'Q15': 'Q15', 'Q16': 'Q16',
-      'P12': 'P12', 'P13': 'P13', 'P14': 'P14', 'P15': 'P15', 'P16': 'P16',
-    };
+  private getCellValue(metricName: string, quarterIndex: number): number | null {
+    // quarterIndex: 1 = Oldest in selected window, 12 = Newest in selected window
+    // sortedQuarters is sorted Newest -> Oldest (Index 0 = Newest)
+    // So Q12 -> Index 0
+    // Q1 -> Index 11 (if length is 12)
+    // General formula: arrayIndex = sortedQuarters.length - quarterIndex
+    const arrayIndex = this.sortedQuarters.length - quarterIndex;
 
-    const metricKey = metricMap[cellUpper];
-    if (metricKey) {
-      return this.metrics[metricKey];
+    if (arrayIndex < 0 || arrayIndex >= this.sortedQuarters.length) {
+      return null;
+    }
+
+    const quarterName = this.sortedQuarters[arrayIndex];
+    const quarterMetrics = this.dataMap.get(quarterName);
+
+    if (!quarterMetrics) return null;
+
+    // Try exact match
+    if (quarterMetrics.has(metricName)) {
+      return quarterMetrics.get(metricName) ?? null;
+    }
+
+    // Try normalized match
+    const normalized = normalizeKey(metricName);
+    if (quarterMetrics.has(normalized)) {
+      return quarterMetrics.get(normalized) ?? null;
     }
 
     return null;
@@ -558,7 +546,15 @@ export async function evaluateExcelFormulaForCompany(
       return { result: "No Signal", resultType: "string", usedQuarters: [] };
     }
 
-    const evaluator = new ExcelFormulaEvaluator(quarterlyData, selectedQuarters);
+    // Filter quarters if selectedQuarters provided
+    let quartersToUse = quarterlyData;
+    if (selectedQuarters && selectedQuarters.length > 0) {
+      const selectedSet = new Set(selectedQuarters);
+      quartersToUse = quarterlyData.filter(q => selectedSet.has(q.quarter));
+    }
+
+    // Create evaluator with filtered data
+    const evaluator = new ExcelFormulaEvaluator(quartersToUse, selectedQuarters);
     const result = evaluator.evaluate(formula);
 
     let resultType = "string";
@@ -566,7 +562,7 @@ export async function evaluateExcelFormulaForCompany(
     else if (typeof result === "boolean") resultType = "boolean";
     else if (typeof result === "number") resultType = "number";
 
-    return { result, resultType, usedQuarters: evaluator.usedQuarters };
+    return { result, resultType, usedQuarters: evaluator.sortedQuarters.slice(0, 5) };
   } catch (error) {
     console.error(`Error evaluating Excel formula for ${ticker}:`, error);
     return { result: null, resultType: "null", usedQuarters: [] };

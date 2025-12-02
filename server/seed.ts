@@ -10,15 +10,15 @@ async function seed() {
   // Create admin user (only if doesn't exist)
   const existingAdmin = await db.select().from(users).where(eq(users.email, "admin@finanalytics.com")).limit(1);
   if (existingAdmin.length === 0) {
-  const adminPassword = await hashPassword("admin123");
-  const [admin] = await db.insert(users).values({
-    email: "admin@finanalytics.com",
-    password: adminPassword,
-    name: "Admin User",
-    role: "admin",
-    otpEnabled: false
-  }).returning();
-  console.log("✅ Created admin user");
+    const adminPassword = await hashPassword("admin123");
+    const [admin] = await db.insert(users).values({
+      email: "admin@finanalytics.com",
+      password: adminPassword,
+      name: "Admin User",
+      role: "admin",
+      otpEnabled: false
+    }).returning();
+    console.log("✅ Created admin user");
   } else {
     console.log("ℹ️  Admin user already exists, skipping...");
   }
@@ -26,15 +26,15 @@ async function seed() {
   // Create analyst user (only if doesn't exist)
   const existingAnalyst = await db.select().from(users).where(eq(users.email, "analyst@finanalytics.com")).limit(1);
   if (existingAnalyst.length === 0) {
-  const analystPassword = await hashPassword("analyst123");
-  await db.insert(users).values({
-    email: "analyst@finanalytics.com",
-    password: analystPassword,
-    name: "Analyst User",
-    role: "analyst",
-    otpEnabled: false
-  }).returning();
-  console.log("✅ Created analyst user");
+    const analystPassword = await hashPassword("analyst123");
+    await db.insert(users).values({
+      email: "analyst@finanalytics.com",
+      password: analystPassword,
+      name: "Analyst User",
+      role: "analyst",
+      otpEnabled: false
+    }).returning();
+    console.log("✅ Created analyst user");
   } else {
     console.log("ℹ️  Analyst user already exists, skipping...");
   }
@@ -57,7 +57,7 @@ async function seed() {
   const existingSectors = await db.select().from(sectors);
   const existingSectorNames = new Set(existingSectors.map((s: any) => s.name));
   const sectorsToInsert = sectorData.filter((s: any) => !existingSectorNames.has(s.name));
-  
+
   let createdSectors = existingSectors;
   if (sectorsToInsert.length > 0) {
     const newSectors = await db.insert(sectors).values(sectorsToInsert).returning();
@@ -240,7 +240,7 @@ async function seed() {
   const existingCompanies = await db.select().from(companies);
   const existingTickers = new Set(existingCompanies.map((c: any) => c.ticker));
   const companiesToInsert = companyData.filter((c: any) => !existingTickers.has(c.ticker));
-  
+
   let createdCompanies = existingCompanies;
   if (companiesToInsert.length > 0) {
     const newCompanies = await db.insert(companies).values(companiesToInsert).returning();
@@ -253,58 +253,9 @@ async function seed() {
   }
 
   // Main Signal Formula (Excel formula for quarterly data)
-  const mainSignalFormula = `IF(
-OR(
-  NOT(ISNUMBER(Q12)), NOT(ISNUMBER(Q13)), NOT(ISNUMBER(Q14)), NOT(ISNUMBER(Q15)), NOT(ISNUMBER(Q16)),
-  NOT(ISNUMBER(P12)), NOT(ISNUMBER(P13)), NOT(ISNUMBER(P14)), NOT(ISNUMBER(P15)), NOT(ISNUMBER(P16))
-),
-"No Signal",
-IF(
-  AND(
-    Q14>0,
-    P14>0,
-    Q12>=20%,
-    Q15>=20%,
-    OR(
-      AND(MIN(Q13,Q16)>=5%, OR(Q13>=10%, Q16>=10%)),
-      AND(Q16>=5%, Q16<10%, Q13>=100%),
-      AND(Q13<0, Q16>=10%)
-    ),
-    AND(
-      P12>=10%,
-      OR(
-        AND(P13>0, P15>0),
-        AND(P13>0, P16>0),
-        AND(P15>0, P16>0)
-      )
-    ),
-    OR(P16>=0, P13>=10%),
-    OR(P13>=0, P16>=10%),
-    OR(
-      P15>=0,
-      AND(P15<0, Q13>=0, Q16>=0)
-    )
-  ),
-  "BUY",
-  IF(
-    OR(
-      AND(P13<10%, Q13<10%, Q15<P15, Q16<P16),
-      AND(Q13<0, Q16<0),
-      AND(Q16<0, Q15<0, OR(Q13<0, Q12<10%)),
-      AND(
-        OR(Q13<5%, Q16<5%),
-        OR(
-          IF(ABS(P12)>0, (Q12 - P12)/ABS(P12) <= -15%, Q12<0),
-          IF(ABS(P15)>0, (Q15 - P15)/ABS(P15) <= -15%, Q15<0)
-        )
-      ),
-      AND(Q12<20%, Q13<5%)
-    ),
-    "Check_OPM (Sell)",
-    "No Signal"
-  )
-)
-)`;
+  // Q1 = Oldest quarter, Q12 = Newest quarter in 12-quarter window
+  // Uses OPM % and Sales Growth(QoQ) % metrics
+  const mainSignalFormula = `IF(OR(NOT(ISNUMBER(OPM[Q12])),NOT(ISNUMBER(OPM[Q11])),NOT(ISNUMBER(OPM[Q10])),NOT(ISNUMBER(OPM[Q9])),NOT(ISNUMBER(OPM[Q8])),NOT(ISNUMBER(SalesGrowthQoQ[Q12])),NOT(ISNUMBER(SalesGrowthQoQ[Q11])),NOT(ISNUMBER(SalesGrowthQoQ[Q10])),NOT(ISNUMBER(SalesGrowthQoQ[Q9])),NOT(ISNUMBER(SalesGrowthQoQ[Q8]))),"No Signal",IF(AND(OPM[Q10]>0,SalesGrowthQoQ[Q10]>0,OPM[Q12]>=0.2,OPM[Q9]>=0.2,OR(AND(MIN(OPM[Q11],OPM[Q8])>=0.05,OR(OPM[Q11]>=0.1,OPM[Q8]>=0.1)),AND(OPM[Q8]>=0.05,OPM[Q8]<0.1,OPM[Q11]>=1),AND(OPM[Q11]<0,OPM[Q8]>=0.1)),AND(SalesGrowthQoQ[Q12]>=0.1,OR(AND(SalesGrowthQoQ[Q11]>0,SalesGrowthQoQ[Q9]>0),AND(SalesGrowthQoQ[Q11]>0,SalesGrowthQoQ[Q8]>0),AND(SalesGrowthQoQ[Q9]>0,SalesGrowthQoQ[Q8]>0))),OR(SalesGrowthQoQ[Q8]>=0,SalesGrowthQoQ[Q11]>=0.1),OR(SalesGrowthQoQ[Q11]>=0,SalesGrowthQoQ[Q8]>=0.1),OR(SalesGrowthQoQ[Q9]>=0,AND(SalesGrowthQoQ[Q9]<0,OPM[Q11]>=0,OPM[Q8]>=0))),"BUY",IF(OR(AND(SalesGrowthQoQ[Q11]<0.1,OPM[Q11]<0.1,OPM[Q9]<SalesGrowthQoQ[Q9],OPM[Q8]<SalesGrowthQoQ[Q8]),AND(OPM[Q11]<0,OPM[Q8]<0),AND(OPM[Q8]<0,OPM[Q9]<0,OR(OPM[Q11]<0,OPM[Q12]<0.1)),AND(OR(OPM[Q11]<0.05,OPM[Q8]<0.05),OR(IF(ABS(SalesGrowthQoQ[Q12])>0,(OPM[Q12]-SalesGrowthQoQ[Q12])/ABS(SalesGrowthQoQ[Q12])<=-0.15,OPM[Q12]<0),IF(ABS(SalesGrowthQoQ[Q9])>0,(OPM[Q9]-SalesGrowthQoQ[Q9])/ABS(SalesGrowthQoQ[Q9])<=-0.15,OPM[Q9]<0))),AND(OPM[Q12]<0.2,OPM[Q11]<0.05)),"Check_OPM (Sell)","No Signal")))`;
 
   // Create formulas
   const formulaData = [
@@ -374,7 +325,7 @@ IF(
   const existingFormulas = await db.select().from(formulas);
   const existingFormulaNames = new Set(existingFormulas.map((f: any) => f.name));
   const formulasToInsert = formulaData.filter((f: any) => !existingFormulaNames.has(f.name));
-  
+
   let createdFormulas = existingFormulas;
   if (formulasToInsert.length > 0) {
     const newFormulas = await db.insert(formulas).values(formulasToInsert).returning();
@@ -383,14 +334,14 @@ IF(
   } else {
     console.log(`ℹ️  All formulas already exist, skipping...`);
   }
-  
+
   // Ensure Main Signal Formula exists and is enabled with priority 0
   const mainSignalFormulaRecord = createdFormulas.find((f: any) => f.name === "Main Signal Formula");
   if (mainSignalFormulaRecord) {
     await db.update(formulas)
-      .set({ 
-        enabled: true, 
-        priority: 0, 
+      .set({
+        enabled: true,
+        priority: 0,
         formulaType: "excel",
         condition: mainSignalFormula
       })
@@ -420,7 +371,7 @@ IF(
 
   for (const company of createdCompanies) {
     const data = (company as any).financialData as any;
-    
+
     // High ROE signals
     if (highROEFormula && data && data.roe > 0.20) {
       signalData.push({
@@ -445,30 +396,30 @@ IF(
 
     // Value Stock signals
     if (valueFormula && data) {
-    if (data.peRatio < 15) {
-      signalData.push({
+      if (data.peRatio < 15) {
+        signalData.push({
           companyId: (company as any).id,
           formulaId: (valueFormula as any).id,
-        signal: "BUY",
-        value: String(data.peRatio),
-        metadata: { formula: "Value Stock", threshold: 15 }
-      });
-    } else if (data.peRatio > 40) {
-      signalData.push({
+          signal: "BUY",
+          value: String(data.peRatio),
+          metadata: { formula: "Value Stock", threshold: 15 }
+        });
+      } else if (data.peRatio > 40) {
+        signalData.push({
           companyId: (company as any).id,
           formulaId: (valueFormula as any).id,
-        signal: "SELL",
-        value: String(data.peRatio),
-        metadata: { formula: "Value Stock", threshold: 40 }
-      });
-    } else {
-      signalData.push({
+          signal: "SELL",
+          value: String(data.peRatio),
+          metadata: { formula: "Value Stock", threshold: 40 }
+        });
+      } else {
+        signalData.push({
           companyId: (company as any).id,
           formulaId: (valueFormula as any).id,
-        signal: "HOLD",
-        value: String(data.peRatio),
-        metadata: { formula: "Value Stock" }
-      });
+          signal: "HOLD",
+          value: String(data.peRatio),
+          metadata: { formula: "Value Stock" }
+        });
       }
     }
   }

@@ -32,24 +32,85 @@ class ScreenerScraper {
     isRunning: false,
   };
 
+  private readonly USER_AGENTS = [
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Safari/605.1.15',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:123.0) Gecko/20100101 Firefox/123.0'
+  ];
+
+  private getRandomUserAgent(): string {
+    return this.USER_AGENTS[Math.floor(Math.random() * this.USER_AGENTS.length)];
+  }
+
+  private async delay(ms: number): Promise<void> {
+    return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  private async fetchWithRetry(url: string, options: RequestInit = {}, retries = 3): Promise<Response> {
+    let lastError: any;
+
+    for (let i = 0; i < retries; i++) {
+      try {
+        const headers = {
+          'User-Agent': this.getRandomUserAgent(),
+          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8',
+          'Accept-Language': 'en-US,en;q=0.9',
+          'Accept-Encoding': 'gzip, deflate, br',
+          'Connection': 'keep-alive',
+          'Upgrade-Insecure-Requests': '1',
+          'Cache-Control': 'max-age=0',
+          'Referer': 'https://www.screener.in/',
+          ...options.headers,
+        };
+
+        const response = await fetch(url, {
+          ...options,
+          headers,
+        });
+
+        if (response.status === 429) {
+          const retryAfter = response.headers.get('retry-after');
+          const waitTime = retryAfter ? parseInt(retryAfter) * 1000 : 5000 * (i + 1);
+          console.log(`[SCRAPER] Rate limited. Waiting ${waitTime}ms before retry ${i + 1}/${retries}`);
+          await this.delay(waitTime);
+          continue;
+        }
+
+        if (response.status >= 500) {
+          console.log(`[SCRAPER] Server error ${response.status}. Retrying ${i + 1}/${retries}`);
+          await this.delay(2000 * (i + 1));
+          continue;
+        }
+
+        return response;
+      } catch (error: any) {
+        lastError = error;
+        if (error.cause?.code === 'ECONNREFUSED' || error.message?.includes('ECONNREFUSED')) {
+          console.error(`[SCRAPER] Connection refused. Retrying ${i + 1}/${retries}`);
+          await this.delay(3000 * (i + 1));
+          continue;
+        }
+        throw error;
+      }
+    }
+
+    throw lastError;
+  }
+
   /**
    * Search for ticker by company name using Screener.in API
    */
   async searchTickerByCompanyName(companyName: string): Promise<{ ticker: string; companyName: string; detectedSector: string; exists: boolean } | null> {
     // Screener.in search API - using the internal API endpoint
     const searchUrl = `https://www.screener.in/api/company/search/?q=${encodeURIComponent(companyName)}&v=3&fts=1`;
-    
+
     try {
-      const response = await fetch(searchUrl, {
+      const response = await this.fetchWithRetry(searchUrl, {
         headers: {
-          'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36',
           'Accept': 'application/json',
-          'Referer': 'https://www.screener.in/explore/',
           'X-Requested-With': 'XMLHttpRequest',
-          'sec-ch-ua': '"Chromium";v="142", "Google Chrome";v="142", "Not_A Brand";v="99"',
-          'sec-ch-ua-mobile': '?0',
-          'sec-ch-ua-platform': '"macOS"',
-        },
+        } as any, // Cast to any to avoid strict type checking issues with HeadersInit
       });
 
       if (!response.ok) {
@@ -58,24 +119,24 @@ class ScreenerScraper {
       }
 
       const data = await response.json();
-      
+
       // The API returns an array of results with structure: { id, name, url }
       // Example: { "id": 2726, "name": "Reliance Industries Ltd", "url": "/company/RELIANCE/consolidated/" }
       if (Array.isArray(data) && data.length > 0) {
         // Filter out the "Search everywhere" entry (has null id)
         const validResults = data.filter((item: any) => item.id !== null && item.url);
-        
+
         if (validResults.length === 0) {
           return await this.searchTickerByScraping(companyName);
         }
-        
+
         // Find the best match (exact or closest match)
         const bestMatch = validResults.find((item: any) => {
           const itemName = (item.name || '').toLowerCase();
           const searchName = companyName.toLowerCase();
-          return itemName === searchName || 
-                 itemName.includes(searchName) || 
-                 searchName.includes(itemName);
+          return itemName === searchName ||
+            itemName.includes(searchName) ||
+            searchName.includes(itemName);
         }) || validResults[0];
 
         // Extract ticker from url (format: /company/TICKER/consolidated/ or /company/TICKER/)
@@ -87,14 +148,14 @@ class ScreenerScraper {
             ticker = urlMatch[1].toUpperCase();
           }
         }
-        
+
         if (ticker) {
           // Fetch full metadata using the found ticker
           const metadata = await this.fetchCompanyMetadata(ticker);
           return metadata;
         }
       }
-      
+
       // Fallback to scraping if API doesn't return results
       return await this.searchTickerByScraping(companyName);
     } catch (error: any) {
@@ -109,15 +170,23 @@ class ScreenerScraper {
    */
   private async searchTickerByScraping(companyName: string): Promise<{ ticker: string; companyName: string; detectedSector: string; exists: boolean } | null> {
     const searchUrl = `https://www.screener.in/company/search/?q=${encodeURIComponent(companyName)}`;
-    
+
     try {
-      const response = await fetch(searchUrl, {
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-          'Accept-Language': 'en-US,en;q=0.5',
-        },
-      });
+      let response: Response;
+      try {
+        response = await this.fetchWithRetry(searchUrl);
+      } catch (fetchError: any) {
+        if (fetchError.code === 'ECONNREFUSED' || fetchError.message?.includes('ECONNREFUSED') ||
+          fetchError.cause?.code === 'ECONNREFUSED') {
+          console.error(`[SCRAPER] ⚠️ IP BLOCKING DETECTED in search: Connection refused`);
+        }
+        throw fetchError;
+      }
+
+      if (response.status === 403) {
+        console.error(`[SCRAPER] ⚠️ IP BLOCKING DETECTED in search: HTTP 403 Forbidden`);
+        return null;
+      }
 
       if (!response.ok) {
         return null;
@@ -125,11 +194,11 @@ class ScreenerScraper {
 
       const html = await response.text();
       const $ = load(html);
-      
+
       // Look for company links in search results
       const firstResult = $('.company-result, .search-result, a[href*="/company/"]').first();
       const href = firstResult.attr('href') || '';
-      
+
       if (href) {
         const tickerMatch = href.match(/\/company\/([^\/]+)/);
         if (tickerMatch && tickerMatch[1]) {
@@ -137,7 +206,7 @@ class ScreenerScraper {
           return await this.fetchCompanyMetadata(ticker);
         }
       }
-      
+
       return null;
     } catch (error: any) {
       console.error(`Error scraping search page for "${companyName}":`, error);
@@ -150,18 +219,9 @@ class ScreenerScraper {
    */
   async fetchCompanyMetadata(ticker: string): Promise<{ ticker: string; companyName: string; detectedSector: string; exists: boolean }> {
     const url = `https://www.screener.in/company/${ticker}/consolidated/#quarters`;
-    
+
     try {
-      const response = await fetch(url, {
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-          'Accept-Language': 'en-US,en;q=0.5',
-          'Accept-Encoding': 'gzip, deflate',
-          'Connection': 'keep-alive',
-          'Upgrade-Insecure-Requests': '1',
-        },
-      });
+      const response = await this.fetchWithRetry(url);
 
       if (!response.ok) {
         return {
@@ -174,10 +234,10 @@ class ScreenerScraper {
 
       const html = await response.text();
       const $ = load(html);
-      
+
       const companyName = this.extractCompanyName($);
       const detectedSector = this.extractSector($, ticker);
-      
+
       return {
         ticker,
         companyName,
@@ -185,6 +245,15 @@ class ScreenerScraper {
         exists: companyName !== 'Unknown Company',
       };
     } catch (error: any) {
+      // Check for IP blocking in metadata fetch
+      if (error.code === 'ECONNREFUSED' || error.message?.includes('ECONNREFUSED') ||
+        error.cause?.code === 'ECONNREFUSED') {
+        console.error(`[SCRAPER] ⚠️ IP BLOCKING DETECTED in metadata fetch: Connection refused`);
+        console.error(`[SCRAPER] Error details:`, {
+          code: error.code || error.cause?.code,
+          message: error.message,
+        });
+      }
       console.error(`Error fetching metadata for ${ticker}:`, error);
       return {
         ticker,
@@ -202,11 +271,11 @@ class ScreenerScraper {
     const url = `https://www.screener.in/company/${ticker}/consolidated/#quarters`;
     const startedAt = new Date();
     let logId: string | null = null;
-    
+
     console.log(`[SCRAPER] Starting scrape for ticker: ${ticker.toUpperCase()}`);
     console.log(`[SCRAPER] URL: ${url}`);
     console.log(`[SCRAPER] Parameters: companyId=${companyId || 'none'}, sectorOverride=${sectorOverride || 'none'}, userId=${userId || 'none'}`);
-    
+
     try {
       // Create initial scraping log
       const log: InsertScrapingLog = {
@@ -222,7 +291,7 @@ class ScreenerScraper {
       const createdLog = await storage.createScrapingLog(log);
       logId = createdLog.id;
       console.log(`[SCRAPER] Created scraping log with ID: ${logId}`);
-      
+
       // First, fetch company metadata using the same API as bulk import
       console.log(`[SCRAPER] Fetching company metadata using fetchCompanyMetadata API (same as bulk import)...`);
       const metadataStartTime = Date.now();
@@ -233,7 +302,7 @@ class ScreenerScraper {
         companyName: metadata.companyName,
         detectedSector: metadata.detectedSector,
       });
-      
+
       if (!metadata.exists) {
         console.warn(`[SCRAPER] Company not found for ticker: ${ticker}`);
         // Update log with failure
@@ -254,7 +323,7 @@ class ScreenerScraper {
           error: "Company not found on Screener.in",
         };
       }
-      
+
       // Add delay to avoid rate limiting (2-5 seconds, matching Python)
       const delayMs = Math.random() * 3000 + 2000;
       console.log(`[SCRAPER] Waiting ${Math.round(delayMs)}ms before fetching full page to avoid rate limiting...`);
@@ -262,25 +331,64 @@ class ScreenerScraper {
 
       console.log(`[SCRAPER] Fetching full company page URL: ${url}`);
       const fetchStartTime = Date.now();
-      const response = await fetch(url, {
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-          'Accept-Language': 'en-US,en;q=0.5',
-          'Accept-Encoding': 'gzip, deflate',
-          'Connection': 'keep-alive',
-          'Upgrade-Insecure-Requests': '1',
-        },
-      });
+      let response: Response;
+      try {
+        response = await this.fetchWithRetry(url);
+      } catch (fetchError: any) {
+        // Check for connection refused errors (IP blocking)
+        if (fetchError.code === 'ECONNREFUSED' || fetchError.message?.includes('ECONNREFUSED') ||
+          fetchError.cause?.code === 'ECONNREFUSED') {
+          console.error(`[SCRAPER] ⚠️ IP BLOCKING DETECTED: Connection refused (ECONNREFUSED)`);
+          console.error(`[SCRAPER] This likely means your IP address has been blocked by Screener.in`);
+          console.error(`[SCRAPER] Error details:`, {
+            code: fetchError.code || fetchError.cause?.code,
+            message: fetchError.message,
+            cause: fetchError.cause,
+          });
+          throw new Error(`IP_BLOCKED: Connection refused - Your IP may be blocked by Screener.in. Error: ${fetchError.message}`);
+        }
+        // Re-throw other fetch errors
+        throw fetchError;
+      }
+
       const fetchDuration = Date.now() - fetchStartTime;
       console.log(`[SCRAPER] HTTP Response: ${response.status} ${response.statusText} (took ${fetchDuration}ms)`);
       console.log(`[SCRAPER] Response headers:`, {
         'content-type': response.headers.get('content-type'),
         'content-length': response.headers.get('content-length'),
+        'x-ratelimit-remaining': response.headers.get('x-ratelimit-remaining'),
+        'x-ratelimit-reset': response.headers.get('x-ratelimit-reset'),
+        'retry-after': response.headers.get('retry-after'),
       });
+
+      // Check for HTTP status codes that indicate blocking
+      if (response.status === 403) {
+        console.error(`[SCRAPER] ⚠️ IP BLOCKING DETECTED: HTTP 403 Forbidden`);
+        const bodyText = await response.text().catch(() => '');
+        console.error(`[SCRAPER] Response body (first 500 chars):`, bodyText.substring(0, 500));
+        throw new Error(`IP_BLOCKED: HTTP 403 Forbidden - Your IP may be blocked by Screener.in`);
+      }
+
+      if (response.status === 429) {
+        const retryAfter = response.headers.get('retry-after');
+        console.error(`[SCRAPER] ⚠️ RATE LIMIT DETECTED: HTTP 429 Too Many Requests`);
+        console.error(`[SCRAPER] Retry-After header: ${retryAfter || 'not provided'}`);
+        throw new Error(`RATE_LIMITED: HTTP 429 Too Many Requests. Retry after: ${retryAfter || 'unknown'}`);
+      }
 
       if (!response.ok) {
         console.error(`[SCRAPER] HTTP Error: ${response.status} ${response.statusText}`);
+        // Try to get response body for more context
+        try {
+          const bodyText = await response.text();
+          if (bodyText.toLowerCase().includes('blocked') || bodyText.toLowerCase().includes('forbidden') ||
+            bodyText.toLowerCase().includes('access denied')) {
+            console.error(`[SCRAPER] ⚠️ BLOCKING DETECTED in response body`);
+            throw new Error(`IP_BLOCKED: HTTP ${response.status} - Blocking detected in response`);
+          }
+        } catch (e) {
+          // Ignore errors reading body
+        }
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       }
 
@@ -288,16 +396,16 @@ class ScreenerScraper {
       const html = await response.text();
       const htmlDuration = Date.now() - htmlStartTime;
       console.log(`[SCRAPER] Received HTML (${html.length} bytes) in ${htmlDuration}ms`);
-      
+
       const parseStartTime = Date.now();
       const $ = load(html);
       const parseDuration = Date.now() - parseStartTime;
       console.log(`[SCRAPER] Parsed HTML with Cheerio in ${parseDuration}ms`);
-      
+
       // Use metadata from fetchCompanyMetadata (same as bulk import)
       const companyName = metadata.companyName;
       console.log(`[SCRAPER] Using company name from metadata: ${companyName}`);
-      
+
       // Check if company already exists
       let existingCompany = companyId ? await storage.getCompany(companyId) : null;
       if (!existingCompany) {
@@ -306,11 +414,11 @@ class ScreenerScraper {
         existingCompany = await storage.getCompanyByTicker(ticker);
       }
       console.log(`[SCRAPER] Existing company: ${existingCompany ? `Found (ID: ${existingCompany.id}, Sector: ${existingCompany.sectorId || 'none'})` : 'Not found'}`);
-      
+
       // Priority: Use sectorOverride (user-provided) if available
       // If company exists with a sector, NEVER update it from scraped data
       let sectorName: string;
-      
+
       if (sectorOverride) {
         // User provided sector - use it
         sectorName = sectorOverride;
@@ -325,7 +433,7 @@ class ScreenerScraper {
         sectorName = metadata.detectedSector || "Unknown";
         console.log(`[SCRAPER] Using detected sector from metadata: ${sectorName}`);
       }
-      
+
       // Get or create company first to ensure we have companyId
       let finalCompanyId = companyId || existingCompany?.id;
       if (!finalCompanyId && companyName) {
@@ -338,7 +446,7 @@ class ScreenerScraper {
             description: `Sector for ${sectorName} companies`,
           });
         }
-        
+
         // Create company
         const newCompany = await storage.createCompany({
           ticker: ticker.toUpperCase(),
@@ -347,7 +455,7 @@ class ScreenerScraper {
         });
         finalCompanyId = newCompany.id;
       }
-      
+
       // Extract key financial metrics (P/E, ROCE, ROE, etc.)
       console.log(`[SCRAPER] Extracting key financial metrics...`);
       const keyMetrics = this.extractKeyMetrics($);
@@ -355,14 +463,14 @@ class ScreenerScraper {
       if (Object.keys(keyMetrics).length > 0) {
         console.log(`[SCRAPER] Key metrics details:`, keyMetrics);
       }
-      
+
       // Find quarterly data table
       console.log(`[SCRAPER] Extracting quarterly data...`);
       const extractStartTime = Date.now();
       const quarterlyData = this.extractQuarterlyData($, ticker, finalCompanyId || undefined);
       const extractDuration = Date.now() - extractStartTime;
       console.log(`[SCRAPER] Extracted ${quarterlyData.length} quarterly data rows in ${extractDuration}ms`);
-      
+
       if (quarterlyData.length === 0) {
         console.warn(`[SCRAPER] No quarterly data found for ticker: ${ticker}`);
         console.warn(`[SCRAPER] Company name: ${companyName || 'NOT FOUND'}`);
@@ -377,21 +485,21 @@ class ScreenerScraper {
           error: "No quarterly data found",
         };
       }
-      
+
       // Count unique quarters and metrics before storing
       const uniqueQuartersBefore = new Set(quarterlyData.map(d => d.quarter));
       const uniqueMetricsBefore = new Set(quarterlyData.map(d => d.metricName));
       console.log(`[SCRAPER] Quarterly data summary: ${uniqueQuartersBefore.size} unique quarters, ${uniqueMetricsBefore.size} unique metrics`);
       console.log(`[SCRAPER] Quarters found:`, Array.from(uniqueQuartersBefore).sort().join(', '));
       console.log(`[SCRAPER] Metrics found (first 20):`, Array.from(uniqueMetricsBefore).slice(0, 20).join(', '));
-      
+
       // Store in database
       console.log(`[SCRAPER] Storing ${quarterlyData.length} quarterly data rows in database...`);
       const storeStartTime = Date.now();
       await storage.bulkCreateQuarterlyData(quarterlyData);
       const storeDuration = Date.now() - storeStartTime;
       console.log(`[SCRAPER] Stored quarterly data in database in ${storeDuration}ms`);
-      
+
       // Update company with key metrics if we have a company record
       // NEVER update sector from scraped data if company already has a sector
       if (finalCompanyId && Object.keys(keyMetrics).length > 0) {
@@ -399,10 +507,10 @@ class ScreenerScraper {
         if (company) {
           const currentFinancialData = (company.financialData as Record<string, any>) || {};
           const updatedFinancialData = { ...currentFinancialData, ...keyMetrics };
-          
+
           // Also update marketCap if available
           const marketCap = keyMetrics.marketCap ? keyMetrics.marketCap.toString() : company.marketCap;
-          
+
           // Only update sector if:
           // 1. User explicitly provided sectorOverride AND company doesn't have a sector yet
           // 2. OR company doesn't have a sector yet (company.sectorId is null/empty) AND we have scraped sector
@@ -411,7 +519,7 @@ class ScreenerScraper {
             financialData: updatedFinancialData,
             marketCap: marketCap || company.marketCap,
           };
-          
+
           // Only update sector if company has NO sector and user provided one OR we scraped one
           if (!company.sectorId) {
             if (sectorOverride) {
@@ -433,7 +541,7 @@ class ScreenerScraper {
             }
           }
           // If company.sectorId exists, we NEVER update it - preserve user's choice
-          
+
           await storage.updateCompany(company.id, updateData);
         }
       }
@@ -482,15 +590,42 @@ class ScreenerScraper {
         metricsScraped: uniqueMetrics.size,
       };
     } catch (error: any) {
-      const totalDuration = Date.now() - startedAt.getTime();
-      console.error(`[SCRAPER] ❌ Error scraping ${ticker} after ${totalDuration}ms:`, error);
+      const errorDuration = Date.now() - startedAt.getTime();
+      console.error(`[SCRAPER] ❌ Error scraping ${ticker} after ${errorDuration}ms:`, error);
+
+      // Enhanced error detection for IP blocking
+      const isIPBlocked =
+        error.code === 'ECONNREFUSED' ||
+        error.message?.includes('ECONNREFUSED') ||
+        error.message?.includes('IP_BLOCKED') ||
+        error.cause?.code === 'ECONNREFUSED' ||
+        error.message?.includes('403') ||
+        error.message?.includes('Forbidden') ||
+        error.message?.includes('RATE_LIMITED');
+
+      if (isIPBlocked) {
+        console.error(`[SCRAPER] ⚠️⚠️⚠️ IP BLOCKING DETECTED ⚠️⚠️⚠️`);
+        console.error(`[SCRAPER] Your IP address appears to be blocked by Screener.in`);
+        console.error(`[SCRAPER] This could be due to:`);
+        console.error(`[SCRAPER]   - Too many requests in a short time`);
+        console.error(`[SCRAPER]   - Automated scraping detected`);
+        console.error(`[SCRAPER]   - IP address blacklisted`);
+        console.error(`[SCRAPER] Recommended actions:`);
+        console.error(`[SCRAPER]   - Wait 1-2 hours before retrying`);
+        console.error(`[SCRAPER]   - Use a VPN or proxy`);
+        console.error(`[SCRAPER]   - Reduce scraping frequency`);
+        console.error(`[SCRAPER]   - Contact Screener.in support if legitimate use`);
+      }
+
       console.error(`[SCRAPER] Error details:`, {
         message: error.message,
         stack: error.stack,
         name: error.name,
+        code: error.code || error.cause?.code,
         url: url,
+        isIPBlocked: isIPBlocked,
       });
-      
+
       // Update scraping log with failure
       if (logId) {
         try {
@@ -507,7 +642,7 @@ class ScreenerScraper {
           console.error(`[SCRAPER] Error updating scraping log:`, logError);
         }
       }
-      
+
       return {
         success: false,
         ticker,
@@ -526,7 +661,7 @@ class ScreenerScraper {
       console.log(`[SCRAPER] [extractCompanyName] Starting company name extraction...`);
       // Try multiple selectors for company name
       const selectors = ['h1', '.company-name', '[data-testid="company-name"]', 'title'];
-      
+
       for (const selector of selectors) {
         const element = $(selector).first();
         if (element.length > 0) {
@@ -544,7 +679,7 @@ class ScreenerScraper {
           }
         }
       }
-      
+
       // Fallback: extract from title tag
       const title = $('title').text().trim();
       if (title && title.toLowerCase().includes('ltd')) {
@@ -552,7 +687,7 @@ class ScreenerScraper {
         console.log(`[SCRAPER] [extractCompanyName] Extracted company name from title: ${extracted}`);
         return extracted;
       }
-      
+
       console.warn(`[SCRAPER] [extractCompanyName] Could not extract company name, using fallback`);
       return "Unknown Company";
     } catch (error) {
@@ -574,7 +709,7 @@ class ScreenerScraper {
         'a[href*="/sector/"]',
         'a[href*="/industry/"]',
       ];
-      
+
       for (const selector of sectorSelectors) {
         const element = $(selector).first();
         if (element.length > 0) {
@@ -585,7 +720,7 @@ class ScreenerScraper {
           }
         }
       }
-      
+
       // Look for sector in text content
       const bodyText = $('body').text();
       const sectorMatch = bodyText.match(/sector[:\s]+([A-Za-z\s&]+)/i);
@@ -594,20 +729,20 @@ class ScreenerScraper {
         console.log(`[SCRAPER] [extractSector] Found sector in body text: ${extracted}`);
         return extracted;
       }
-      
+
       // Fallback sector mapping based on ticker (common Indian companies)
       const sectorMapping: Record<string, string> = {
-        'TCS': 'IT - Services', 'INFY': 'IT - Services', 'WIPRO': 'IT - Services', 
+        'TCS': 'IT - Services', 'INFY': 'IT - Services', 'WIPRO': 'IT - Services',
         'HCLTECH': 'IT - Services', 'TECHM': 'IT - Services',
         'RELIANCE': 'Refineries', 'ONGC': 'Oil Exploration & Production',
-        'HDFCBANK': 'Banks', 'ICICIBANK': 'Banks', 'KOTAKBANK': 'Banks', 
+        'HDFCBANK': 'Banks', 'ICICIBANK': 'Banks', 'KOTAKBANK': 'Banks',
         'AXISBANK': 'Banks', 'SBIN': 'Banks',
         'HINDUNILVR': 'Personal Care', 'ITC': 'Tobacco', 'NESTLEIND': 'Food Products',
         'MARUTI': 'Auto', 'TATAMOTORS': 'Auto', 'M&M': 'Auto',
         'SUNPHARMA': 'Pharmaceuticals & Biotechnology', 'DRREDDY': 'Pharmaceuticals & Biotechnology',
         'BHARTIARTL': 'Telecom Services', 'JIO': 'Telecom Services',
       };
-      
+
       const fallbackSector = sectorMapping[ticker.toUpperCase()] || 'Others';
       console.log(`[SCRAPER] [extractSector] Using fallback sector mapping: ${fallbackSector}`);
       return fallbackSector;
@@ -629,14 +764,14 @@ class ScreenerScraper {
     const scrapeTimestamp = new Date();
 
     console.log(`[SCRAPER] [extractQuarterlyData] Starting extraction for ${ticker}`);
-    
+
     // Find the quarterly results section
     let quarterlySection = $('#quarters').first();
     console.log(`[SCRAPER] [extractQuarterlyData] Found #quarters section: ${quarterlySection.length > 0 ? 'YES' : 'NO'}`);
-    
+
     let table = quarterlySection.find('table').first();
     console.log(`[SCRAPER] [extractQuarterlyData] Found table in #quarters: ${table.length > 0 ? 'YES' : 'NO'}`);
-    
+
     if (table.length === 0) {
       console.log(`[SCRAPER] [extractQuarterlyData] Searching all tables for quarterly data...`);
       let tablesChecked = 0;
@@ -644,9 +779,9 @@ class ScreenerScraper {
       $('table').each((_, elem) => {
         tablesChecked++;
         const tableText = $(elem).text();
-        if (tableText.includes('Sales') && tableText.includes('Net Profit') && 
-            (tableText.includes('2022') || tableText.includes('2023') || tableText.includes('2024') || 
-             tableText.includes('Sep') || tableText.includes('Dec') || tableText.includes('Mar') || tableText.includes('Jun'))) {
+        if (tableText.includes('Sales') && tableText.includes('Net Profit') &&
+          (tableText.includes('2022') || tableText.includes('2023') || tableText.includes('2024') ||
+            tableText.includes('Sep') || tableText.includes('Dec') || tableText.includes('Mar') || tableText.includes('Jun'))) {
           table = $(elem);
           console.log(`[SCRAPER] [extractQuarterlyData] Found quarterly table at index ${tablesChecked}`);
           return false; // Break
@@ -659,13 +794,13 @@ class ScreenerScraper {
       console.warn(`[SCRAPER] [extractQuarterlyData] No quarterly data table found for ${ticker}`);
       return results;
     }
-    
+
     console.log(`[SCRAPER] [extractQuarterlyData] Found quarterly table with ${table.find('tr').length} rows`);
 
     // Extract quarter headers - more robust parsing
     const headerRow = table.find('thead tr, tr').first();
     const quarterHeaders: string[] = [];
-    
+
     console.log(`[SCRAPER] [extractQuarterlyData] Extracting quarter headers from header row...`);
     headerRow.find('th, td').each((idx, elem) => {
       if (idx === 0) return; // Skip first column (metric names)
@@ -689,13 +824,13 @@ class ScreenerScraper {
       console.warn(`[SCRAPER] [extractQuarterlyData] No quarter headers found in table`);
       return results;
     }
-    
+
     console.log(`[SCRAPER] [extractQuarterlyData] Found ${quarterHeaders.length} quarter headers: ${quarterHeaders.join(', ')}`);
 
     // Extract metric rows
     const rows = table.find('tbody tr, tr').slice(1); // Skip header row
     console.log(`[SCRAPER] [extractQuarterlyData] Found ${rows.length} data rows to process`);
-    
+
     let metricsProcessed = 0;
     let metricsSkipped = 0;
     rows.each((_, rowElem) => {
@@ -722,10 +857,10 @@ class ScreenerScraper {
       let valuesExtracted = 0;
       cells.slice(1, quarterHeaders.length + 1).each((idx, cellElem) => {
         if (idx >= quarterHeaders.length) return;
-        
+
         const valueText = $(cellElem).text().trim();
         const value = this.parseNumericValue(valueText);
-        
+
         if (value !== null) {
           results.push({
             ticker,
@@ -738,14 +873,14 @@ class ScreenerScraper {
           valuesExtracted++;
         }
       });
-      
+
       if (valuesExtracted > 0) {
         metricsProcessed++;
       } else {
         metricsSkipped++;
       }
     });
-    
+
     console.log(`[SCRAPER] [extractQuarterlyData] Processed ${metricsProcessed} metrics, skipped ${metricsSkipped} metrics`);
     console.log(`[SCRAPER] [extractQuarterlyData] Extracted ${results.length} total data points before growth metrics`);
 
@@ -767,17 +902,17 @@ class ScreenerScraper {
    */
   private extractKeyMetrics($: ReturnType<typeof load>): Record<string, number | string> {
     const metrics: Record<string, number | string> = {};
-    
+
     console.log(`[SCRAPER] [extractKeyMetrics] Starting key metrics extraction...`);
-    
+
     try {
       // Find the key metrics section - typically in a table or div with class containing "ratios" or similar
       // Screener.in displays these in a structured format
-      
+
       // Method 1: Look for specific text patterns
       const pageText = $.text();
       console.log(`[SCRAPER] [extractKeyMetrics] Page text length: ${pageText.length} characters`);
-      
+
       // Extract Market Cap
       const marketCapMatch = pageText.match(/Market Cap\s+₹\s*([\d.]+)\s*Cr/i);
       if (marketCapMatch) {
@@ -785,60 +920,60 @@ class ScreenerScraper {
         metrics.marketCap = value;
         console.log(`[SCRAPER] [extractKeyMetrics] Found Market Cap: ₹${marketCapMatch[1]} Cr`);
       }
-      
+
       // Extract Current Price
       const currentPriceMatch = pageText.match(/Current Price\s+₹\s*([\d.]+)/i);
       if (currentPriceMatch) {
         metrics.currentPrice = parseFloat(currentPriceMatch[1]);
       }
-      
+
       // Extract High/Low
       const highLowMatch = pageText.match(/High\s*\/\s*Low\s+₹\s*([\d.]+)\s*\/\s*([\d.]+)/i);
       if (highLowMatch) {
         metrics.highPrice = parseFloat(highLowMatch[1]);
         metrics.lowPrice = parseFloat(highLowMatch[2]);
       }
-      
+
       // Extract Stock P/E
       const peMatch = pageText.match(/Stock P\/E\s+([\d.]+)/i) || pageText.match(/P\/E\s+([\d.]+)/i);
       if (peMatch) {
         metrics.pe = parseFloat(peMatch[1]);
       }
-      
+
       // Extract Book Value
       const bookValueMatch = pageText.match(/Book Value\s+₹\s*([\d.]+)/i);
       if (bookValueMatch) {
         metrics.bookValue = parseFloat(bookValueMatch[1]);
       }
-      
+
       // Extract Dividend Yield
       const dividendYieldMatch = pageText.match(/Dividend Yield\s+([\d.]+)\s*%/i);
       if (dividendYieldMatch) {
         metrics.dividendYield = parseFloat(dividendYieldMatch[1]);
       }
-      
+
       // Extract ROCE
       const roceMatch = pageText.match(/ROCE\s+([\d.]+)\s*%/i);
       if (roceMatch) {
         metrics.roce = parseFloat(roceMatch[1]);
       }
-      
+
       // Extract ROE
       const roeMatch = pageText.match(/ROE\s+([\d.]+)\s*%/i);
       if (roeMatch) {
         metrics.roe = parseFloat(roeMatch[1]);
       }
-      
+
       // Extract Face Value
       const faceValueMatch = pageText.match(/Face Value\s+₹\s*([\d.]+)/i);
       if (faceValueMatch) {
         metrics.faceValue = parseFloat(faceValueMatch[1]);
       }
-      
+
     } catch (error) {
       console.error(`[SCRAPER] [extractKeyMetrics] Error extracting key metrics:`, error);
     }
-    
+
     console.log(`[SCRAPER] [extractKeyMetrics] Extracted ${Object.keys(metrics).length} key metrics: ${Object.keys(metrics).join(', ')}`);
     return metrics;
   }
@@ -849,22 +984,22 @@ class ScreenerScraper {
   private normalizeQuarterFormat(text: string): string {
     // Remove extra whitespace
     text = text.trim();
-    
+
     // Match patterns like "Sep 2023", "Sep'23", "Sep23", etc.
     const match = text.match(/(Sep|Dec|Mar|Jun)[\s']*(\d{2,4})/i);
     if (match) {
       const month = match[1].charAt(0).toUpperCase() + match[1].slice(1).toLowerCase();
       let year = match[2];
-      
+
       // Convert 2-digit year to 4-digit
       if (year.length === 2) {
         const yearNum = parseInt(year);
         year = yearNum > 50 ? `19${year}` : `20${year}`;
       }
-      
+
       return `${month} ${year}`;
     }
-    
+
     return text;
   }
 
@@ -880,7 +1015,7 @@ class ScreenerScraper {
   ): void {
     // Group data by metric
     const metricData: Record<string, Record<string, number>> = {};
-    
+
     results.forEach(item => {
       if (!metricData[item.metricName]) {
         metricData[item.metricName] = {};
@@ -892,7 +1027,7 @@ class ScreenerScraper {
     if (metricData['Sales']) {
       const salesYoY = this.calculateYoYGrowth(metricData['Sales'], quarters);
       const salesQoQ = this.calculateQoQGrowth(metricData['Sales'], quarters);
-      
+
       salesYoY.forEach((value, idx) => {
         if (value !== null && quarters[idx]) {
           results.push({
@@ -905,7 +1040,7 @@ class ScreenerScraper {
           });
         }
       });
-      
+
       salesQoQ.forEach((value, idx) => {
         if (value !== null && quarters[idx]) {
           results.push({
@@ -924,7 +1059,7 @@ class ScreenerScraper {
     if (metricData['EPS in Rs']) {
       const epsYoY = this.calculateYoYGrowth(metricData['EPS in Rs'], quarters);
       const epsQoQ = this.calculateQoQGrowth(metricData['EPS in Rs'], quarters);
-      
+
       epsYoY.forEach((value, idx) => {
         if (value !== null && quarters[idx]) {
           results.push({
@@ -937,7 +1072,7 @@ class ScreenerScraper {
           });
         }
       });
-      
+
       epsQoQ.forEach((value, idx) => {
         if (value !== null && quarters[idx]) {
           results.push({
@@ -958,16 +1093,16 @@ class ScreenerScraper {
    */
   private calculateYoYGrowth(values: Record<string, number>, quarters: string[]): (number | null)[] {
     const growth: (number | null)[] = [];
-    
+
     for (let i = 0; i < quarters.length; i++) {
       const currentQuarter = quarters[i];
       const currentValue = values[currentQuarter];
-      
+
       if (i >= 4 && currentValue !== undefined && currentValue !== null) {
         // Compare with same quarter previous year (4 quarters ago)
         const previousYearQuarter = quarters[i - 4];
         const previousYearValue = values[previousYearQuarter];
-        
+
         if (previousYearValue !== undefined && previousYearValue !== null && previousYearValue !== 0) {
           const growthPercent = ((currentValue - previousYearValue) / previousYearValue) * 100;
           growth.push(parseFloat(growthPercent.toFixed(2)));
@@ -978,7 +1113,7 @@ class ScreenerScraper {
         growth.push(null);
       }
     }
-    
+
     return growth;
   }
 
@@ -987,16 +1122,16 @@ class ScreenerScraper {
    */
   private calculateQoQGrowth(values: Record<string, number>, quarters: string[]): (number | null)[] {
     const growth: (number | null)[] = [];
-    
+
     for (let i = 0; i < quarters.length; i++) {
       const currentQuarter = quarters[i];
       const currentValue = values[currentQuarter];
-      
+
       if (i >= 1 && currentValue !== undefined && currentValue !== null) {
         // Compare with previous quarter
         const previousQuarter = quarters[i - 1];
         const previousValue = values[previousQuarter];
-        
+
         if (previousValue !== undefined && previousValue !== null && previousValue !== 0) {
           const growthPercent = ((currentValue - previousValue) / previousValue) * 100;
           growth.push(parseFloat(growthPercent.toFixed(2)));
@@ -1007,7 +1142,7 @@ class ScreenerScraper {
         growth.push(null);
       }
     }
-    
+
     return growth;
   }
 
@@ -1016,7 +1151,7 @@ class ScreenerScraper {
    */
   private normalizeMetricName(metricName: string): string | null {
     const name = metricName.toLowerCase().trim();
-    
+
     // Comprehensive metric mapping matching Python enhanced_scraper
     if (name.includes('sales') && (name.includes('+') || name.includes('total'))) {
       return 'Sales';
@@ -1055,7 +1190,7 @@ class ScreenerScraper {
     } else if (name.includes('gross npa %') || name.includes('gross npa%')) {
       return 'Gross NPA %';
     }
-    
+
     return null; // Skip unknown metrics
   }
 
@@ -1066,43 +1201,43 @@ class ScreenerScraper {
     if (!text || text.trim() === '' || text.trim() === '-') {
       return null;
     }
-    
+
     // Remove commas and other formatting
     let cleaned = text.replace(/,/g, '').trim();
-    
+
     // Handle negative values in parentheses
     if (cleaned.startsWith('(') && cleaned.endsWith(')')) {
       cleaned = '-' + cleaned.slice(1, -1);
     }
-    
+
     // Handle percentage values
     if (cleaned.includes('%')) {
       cleaned = cleaned.replace('%', '').trim();
       const num = parseFloat(cleaned);
       return isNaN(num) ? null : num;
     }
-    
+
     // Handle crore notation (common in Indian financial data)
     if (cleaned.toLowerCase().includes('cr')) {
       cleaned = cleaned.toLowerCase().replace('cr', '').trim();
       const num = parseFloat(cleaned);
       return isNaN(num) ? null : num * 10000000; // Convert to actual number
     }
-    
+
     // Handle lakh notation
     if (cleaned.toLowerCase().includes('l') || cleaned.toLowerCase().includes('lakh')) {
       cleaned = cleaned.toLowerCase().replace(/l(akh)?/g, '').trim();
       const num = parseFloat(cleaned);
       return isNaN(num) ? null : num * 100000; // Convert to actual number
     }
-    
+
     // Handle thousand notation
     if (cleaned.toLowerCase().includes('k') || cleaned.toLowerCase().includes('thousand')) {
       cleaned = cleaned.toLowerCase().replace(/k|thousand/g, '').trim();
       const num = parseFloat(cleaned);
       return isNaN(num) ? null : num * 1000;
     }
-    
+
     // Handle standard numeric values
     const num = parseFloat(cleaned);
     return isNaN(num) ? null : num;
@@ -1131,7 +1266,7 @@ class ScreenerScraper {
       // Get company ID if available
       const company = await storage.getCompanyByTicker(ticker);
       const companyId = company?.id;
-      
+
       // Determine sector override priority:
       // 1. If sectorId parameter provided, use that sector for all companies
       // 2. If company exists and has a sector, use it to preserve user-provided sector

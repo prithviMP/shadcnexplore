@@ -14,7 +14,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { Pagination, PaginationContent, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious, PaginationEllipsis } from "@/components/ui/pagination";
 import { ChartContainer, ChartTooltip, ChartTooltipContent } from "@/components/ui/chart";
-import React, { useState, useMemo, useEffect } from "react";
+import React, { useState, useMemo, useEffect, useRef } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 import { queryClient } from "@/lib/queryClient";
@@ -69,6 +69,8 @@ export default function SectorsList() {
   const [scrapingTickers, setScrapingTickers] = useState<Set<string>>(new Set());
   const [selectedMetricsForTable, setSelectedMetricsForTable] = useState<string[]>([]);
   const [selectedQuartersForTable, setSelectedQuartersForTable] = useState<string[]>([]);
+
+  const formulaInputRef = useRef<HTMLTextAreaElement>(null);
   const [quarterlySearchTerm, setQuarterlySearchTerm] = useState("");
 
   // Formula Evaluation State
@@ -415,7 +417,7 @@ export default function SectorsList() {
     if (sortedQuarterlyData && selectedMetricsForTable.length === 0) {
       // Use default metrics from API if available
       let defaultMetricNames: string[] = [];
-      
+
       if (defaultMetricsData?.visibleMetrics && defaultMetricsData.visibleMetrics.length > 0) {
         // Use metrics from settings API
         defaultMetricNames = defaultMetricsData.visibleMetrics;
@@ -425,6 +427,7 @@ export default function SectorsList() {
           'Sales',
           'Sales Growth(YoY) %',
           'Sales Growth(QoQ) %',
+          'OPM %',
           'EPS in Rs',
           'EPS Growth(YoY) %',
           'EPS Growth(QoQ) %',
@@ -462,6 +465,59 @@ export default function SectorsList() {
       setSelectedQuartersForFormula(new Set(quartersForFormula));
     }
   }, [sortedQuarterlyData, selectedQuartersForFormula.size]);
+
+  // Auto-evaluate Main Signal Formula when quarterly data loads
+  useEffect(() => {
+    const evaluateFormulas = async () => {
+      if (!activeSectorFormula || !sortedQuarterlyData || !sortedQuarterlyData.companies || sortedQuarterlyData.companies.length === 0) {
+        return;
+      }
+
+      // Only auto-evaluate if we have selected quarters
+      if (selectedQuartersForFormula.size === 0) return;
+
+      // Don't re-evaluate if we already have results
+      if (Object.keys(formulaResults).length > 0) return;
+
+      setIsEvaluating(true);
+      try {
+        const results: Record<string, { result: string | number | boolean; type: string }> = {};
+
+        // Evaluate formula for each company
+        for (const company of sortedQuarterlyData.companies) {
+          try {
+            const res = await apiRequest("POST", "/api/v1/formulas/test-excel", {
+              ticker: company.ticker,
+              formula: activeSectorFormula.condition,
+              selectedQuarters: Array.from(selectedQuartersForFormula)
+            });
+            const data = await res.json();
+
+            let actualResult = data.result;
+            let actualType = data.resultType;
+
+            if (actualResult && typeof actualResult === 'object' && 'result' in actualResult) {
+              actualType = actualResult.resultType || actualType;
+              actualResult = actualResult.result;
+            }
+
+            results[company.ticker] = { result: actualResult, type: actualType };
+          } catch (err) {
+            console.error(`Failed to evaluate for ${company.ticker}`, err);
+            results[company.ticker] = { result: "Error", type: "error" };
+          }
+        }
+
+        setFormulaResults(results);
+      } catch (error) {
+        console.error("Auto-evaluation failed:", error);
+      } finally {
+        setIsEvaluating(false);
+      }
+    };
+
+    evaluateFormulas();
+  }, [activeSectorFormula, sortedQuarterlyData, selectedQuartersForFormula]);
 
   // Filter companies for quarterly table
   const filteredCompaniesForQuarterly = useMemo(() => {
@@ -1447,18 +1503,18 @@ export default function SectorsList() {
                   )}
                   {sortedQuarterlyData && sortedQuarterlyData.metrics.length > 0 && (
                     <Select value={selectedMetric} onValueChange={setSelectedMetric}>
-                    <SelectTrigger className="w-[250px]">
-                      <SelectValue placeholder="Select metric" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">All Metrics</SelectItem>
-                      {sortedQuarterlyData.metrics.map((metric) => (
-                        <SelectItem key={metric} value={metric}>
-                          {metric}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                      <SelectTrigger className="w-[250px]">
+                        <SelectValue placeholder="Select metric" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">All Metrics</SelectItem>
+                        {sortedQuarterlyData.metrics.map((metric) => (
+                          <SelectItem key={metric} value={metric}>
+                            {metric}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
                   )}
                 </div>
               </div>
@@ -1507,7 +1563,7 @@ export default function SectorsList() {
                         </SelectTrigger>
                         <SelectContent>
                           <SelectItem value={activeSectorFormula ? "sector-default" : "default"}>
-                            {activeSectorFormula 
+                            {activeSectorFormula
                               ? `Default: ${activeSectorFormula.name} (${activeSectorFormula.scope === "sector" ? "Sector" : "Global"})`
                               : "Use Custom Formula"}
                           </SelectItem>
@@ -1661,6 +1717,7 @@ export default function SectorsList() {
                           }}
                           placeholder='IF(AND(Q14>0, P14>0, Q12>=20%, Q15>=20%, ...), "BUY", ...)'
                           className="font-mono text-sm min-h-24"
+                          ref={formulaInputRef}
                         />
                         <div className="flex items-center gap-2">
                           <Label htmlFor="signal-type" className="text-xs">Expected Signal:</Label>
@@ -1824,43 +1881,68 @@ export default function SectorsList() {
                     ))}
                     onCellSelect={(metric, quarter) => {
                       // When a cell is clicked, we want to add its reference to the formula
-                      // Reference format: MetricName(RelativeIndex)
-                      // e.g. Sales(0) for current quarter, Sales(-1) for previous
+                      // Reference format: MetricName[Qn]
+                      // Q1 = Most Recent
 
                       if (!sortedQuarterlyData) return;
 
-                      // Find relative index
-                      // sortedQuarterlyData.quarters is sorted oldest to newest? 
-                      // Wait, `sortQuarterStrings` usually sorts chronologically.
-                      // But for "Relative Index", 0 usually means "Most Recent".
-                      // Let's check `sortQuarterStrings` behavior or `sortedQuarterlyData`
-
-                      // In `SectorsList`, we did:
-                      // quarters: sortQuarterStrings(quarterlyData.quarters)
-
-                      // If we want 0 to be the LAST item in the sorted list (most recent),
-                      // then index = quarters.indexOf(quarter) - (quarters.length - 1)
-                      // e.g. length 10. Index 9 (last) -> 9 - 9 = 0.
-                      // Index 8 (prev) -> 8 - 9 = -1.
-
-                      const allQuarters = sortedQuarterlyData.quarters;
-                      const index = allQuarters.indexOf(quarter);
-                      const relativeIndex = index - (allQuarters.length - 1);
+                      const index = selectedQuartersForTable.indexOf(quarter);
+                      if (index === -1) return;
+                      // Q1 = Oldest in selected window
+                      const qIndex = index + 1;
 
                       // Create reference string
-                      // If metric has spaces, maybe wrap in brackets or underscores?
-                      // Let's use underscores for now as per plan
-                      const sanitizedMetric = metric.replace(/[^a-zA-Z0-9]/g, "_");
-                      const reference = `${sanitizedMetric}(${relativeIndex})`;
+                      // If metric has spaces, we rely on the parser handling it or we normalize?
+                      // Reference: https://github.com/SheetJS/sheetjs/issues/1157
+                      // The parser expects identifiers. If metric has spaces, it might be tricky.
+                      // But our parser in excelFormulaEvaluator.ts handles identifiers with spaces?
+                      // Wait, the tokenizer: `while (i < formula.length && /[a-zA-Z0-9_]/.test(formula[i]))`
+                      // It DOES NOT handle spaces in identifiers.
+                      // So we MUST normalize or quote.
+                      // The evaluator `normalizeKey` removes spaces.
+                      // So we should probably remove spaces here too for the formula.
+                      // Or we can use the `sanitizedMetric` approach but ensure it matches what the evaluator expects.
+                      // The evaluator looks up by `metricName` OR `normalizeKey(metricName)`.
+                      // `normalizeKey` removes spaces.
+                      // So if we generate `SalesGrowth[Q1]`, and the metric is "Sales Growth",
+                      // `normalizeKey("SalesGrowth")` -> "salesgrowth"
+                      // `normalizeKey("Sales Growth")` -> "salesgrowth"
+                      // It matches!
 
-                      // Insert into custom formula
-                      setCustomFormula(prev => prev + (prev ? " " : "") + reference);
+                      const sanitizedMetric = metric.replace(/[^a-zA-Z0-9]/g, "");
+                      const reference = `${sanitizedMetric}[Q${qIndex}]`;
+
+                      // Insert into custom formula at cursor position or replace selection
+                      if (formulaInputRef.current) {
+                        const textarea = formulaInputRef.current;
+                        const start = textarea.selectionStart;
+                        const end = textarea.selectionEnd;
+                        const text = textarea.value;
+                        const scrollTop = textarea.scrollTop; // Capture scroll position
+
+                        const newText = text.substring(0, start) + reference + text.substring(end);
+
+                        setCustomFormula(newText);
+
+                        // Restore focus and cursor position after update
+                        setTimeout(() => {
+                          if (formulaInputRef.current) {
+                            formulaInputRef.current.focus();
+                            const newCursorPos = start + reference.length;
+                            formulaInputRef.current.setSelectionRange(newCursorPos, newCursorPos);
+                            formulaInputRef.current.scrollTop = scrollTop; // Restore scroll position
+                          }
+                        }, 0);
+                      } else {
+                        // Fallback if ref is not available (e.g. formula bar not shown yet)
+                        setCustomFormula(prev => prev + (prev ? " " : "") + reference);
+                      }
+
                       setUseCustomFormula(true);
                       setSelectedFormulaId(""); // Clear selected preset
                       setShowFormulaBar(true);
 
                       // Also add this quarter to selectedQuartersForFormula if not present
-                      // so it gets sent to backend
                       const newSet = new Set(selectedQuartersForFormula);
                       newSet.add(quarter);
                       setSelectedQuartersForFormula(newSet);

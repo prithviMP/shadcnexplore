@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -25,6 +25,7 @@ import { evaluateQuarterlyFormula } from "@/utils/quarterlyFormulaEvaluator";
 import { useToast } from "@/hooks/use-toast";
 import { Textarea } from "@/components/ui/textarea";
 import { sortQuarters, formatQuarterWithLabel } from "@/utils/quarterUtils";
+import QuarterlyDataSpreadsheet from "@/components/QuarterlyDataSpreadsheet";
 
 const formatCurrency = (value: number): string => {
   // Format in Indian currency (Rupees) with Crores/Lakhs/Thousands
@@ -76,13 +77,14 @@ export default function CompanyDetail() {
   const [selectedQuartersForFormula, setSelectedQuartersForFormula] = useState<Set<string>>(new Set());
   const [formulaResultForSelected, setFormulaResultForSelected] = useState<string | null>(null);
   const [showFormulaBar, setShowFormulaBar] = useState(false);
-  
+  const formulaInputRef = useRef<HTMLTextAreaElement>(null);
+
   // Ticker update dialog state
   const [showTickerUpdateDialog, setShowTickerUpdateDialog] = useState(false);
   const [newTicker, setNewTicker] = useState<string>("");
   const [isValidatingTicker, setIsValidatingTicker] = useState(false);
   const [tickerValidationResult, setTickerValidationResult] = useState<{ valid: boolean; companyName?: string; error?: string } | null>(null);
-  
+
   // Company details update dialog state
   const [showUpdateCompanyDialog, setShowUpdateCompanyDialog] = useState(false);
   const [updateTicker, setUpdateTicker] = useState<string>("");
@@ -207,7 +209,7 @@ export default function CompanyDetail() {
     if (availableMetrics.length > 0 && selectedMetrics.size === 0) {
       // Use default metrics from API if available
       let defaultMetricNames: string[] = [];
-      
+
       if (defaultMetricsData?.visibleMetrics && defaultMetricsData.visibleMetrics.length > 0) {
         // Use metrics from settings API
         defaultMetricNames = defaultMetricsData.visibleMetrics;
@@ -217,6 +219,7 @@ export default function CompanyDetail() {
           'Sales',
           'Sales Growth(YoY) %',
           'Sales Growth(QoQ) %',
+          'OPM %',
           'EPS in Rs',
           'EPS Growth(YoY) %',
           'EPS Growth(QoQ) %',
@@ -344,27 +347,79 @@ export default function CompanyDetail() {
       }
       // Only treat as ticker error if company itself is not found
       return errorMsg.includes("company not found") ||
-             errorMsg.includes("ticker not found") ||
-             errorMsg.includes("invalid ticker") ||
-             errorMsg.includes("404");
+        errorMsg.includes("ticker not found") ||
+        errorMsg.includes("invalid ticker") ||
+        errorMsg.includes("404");
     }
     if (error) {
       const errorMsg = (error.message || "").toLowerCase();
-      return errorMsg.includes("not found") && 
-             !errorMsg.includes("quarterly data") &&
-             (errorMsg.includes("company") || errorMsg.includes("ticker")) ||
-             errorMsg.includes("404");
+      return errorMsg.includes("not found") &&
+        !errorMsg.includes("quarterly data") &&
+        (errorMsg.includes("company") || errorMsg.includes("ticker")) ||
+        errorMsg.includes("404");
     }
     return false;
+  };
+
+  // Handle cell selection for formula building
+  const handleCellSelect = (metric: string, quarter: string) => {
+    if (!showFormulaBar && !useCustomFormula) return;
+    if (!sortedQuarterlyData) return;
+
+    // Enable custom formula mode if not already enabled
+    if (!useCustomFormula) {
+      setUseCustomFormula(true);
+      // If formula bar wasn't open, open it
+      if (!showFormulaBar) setShowFormulaBar(true);
+    }
+
+    // Use filteredQuarters to respect the current window
+    const index = filteredQuarters.findIndex(q => q.quarter === quarter);
+    if (index === -1) return;
+
+    // Calculate Qn (1-based index from Oldest in window)
+    // filteredQuarters is sorted oldest to newest (index 0 is oldest)
+    // So Q1 is index 0 + 1
+    const qIndex = index + 1;
+
+    // Create reference string
+    const sanitizedMetric = metric.replace(/[^a-zA-Z0-9]/g, "");
+    const reference = `${sanitizedMetric}[Q${qIndex}]`;
+
+    // Insert into formula at cursor position or replace selection
+    if (formulaInputRef.current) {
+      const textarea = formulaInputRef.current;
+      const start = textarea.selectionStart;
+      const end = textarea.selectionEnd;
+      const text = textarea.value;
+      const scrollTop = textarea.scrollTop; // Capture scroll position
+
+      const newText = text.substring(0, start) + reference + text.substring(end);
+
+      setCustomFormula(newText);
+
+      // Restore focus and cursor position after update
+      setTimeout(() => {
+        if (formulaInputRef.current) {
+          formulaInputRef.current.focus();
+          const newCursorPos = start + reference.length;
+          formulaInputRef.current.setSelectionRange(newCursorPos, newCursorPos);
+          formulaInputRef.current.scrollTop = scrollTop; // Restore scroll position
+        }
+      }, 0);
+    } else {
+      // Fallback
+      setCustomFormula(prev => prev + (prev ? " " : "") + reference);
+    }
   };
 
   // Mutation for fetching latest data
   const fetchLatestDataMutation = useMutation({
     mutationFn: async () => {
       if (!companyTicker) throw new Error("No ticker available");
-      const res = await apiRequest("POST", "/api/v1/scraper/scrape/single", { 
+      const res = await apiRequest("POST", "/api/v1/scraper/scrape/single", {
         ticker: companyTicker,
-        sectorId: company?.sectorId 
+        sectorId: company?.sectorId
       });
       const data = await res.json();
       // Only throw error if it's a ticker error (ticker doesn't exist)
@@ -389,7 +444,7 @@ export default function CompanyDetail() {
           });
           return;
         }
-        
+
         // If ticker is valid but no quarterly data found, show informational message
         if (data.companyName && data.error?.toLowerCase().includes("no quarterly data")) {
           toast({
@@ -405,7 +460,7 @@ export default function CompanyDetail() {
           queryClient.invalidateQueries({ queryKey: ["/api/companies/ticker", companyTicker] });
           return;
         }
-        
+
         // Other errors
         toast({
           title: "Failed to fetch data",
@@ -414,7 +469,7 @@ export default function CompanyDetail() {
         });
         return;
       }
-      
+
       // Success case
       toast({
         title: "Data fetched successfully",
@@ -493,27 +548,27 @@ export default function CompanyDetail() {
         title: "Ticker updated successfully",
         description: `Ticker updated to ${updatedCompany.ticker}`
       });
-      
+
       // Invalidate queries to refresh company data
       await queryClient.invalidateQueries({ queryKey: ["/api/companies", company?.id] });
       await queryClient.invalidateQueries({ queryKey: ["/api/companies/ticker", companyTicker] });
       await queryClient.invalidateQueries({ queryKey: ["/api/companies/ticker", updatedCompany.ticker] });
-      
+
       // Refetch company data to get updated ticker
       await queryClient.refetchQueries({ queryKey: ["/api/companies", company?.id] });
-      
+
       // Close dialog
       setShowTickerUpdateDialog(false);
       setTickerValidationResult(null);
       setNewTicker("");
-      
+
       // Wait a bit for queries to refresh, then retry fetch with new ticker
       setTimeout(() => {
         // Use the updated ticker directly
         if (updatedCompany.ticker) {
-          apiRequest("POST", "/api/v1/scraper/scrape/single", { 
+          apiRequest("POST", "/api/v1/scraper/scrape/single", {
             ticker: updatedCompany.ticker,
-            sectorId: company?.sectorId 
+            sectorId: company?.sectorId
           }).then(async (res) => {
             const data = await res.json();
             if (data.success) {
@@ -645,36 +700,36 @@ export default function CompanyDetail() {
     },
     onSuccess: async (updatedCompany) => {
       const tickerChanged = updatedCompany.ticker !== company?.ticker;
-      
+
       toast({
         title: "Company updated successfully",
-        description: tickerChanged 
+        description: tickerChanged
           ? `Ticker updated to ${updatedCompany.ticker}. Fetching latest data...`
           : "Company details updated successfully"
       });
-      
+
       // Invalidate queries to refresh company data
       await queryClient.invalidateQueries({ queryKey: ["/api/companies", company?.id] });
       await queryClient.invalidateQueries({ queryKey: ["/api/companies/ticker", companyTicker] });
       if (tickerChanged) {
         await queryClient.invalidateQueries({ queryKey: ["/api/companies/ticker", updatedCompany.ticker] });
       }
-      
+
       // Refetch company data
       await queryClient.refetchQueries({ queryKey: ["/api/companies", company?.id] });
-      
+
       // Close dialog
       setShowUpdateCompanyDialog(false);
       setUpdateTickerValidationResult(null);
       setUpdateTicker("");
       setUpdateSectorId("");
-      
+
       // If ticker changed, automatically fetch latest data
       if (tickerChanged && updatedCompany.ticker) {
         setTimeout(() => {
-          apiRequest("POST", "/api/v1/scraper/scrape/single", { 
+          apiRequest("POST", "/api/v1/scraper/scrape/single", {
             ticker: updatedCompany.ticker,
-            sectorId: updatedCompany.sectorId || company?.sectorId 
+            sectorId: updatedCompany.sectorId || company?.sectorId
           }).then(async (res) => {
             const data = await res.json();
             if (data.success) {
@@ -741,10 +796,10 @@ export default function CompanyDetail() {
   // Handle update company details
   const handleUpdateCompanyDetails = () => {
     if (!company?.id) return;
-    
+
     const updates: { ticker?: string; sectorId?: string } = {};
     let needsValidation = false;
-    
+
     // Check if ticker changed
     if (updateTicker.trim().toUpperCase() !== company.ticker) {
       // If ticker changed, it must be validated first
@@ -759,18 +814,18 @@ export default function CompanyDetail() {
       updates.ticker = updateTicker.trim().toUpperCase();
       needsValidation = true;
     }
-    
+
     // Check if sector changed
     if (updateSectorId !== (company.sectorId || "")) {
       updates.sectorId = updateSectorId || null;
     }
-    
+
     // If no changes, just close dialog
     if (Object.keys(updates).length === 0) {
       setShowUpdateCompanyDialog(false);
       return;
     }
-    
+
     // Update company
     updateCompanyDetailsMutation.mutate(updates);
   };
@@ -1110,587 +1165,584 @@ export default function CompanyDetail() {
                     Build Formula
                   </Button>
                   <Dialog open={showAnalysisSettings} onOpenChange={setShowAnalysisSettings}>
-                  <DialogTrigger asChild>
-                    <Button variant="outline" size="sm">
-                      <Settings className="h-4 w-4 mr-2" />
-                      Analysis Settings
-                    </Button>
-                  </DialogTrigger>
-                  <DialogContent className="max-w-3xl max-h-[80vh] overflow-y-auto">
-                    <DialogHeader>
-                      <DialogTitle>Analysis Settings</DialogTitle>
-                      <DialogDescription>
-                        Select metrics to display, choose quarters to analyze, and apply formulas
-                      </DialogDescription>
-                    </DialogHeader>
-                    <SettingsTabs defaultValue="metrics" className="w-full">
-                      <SettingsTabsList className="grid w-full grid-cols-3">
-                        <SettingsTabsTrigger value="metrics">Metrics (Rows)</SettingsTabsTrigger>
-                        <SettingsTabsTrigger value="quarters">Quarters (Columns)</SettingsTabsTrigger>
-                        <SettingsTabsTrigger value="formula">Formula</SettingsTabsTrigger>
-                      </SettingsTabsList>
+                    <DialogTrigger asChild>
+                      <Button variant="outline" size="sm">
+                        <Settings className="h-4 w-4 mr-2" />
+                        Analysis Settings
+                      </Button>
+                    </DialogTrigger>
+                    <DialogContent className="max-w-3xl max-h-[80vh] overflow-y-auto">
+                      <DialogHeader>
+                        <DialogTitle>Analysis Settings</DialogTitle>
+                        <DialogDescription>
+                          Select metrics to display, choose quarters to analyze, and apply formulas
+                        </DialogDescription>
+                      </DialogHeader>
+                      <SettingsTabs defaultValue="metrics" className="w-full">
+                        <SettingsTabsList className="grid w-full grid-cols-3">
+                          <SettingsTabsTrigger value="metrics">Metrics (Rows)</SettingsTabsTrigger>
+                          <SettingsTabsTrigger value="quarters">Quarters (Columns)</SettingsTabsTrigger>
+                          <SettingsTabsTrigger value="formula">Formula</SettingsTabsTrigger>
+                        </SettingsTabsList>
 
-                      <SettingsTabsContent value="metrics" className="space-y-4">
-                        <div className="space-y-3">
-                          <div className="flex items-center justify-between">
-                            <Label>Select Metrics to Display</Label>
-                            <div className="flex gap-2">
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={() => setSelectedMetrics(new Set(availableMetrics))}
-                              >
-                                Select All
-                              </Button>
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={() => setSelectedMetrics(new Set())}
-                              >
-                                Deselect All
-                              </Button>
+                        <SettingsTabsContent value="metrics" className="space-y-4">
+                          <div className="space-y-3">
+                            <div className="flex items-center justify-between">
+                              <Label>Select Metrics to Display</Label>
+                              <div className="flex gap-2">
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => setSelectedMetrics(new Set(availableMetrics))}
+                                >
+                                  Select All
+                                </Button>
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => setSelectedMetrics(new Set())}
+                                >
+                                  Deselect All
+                                </Button>
+                              </div>
                             </div>
-                          </div>
-                          <ScrollArea className="h-[300px] border rounded-md p-4">
-                            <div className="space-y-2">
-                              {availableMetrics.map((metric) => (
-                                <div key={metric} className="flex items-center space-x-2">
-                                  <Checkbox
-                                    id={`metric-${metric}`}
-                                    checked={selectedMetrics.has(metric)}
-                                    onCheckedChange={(checked) => {
-                                      const newSet = new Set(selectedMetrics);
-                                      if (checked) {
-                                        newSet.add(metric);
-                                      } else {
-                                        newSet.delete(metric);
-                                      }
-                                      setSelectedMetrics(newSet);
-                                    }}
-                                  />
-                                  <Label
-                                    htmlFor={`metric-${metric}`}
-                                    className="text-sm font-normal cursor-pointer flex-1"
-                                  >
-                                    {metric.replace(/([A-Z])/g, ' $1').trim()}
-                                  </Label>
-                                </div>
-                              ))}
-                            </div>
-                          </ScrollArea>
-                        </div>
-                      </SettingsTabsContent>
-
-                      <SettingsTabsContent value="quarters" className="space-y-4">
-                        <div className="space-y-3">
-                          <div className="flex items-center justify-between">
-                            <Label>Select Quarters to Analyze</Label>
-                            <div className="flex gap-2">
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={() => {
-                                  if (sortedQuarterlyData) {
-                                    setSelectedQuarters(new Set(sortedQuarterlyData.quarters.map(q => q.quarter)));
-                                  }
-                                }}
-                              >
-                                Select All
-                              </Button>
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={() => setSelectedQuarters(new Set())}
-                              >
-                                Deselect All
-                              </Button>
-                            </div>
-                          </div>
-                          <ScrollArea className="h-[300px] border rounded-md p-4">
-                            <div className="space-y-2">
-                              {sortedQuarterlyData?.quarters.map((quarter) => (
-                                <div key={quarter.quarter} className="flex items-center space-x-2">
-                                  <Checkbox
-                                    id={`quarter-${quarter.quarter}`}
-                                    checked={selectedQuarters.has(quarter.quarter)}
-                                    onCheckedChange={(checked) => {
-                                      const newSet = new Set(selectedQuarters);
-                                      if (checked) {
-                                        newSet.add(quarter.quarter);
-                                      } else {
-                                        newSet.delete(quarter.quarter);
-                                      }
-                                      setSelectedQuarters(newSet);
-                                    }}
-                                  />
-                                  <Label
-                                    htmlFor={`quarter-${quarter.quarter}`}
-                                    className="text-sm font-normal cursor-pointer flex-1"
-                                  >
-                                    {formatQuarterWithLabel(quarter.quarter)}
-                                  </Label>
-                                </div>
-                              ))}
-                            </div>
-                          </ScrollArea>
-                          <p className="text-xs text-muted-foreground">
-                            If no quarters selected, all available quarters (up to 12) will be used by default.
-                          </p>
-                        </div>
-                      </SettingsTabsContent>
-
-                      <SettingsTabsContent value="formula" className="space-y-4">
-                        <div className="space-y-3">
-                          <Label>Formula Selection</Label>
-                          <div className="space-y-2">
-                            <div className="flex items-center space-x-2">
-                              <Checkbox
-                                id="use-custom-formula"
-                                checked={useCustomFormula}
-                                onCheckedChange={(checked) => setUseCustomFormula(checked === true)}
-                              />
-                              <Label htmlFor="use-custom-formula" className="text-sm font-normal cursor-pointer">
-                                Use custom formula
-                              </Label>
-                            </div>
-                            {useCustomFormula ? (
+                            <ScrollArea className="h-[300px] border rounded-md p-4">
                               <div className="space-y-2">
-                                <div>
-                                  <Label htmlFor="custom-formula-condition">Formula Condition</Label>
-                                  <Input
-                                    id="custom-formula-condition"
-                                    placeholder="e.g., Sales > 100000 AND EPS > 10"
-                                    value={customFormula}
-                                    onChange={(e) => setCustomFormula(e.target.value)}
-                                    className="mt-1"
-                                  />
-                                  <p className="text-xs text-muted-foreground mt-1">
-                                    Use metric names from quarterly data (e.g., Sales, EPS, Operating Profit).
-                                    Operators: &gt;, &lt;, &gt;=, &lt;=, =, !=. Use AND/OR for multiple conditions.
-                                  </p>
+                                {availableMetrics.map((metric) => (
+                                  <div key={metric} className="flex items-center space-x-2">
+                                    <Checkbox
+                                      id={`metric-${metric}`}
+                                      checked={selectedMetrics.has(metric)}
+                                      onCheckedChange={(checked) => {
+                                        const newSet = new Set(selectedMetrics);
+                                        if (checked) {
+                                          newSet.add(metric);
+                                        } else {
+                                          newSet.delete(metric);
+                                        }
+                                        setSelectedMetrics(newSet);
+                                      }}
+                                    />
+                                    <Label
+                                      htmlFor={`metric-${metric}`}
+                                      className="text-sm font-normal cursor-pointer flex-1"
+                                    >
+                                      {metric.replace(/([A-Z])/g, ' $1').trim()}
+                                    </Label>
+                                  </div>
+                                ))}
+                              </div>
+                            </ScrollArea>
+                          </div>
+                        </SettingsTabsContent>
+
+                        <SettingsTabsContent value="quarters" className="space-y-4">
+                          <div className="space-y-3">
+                            <div className="flex items-center justify-between">
+                              <Label>Select Quarters to Analyze</Label>
+                              <div className="flex gap-2">
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => {
+                                    if (sortedQuarterlyData) {
+                                      setSelectedQuarters(new Set(sortedQuarterlyData.quarters.map(q => q.quarter)));
+                                    }
+                                  }}
+                                >
+                                  Select All
+                                </Button>
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => setSelectedQuarters(new Set())}
+                                >
+                                  Deselect All
+                                </Button>
+                              </div>
+                            </div>
+                            <ScrollArea className="h-[300px] border rounded-md p-4">
+                              <div className="space-y-2">
+                                {sortedQuarterlyData?.quarters.map((quarter) => (
+                                  <div key={quarter.quarter} className="flex items-center space-x-2">
+                                    <Checkbox
+                                      id={`quarter-${quarter.quarter}`}
+                                      checked={selectedQuarters.has(quarter.quarter)}
+                                      onCheckedChange={(checked) => {
+                                        const newSet = new Set(selectedQuarters);
+                                        if (checked) {
+                                          newSet.add(quarter.quarter);
+                                        } else {
+                                          newSet.delete(quarter.quarter);
+                                        }
+                                        setSelectedQuarters(newSet);
+                                      }}
+                                    />
+                                    <Label
+                                      htmlFor={`quarter-${quarter.quarter}`}
+                                      className="text-sm font-normal cursor-pointer flex-1"
+                                    >
+                                      {formatQuarterWithLabel(quarter.quarter)}
+                                    </Label>
+                                  </div>
+                                ))}
+                              </div>
+                            </ScrollArea>
+                            <p className="text-xs text-muted-foreground">
+                              If no quarters selected, all available quarters (up to 12) will be used by default.
+                            </p>
+                          </div>
+                        </SettingsTabsContent>
+
+                        <SettingsTabsContent value="formula" className="space-y-4">
+                          <div className="space-y-3">
+                            <Label>Formula Selection</Label>
+                            <div className="space-y-2">
+                              <div className="flex items-center space-x-2">
+                                <Checkbox
+                                  id="use-custom-formula"
+                                  checked={useCustomFormula}
+                                  onCheckedChange={(checked) => setUseCustomFormula(checked === true)}
+                                />
+                                <Label htmlFor="use-custom-formula" className="text-sm font-normal cursor-pointer">
+                                  Use custom formula
+                                </Label>
+                              </div>
+                              {useCustomFormula ? (
+                                <div className="space-y-2">
+                                  <div>
+                                    <Label htmlFor="custom-formula-condition">Formula Condition</Label>
+                                    <Input
+                                      id="custom-formula-condition"
+                                      placeholder="e.g., Sales > 100000 AND EPS > 10"
+                                      value={customFormula}
+                                      onChange={(e) => setCustomFormula(e.target.value)}
+                                      className="mt-1"
+                                    />
+                                    <p className="text-xs text-muted-foreground mt-1">
+                                      Use metric names from quarterly data (e.g., Sales, EPS, Operating Profit).
+                                      Operators: &gt;, &lt;, &gt;=, &lt;=, =, !=. Use AND/OR for multiple conditions.
+                                    </p>
+                                  </div>
+                                  <div>
+                                    <Label htmlFor="custom-formula-signal">Signal Type</Label>
+                                    <Select value={customFormulaSignal} onValueChange={setCustomFormulaSignal}>
+                                      <SelectTrigger className="mt-1">
+                                        <SelectValue />
+                                      </SelectTrigger>
+                                      <SelectContent>
+                                        <SelectItem value="BUY">BUY</SelectItem>
+                                        <SelectItem value="SELL">SELL</SelectItem>
+                                        <SelectItem value="HOLD">HOLD</SelectItem>
+                                      </SelectContent>
+                                    </Select>
+                                  </div>
                                 </div>
+                              ) : (
                                 <div>
-                                  <Label htmlFor="custom-formula-signal">Signal Type</Label>
-                                  <Select value={customFormulaSignal} onValueChange={setCustomFormulaSignal}>
+                                  <Label htmlFor="formula-select">Select Formula</Label>
+                                  <Select value={selectedFormulaId || "default"} onValueChange={(value) => {
+                                    if (value === "default") {
+                                      setSelectedFormulaId("");
+                                    } else {
+                                      setSelectedFormulaId(value);
+                                    }
+                                  }}>
                                     <SelectTrigger className="mt-1">
-                                      <SelectValue />
+                                      <SelectValue placeholder={globalFormula ? `Using: ${globalFormula.name} (Global)` : "Select a formula"} />
                                     </SelectTrigger>
                                     <SelectContent>
-                                      <SelectItem value="BUY">BUY</SelectItem>
-                                      <SelectItem value="SELL">SELL</SelectItem>
-                                      <SelectItem value="HOLD">HOLD</SelectItem>
+                                      <SelectItem value="default">{globalFormula ? `Default: ${globalFormula.name} (Global)` : "None (No formula)"}</SelectItem>
+                                      {formulas?.filter(f => f.enabled).map((formula) => (
+                                        <SelectItem key={formula.id} value={formula.id}>
+                                          {formula.name} ({formula.signal}) - {formula.condition}
+                                          {formula.scope === "global" && " [Global]"}
+                                        </SelectItem>
+                                      ))}
                                     </SelectContent>
                                   </Select>
+                                  <p className="text-xs text-muted-foreground mt-1">
+                                    {globalFormula
+                                      ? `Default: Global formula "${globalFormula.name}" is used automatically. Select another formula to override.`
+                                      : "Formulas from database. Note: Only formulas referencing quarterly metrics will work."}
+                                  </p>
                                 </div>
-                              </div>
-                            ) : (
-                              <div>
-                                <Label htmlFor="formula-select">Select Formula</Label>
-                                <Select value={selectedFormulaId || "default"} onValueChange={(value) => {
-                                  if (value === "default") {
-                                    setSelectedFormulaId("");
-                                  } else {
-                                    setSelectedFormulaId(value);
-                                  }
-                                }}>
-                                  <SelectTrigger className="mt-1">
-                                    <SelectValue placeholder={globalFormula ? `Using: ${globalFormula.name} (Global)` : "Select a formula"} />
-                                  </SelectTrigger>
-                                  <SelectContent>
-                                    <SelectItem value="default">{globalFormula ? `Default: ${globalFormula.name} (Global)` : "None (No formula)"}</SelectItem>
-                                    {formulas?.filter(f => f.enabled).map((formula) => (
-                                      <SelectItem key={formula.id} value={formula.id}>
-                                        {formula.name} ({formula.signal}) - {formula.condition}
-                                        {formula.scope === "global" && " [Global]"}
-                                      </SelectItem>
-                                    ))}
-                                  </SelectContent>
-                                </Select>
-                                <p className="text-xs text-muted-foreground mt-1">
-                                  {globalFormula
-                                    ? `Default: Global formula "${globalFormula.name}" is used automatically. Select another formula to override.`
-                                    : "Formulas from database. Note: Only formulas referencing quarterly metrics will work."}
-                                </p>
-                              </div>
-                            )}
+                              )}
+                            </div>
                           </div>
-                        </div>
-                      </SettingsTabsContent>
-                    </SettingsTabs>
-                    <div className="flex justify-end gap-2 pt-4">
-                      <Button variant="outline" onClick={() => setShowAnalysisSettings(false)}>
-                        Close
-                      </Button>
-                    </div>
-                  </DialogContent>
-                </Dialog>
-                
-                {/* Ticker Update Dialog */}
-                <Dialog open={showTickerUpdateDialog} onOpenChange={(open) => {
-                  if (!open && !updateTickerMutation.isPending) {
-                    setShowTickerUpdateDialog(false);
-                    setTickerValidationResult(null);
-                    setNewTicker("");
-                  }
-                }}>
-                  <DialogContent className="max-w-md">
-                    <DialogHeader>
-                      <DialogTitle>Update Ticker and Retry</DialogTitle>
-                      <DialogDescription>
-                        The current ticker may be incorrect or the company may not exist on Screener.in. 
-                        Please enter the correct ticker to fetch data.
-                      </DialogDescription>
-                    </DialogHeader>
-                    <div className="space-y-4 py-4">
-                      <div className="space-y-2">
-                        <Label htmlFor="new-ticker">New Ticker</Label>
-                        <Input
-                          id="new-ticker"
-                          value={newTicker}
-                          onChange={(e) => {
-                            setNewTicker(e.target.value.toUpperCase());
-                            setTickerValidationResult(null); // Clear validation when user types
-                          }}
-                          placeholder="Enter ticker (e.g., TCS)"
-                          className="font-mono"
-                        />
-                        <p className="text-xs text-muted-foreground">
-                          Current ticker: <span className="font-mono font-semibold">{companyTicker}</span>
-                        </p>
-                      </div>
-                      
-                      <div className="flex gap-2">
-                        <Button
-                          onClick={handleValidateTicker}
-                          disabled={!newTicker.trim() || isValidatingTicker || newTicker.toUpperCase() === companyTicker}
-                          variant="outline"
-                          className="flex-1"
-                        >
-                          {isValidatingTicker ? (
-                            <>
-                              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                              Validating...
-                            </>
-                          ) : (
-                            "Validate Ticker"
-                          )}
+                        </SettingsTabsContent>
+                      </SettingsTabs>
+                      <div className="flex justify-end gap-2 pt-4">
+                        <Button variant="outline" onClick={() => setShowAnalysisSettings(false)}>
+                          Close
                         </Button>
                       </div>
+                    </DialogContent>
+                  </Dialog>
 
-                      {tickerValidationResult && (
-                        <div className={`p-3 rounded-md ${
-                          tickerValidationResult.valid 
-                            ? "bg-green-50 dark:bg-green-950/20 border border-green-200 dark:border-green-800" 
-                            : "bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-800"
-                        }`}>
-                          {tickerValidationResult.valid ? (
-                            <div className="flex items-center gap-2">
-                              <CheckCircle2 className="h-4 w-4 text-green-600 dark:text-green-400" />
-                              <div>
-                                <p className="text-sm font-medium text-green-900 dark:text-green-100">
-                                  Ticker is valid
-                                </p>
-                                {tickerValidationResult.companyName && (
-                                  <p className="text-xs text-green-700 dark:text-green-300">
-                                    Company: {tickerValidationResult.companyName}
-                                  </p>
-                                )}
-                              </div>
-                            </div>
-                          ) : (
-                            <div className="flex items-center gap-2">
-                              <XCircle className="h-4 w-4 text-red-600 dark:text-red-400" />
-                              <div>
-                                <p className="text-sm font-medium text-red-900 dark:text-red-100">
-                                  Ticker is invalid
-                                </p>
-                                {tickerValidationResult.error && (
-                                  <p className="text-xs text-red-700 dark:text-red-300">
-                                    {tickerValidationResult.error}
-                                  </p>
-                                )}
-                              </div>
-                            </div>
-                          )}
-                        </div>
-                      )}
-
-                      <div className="flex gap-2 pt-2">
-                        <Button
-                          variant="outline"
-                          onClick={() => {
-                            setShowTickerUpdateDialog(false);
-                            setTickerValidationResult(null);
-                            setNewTicker("");
-                          }}
-                          disabled={updateTickerMutation.isPending}
-                          className="flex-1"
-                        >
-                          Cancel
-                        </Button>
-                        <Button
-                          onClick={handleUpdateTickerAndRetry}
-                          disabled={!tickerValidationResult?.valid || updateTickerMutation.isPending || newTicker.toUpperCase() === companyTicker}
-                          className="flex-1"
-                        >
-                          {updateTickerMutation.isPending ? (
-                            <>
-                              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                              Updating...
-                            </>
-                          ) : (
-                            "Update Ticker & Retry"
-                          )}
-                        </Button>
-                      </div>
-                    </div>
-                  </DialogContent>
-                </Dialog>
-                
-                {/* Ticker Update Dialog */}
-                <Dialog open={showTickerUpdateDialog} onOpenChange={(open) => {
-                  if (!open && !updateTickerMutation.isPending) {
-                    setShowTickerUpdateDialog(false);
-                    setTickerValidationResult(null);
-                    setNewTicker("");
-                  }
-                }}>
-                  <DialogContent className="max-w-md">
-                    <DialogHeader>
-                      <DialogTitle>Update Ticker and Retry</DialogTitle>
-                      <DialogDescription>
-                        The current ticker may be incorrect or the company may not exist on Screener.in. 
-                        Please enter the correct ticker to fetch data.
-                      </DialogDescription>
-                    </DialogHeader>
-                    <div className="space-y-4 py-4">
-                      <div className="space-y-2">
-                        <Label htmlFor="new-ticker">New Ticker</Label>
-                        <Input
-                          id="new-ticker"
-                          value={newTicker}
-                          onChange={(e) => {
-                            setNewTicker(e.target.value.toUpperCase());
-                            setTickerValidationResult(null); // Clear validation when user types
-                          }}
-                          placeholder="Enter ticker (e.g., TCS)"
-                          className="font-mono"
-                        />
-                        <p className="text-xs text-muted-foreground">
-                          Current ticker: <span className="font-mono font-semibold">{companyTicker}</span>
-                        </p>
-                      </div>
-                      
-                      <div className="flex gap-2">
-                        <Button
-                          onClick={handleValidateTicker}
-                          disabled={!newTicker.trim() || isValidatingTicker || newTicker.toUpperCase() === companyTicker}
-                          variant="outline"
-                          className="flex-1"
-                        >
-                          {isValidatingTicker ? (
-                            <>
-                              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                              Validating...
-                            </>
-                          ) : (
-                            "Validate Ticker"
-                          )}
-                        </Button>
-                      </div>
-
-                      {tickerValidationResult && (
-                        <div className={`p-3 rounded-md ${
-                          tickerValidationResult.valid 
-                            ? "bg-green-50 dark:bg-green-950/20 border border-green-200 dark:border-green-800" 
-                            : "bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-800"
-                        }`}>
-                          {tickerValidationResult.valid ? (
-                            <div className="flex items-center gap-2">
-                              <CheckCircle2 className="h-4 w-4 text-green-600 dark:text-green-400" />
-                              <div>
-                                <p className="text-sm font-medium text-green-900 dark:text-green-100">
-                                  Ticker is valid
-                                </p>
-                                {tickerValidationResult.companyName && (
-                                  <p className="text-xs text-green-700 dark:text-green-300">
-                                    Company: {tickerValidationResult.companyName}
-                                  </p>
-                                )}
-                              </div>
-                            </div>
-                          ) : (
-                            <div className="flex items-center gap-2">
-                              <XCircle className="h-4 w-4 text-red-600 dark:text-red-400" />
-                              <div>
-                                <p className="text-sm font-medium text-red-900 dark:text-red-100">
-                                  Ticker is invalid
-                                </p>
-                                {tickerValidationResult.error && (
-                                  <p className="text-xs text-red-700 dark:text-red-300">
-                                    {tickerValidationResult.error}
-                                  </p>
-                                )}
-                              </div>
-                            </div>
-                          )}
-                        </div>
-                      )}
-
-                      <div className="flex gap-2 pt-2">
-                        <Button
-                          variant="outline"
-                          onClick={() => {
-                            setShowTickerUpdateDialog(false);
-                            setTickerValidationResult(null);
-                            setNewTicker("");
-                          }}
-                          disabled={updateTickerMutation.isPending}
-                          className="flex-1"
-                        >
-                          Cancel
-                        </Button>
-                        <Button
-                          onClick={handleUpdateTickerAndRetry}
-                          disabled={!tickerValidationResult?.valid || updateTickerMutation.isPending || newTicker.toUpperCase() === companyTicker}
-                          className="flex-1"
-                        >
-                          {updateTickerMutation.isPending ? (
-                            <>
-                              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                              Updating...
-                            </>
-                          ) : (
-                            "Update Ticker & Retry"
-                          )}
-                        </Button>
-                      </div>
-                    </div>
-                  </DialogContent>
-                </Dialog>
-                
-                {/* Update Company Details Dialog */}
-                <Dialog open={showUpdateCompanyDialog} onOpenChange={(open) => {
-                  if (!open && !updateCompanyDetailsMutation.isPending) {
-                    setShowUpdateCompanyDialog(false);
-                    setUpdateTickerValidationResult(null);
-                  }
-                }}>
-                  <DialogContent className="max-w-md">
-                    <DialogHeader>
-                      <DialogTitle>Update Company Details</DialogTitle>
-                      <DialogDescription>
-                        Update the company ticker and/or sector. If ticker is changed, latest data will be fetched automatically.
-                      </DialogDescription>
-                    </DialogHeader>
-                    <div className="space-y-4 py-4">
-                      <div className="space-y-2">
-                        <Label htmlFor="update-ticker">Ticker</Label>
-                        <div className="flex gap-2">
+                  {/* Ticker Update Dialog */}
+                  <Dialog open={showTickerUpdateDialog} onOpenChange={(open) => {
+                    if (!open && !updateTickerMutation.isPending) {
+                      setShowTickerUpdateDialog(false);
+                      setTickerValidationResult(null);
+                      setNewTicker("");
+                    }
+                  }}>
+                    <DialogContent className="max-w-md">
+                      <DialogHeader>
+                        <DialogTitle>Update Ticker and Retry</DialogTitle>
+                        <DialogDescription>
+                          The current ticker may be incorrect or the company may not exist on Screener.in.
+                          Please enter the correct ticker to fetch data.
+                        </DialogDescription>
+                      </DialogHeader>
+                      <div className="space-y-4 py-4">
+                        <div className="space-y-2">
+                          <Label htmlFor="new-ticker">New Ticker</Label>
                           <Input
-                            id="update-ticker"
-                            value={updateTicker}
+                            id="new-ticker"
+                            value={newTicker}
                             onChange={(e) => {
-                              setUpdateTicker(e.target.value.toUpperCase());
-                              setUpdateTickerValidationResult(null); // Clear validation when user types
+                              setNewTicker(e.target.value.toUpperCase());
+                              setTickerValidationResult(null); // Clear validation when user types
                             }}
                             placeholder="Enter ticker (e.g., TCS)"
-                            className="font-mono flex-1"
+                            className="font-mono"
                           />
+                          <p className="text-xs text-muted-foreground">
+                            Current ticker: <span className="font-mono font-semibold">{companyTicker}</span>
+                          </p>
+                        </div>
+
+                        <div className="flex gap-2">
                           <Button
-                            onClick={handleValidateUpdateTicker}
-                            disabled={!updateTicker.trim() || isValidatingUpdateTicker}
+                            onClick={handleValidateTicker}
+                            disabled={!newTicker.trim() || isValidatingTicker || newTicker.toUpperCase() === companyTicker}
                             variant="outline"
-                            size="sm"
+                            className="flex-1"
                           >
-                            {isValidatingUpdateTicker ? (
+                            {isValidatingTicker ? (
                               <>
                                 <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                                Validating
+                                Validating...
                               </>
                             ) : (
-                              "Validate"
+                              "Validate Ticker"
                             )}
                           </Button>
                         </div>
-                        {updateTickerValidationResult && (
-                          <div className={`p-2 rounded-md text-xs ${
-                            updateTickerValidationResult.valid 
-                              ? "bg-green-50 dark:bg-green-950/20 border border-green-200 dark:border-green-800" 
-                              : "bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-800"
-                          }`}>
-                            {updateTickerValidationResult.valid ? (
+
+                        {tickerValidationResult && (
+                          <div className={`p-3 rounded-md ${tickerValidationResult.valid
+                            ? "bg-green-50 dark:bg-green-950/20 border border-green-200 dark:border-green-800"
+                            : "bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-800"
+                            }`}>
+                            {tickerValidationResult.valid ? (
                               <div className="flex items-center gap-2">
-                                <CheckCircle2 className="h-3 w-3 text-green-600 dark:text-green-400" />
-                                <span className="text-green-900 dark:text-green-100">
-                                  Valid: {updateTickerValidationResult.companyName}
-                                </span>
+                                <CheckCircle2 className="h-4 w-4 text-green-600 dark:text-green-400" />
+                                <div>
+                                  <p className="text-sm font-medium text-green-900 dark:text-green-100">
+                                    Ticker is valid
+                                  </p>
+                                  {tickerValidationResult.companyName && (
+                                    <p className="text-xs text-green-700 dark:text-green-300">
+                                      Company: {tickerValidationResult.companyName}
+                                    </p>
+                                  )}
+                                </div>
                               </div>
                             ) : (
                               <div className="flex items-center gap-2">
-                                <XCircle className="h-3 w-3 text-red-600 dark:text-red-400" />
-                                <span className="text-red-900 dark:text-red-100">
-                                  {updateTickerValidationResult.error}
-                                </span>
+                                <XCircle className="h-4 w-4 text-red-600 dark:text-red-400" />
+                                <div>
+                                  <p className="text-sm font-medium text-red-900 dark:text-red-100">
+                                    Ticker is invalid
+                                  </p>
+                                  {tickerValidationResult.error && (
+                                    <p className="text-xs text-red-700 dark:text-red-300">
+                                      {tickerValidationResult.error}
+                                    </p>
+                                  )}
+                                </div>
                               </div>
                             )}
                           </div>
                         )}
-                      </div>
-                      
-                      <div className="space-y-2">
-                        <Label htmlFor="update-sector">Sector</Label>
-                        <Select
-                          value={updateSectorId || undefined}
-                          onValueChange={(value) => setUpdateSectorId(value === "none" ? "" : value)}
-                        >
-                          <SelectTrigger id="update-sector">
-                            <SelectValue placeholder="Select sector" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="none">None</SelectItem>
-                            {sectors?.map((sector) => (
-                              <SelectItem key={sector.id} value={sector.id}>
-                                {sector.name}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
 
-                      <div className="flex gap-2 pt-2">
-                        <Button
-                          variant="outline"
-                          onClick={() => {
-                            setShowUpdateCompanyDialog(false);
-                            setUpdateTickerValidationResult(null);
-                          }}
-                          disabled={updateCompanyDetailsMutation.isPending}
-                          className="flex-1"
-                        >
-                          Cancel
-                        </Button>
-                        <Button
-                          onClick={handleUpdateCompanyDetails}
-                          disabled={
-                            updateCompanyDetailsMutation.isPending || 
-                            (updateTicker.trim().toUpperCase() !== company?.ticker && !updateTickerValidationResult?.valid)
-                          }
-                          className="flex-1"
-                        >
-                          {updateCompanyDetailsMutation.isPending ? (
-                            <>
-                              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                              Updating...
-                            </>
-                          ) : (
-                            "Update Company"
-                          )}
-                        </Button>
+                        <div className="flex gap-2 pt-2">
+                          <Button
+                            variant="outline"
+                            onClick={() => {
+                              setShowTickerUpdateDialog(false);
+                              setTickerValidationResult(null);
+                              setNewTicker("");
+                            }}
+                            disabled={updateTickerMutation.isPending}
+                            className="flex-1"
+                          >
+                            Cancel
+                          </Button>
+                          <Button
+                            onClick={handleUpdateTickerAndRetry}
+                            disabled={!tickerValidationResult?.valid || updateTickerMutation.isPending || newTicker.toUpperCase() === companyTicker}
+                            className="flex-1"
+                          >
+                            {updateTickerMutation.isPending ? (
+                              <>
+                                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                                Updating...
+                              </>
+                            ) : (
+                              "Update Ticker & Retry"
+                            )}
+                          </Button>
+                        </div>
                       </div>
-                    </div>
-                  </DialogContent>
-                </Dialog>
+                    </DialogContent>
+                  </Dialog>
+
+                  {/* Ticker Update Dialog */}
+                  <Dialog open={showTickerUpdateDialog} onOpenChange={(open) => {
+                    if (!open && !updateTickerMutation.isPending) {
+                      setShowTickerUpdateDialog(false);
+                      setTickerValidationResult(null);
+                      setNewTicker("");
+                    }
+                  }}>
+                    <DialogContent className="max-w-md">
+                      <DialogHeader>
+                        <DialogTitle>Update Ticker and Retry</DialogTitle>
+                        <DialogDescription>
+                          The current ticker may be incorrect or the company may not exist on Screener.in.
+                          Please enter the correct ticker to fetch data.
+                        </DialogDescription>
+                      </DialogHeader>
+                      <div className="space-y-4 py-4">
+                        <div className="space-y-2">
+                          <Label htmlFor="new-ticker">New Ticker</Label>
+                          <Input
+                            id="new-ticker"
+                            value={newTicker}
+                            onChange={(e) => {
+                              setNewTicker(e.target.value.toUpperCase());
+                              setTickerValidationResult(null); // Clear validation when user types
+                            }}
+                            placeholder="Enter ticker (e.g., TCS)"
+                            className="font-mono"
+                          />
+                          <p className="text-xs text-muted-foreground">
+                            Current ticker: <span className="font-mono font-semibold">{companyTicker}</span>
+                          </p>
+                        </div>
+
+                        <div className="flex gap-2">
+                          <Button
+                            onClick={handleValidateTicker}
+                            disabled={!newTicker.trim() || isValidatingTicker || newTicker.toUpperCase() === companyTicker}
+                            variant="outline"
+                            className="flex-1"
+                          >
+                            {isValidatingTicker ? (
+                              <>
+                                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                                Validating...
+                              </>
+                            ) : (
+                              "Validate Ticker"
+                            )}
+                          </Button>
+                        </div>
+
+                        {tickerValidationResult && (
+                          <div className={`p-3 rounded-md ${tickerValidationResult.valid
+                            ? "bg-green-50 dark:bg-green-950/20 border border-green-200 dark:border-green-800"
+                            : "bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-800"
+                            }`}>
+                            {tickerValidationResult.valid ? (
+                              <div className="flex items-center gap-2">
+                                <CheckCircle2 className="h-4 w-4 text-green-600 dark:text-green-400" />
+                                <div>
+                                  <p className="text-sm font-medium text-green-900 dark:text-green-100">
+                                    Ticker is valid
+                                  </p>
+                                  {tickerValidationResult.companyName && (
+                                    <p className="text-xs text-green-700 dark:text-green-300">
+                                      Company: {tickerValidationResult.companyName}
+                                    </p>
+                                  )}
+                                </div>
+                              </div>
+                            ) : (
+                              <div className="flex items-center gap-2">
+                                <XCircle className="h-4 w-4 text-red-600 dark:text-red-400" />
+                                <div>
+                                  <p className="text-sm font-medium text-red-900 dark:text-red-100">
+                                    Ticker is invalid
+                                  </p>
+                                  {tickerValidationResult.error && (
+                                    <p className="text-xs text-red-700 dark:text-red-300">
+                                      {tickerValidationResult.error}
+                                    </p>
+                                  )}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        )}
+
+                        <div className="flex gap-2 pt-2">
+                          <Button
+                            variant="outline"
+                            onClick={() => {
+                              setShowTickerUpdateDialog(false);
+                              setTickerValidationResult(null);
+                              setNewTicker("");
+                            }}
+                            disabled={updateTickerMutation.isPending}
+                            className="flex-1"
+                          >
+                            Cancel
+                          </Button>
+                          <Button
+                            onClick={handleUpdateTickerAndRetry}
+                            disabled={!tickerValidationResult?.valid || updateTickerMutation.isPending || newTicker.toUpperCase() === companyTicker}
+                            className="flex-1"
+                          >
+                            {updateTickerMutation.isPending ? (
+                              <>
+                                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                                Updating...
+                              </>
+                            ) : (
+                              "Update Ticker & Retry"
+                            )}
+                          </Button>
+                        </div>
+                      </div>
+                    </DialogContent>
+                  </Dialog>
+
+                  {/* Update Company Details Dialog */}
+                  <Dialog open={showUpdateCompanyDialog} onOpenChange={(open) => {
+                    if (!open && !updateCompanyDetailsMutation.isPending) {
+                      setShowUpdateCompanyDialog(false);
+                      setUpdateTickerValidationResult(null);
+                    }
+                  }}>
+                    <DialogContent className="max-w-md">
+                      <DialogHeader>
+                        <DialogTitle>Update Company Details</DialogTitle>
+                        <DialogDescription>
+                          Update the company ticker and/or sector. If ticker is changed, latest data will be fetched automatically.
+                        </DialogDescription>
+                      </DialogHeader>
+                      <div className="space-y-4 py-4">
+                        <div className="space-y-2">
+                          <Label htmlFor="update-ticker">Ticker</Label>
+                          <div className="flex gap-2">
+                            <Input
+                              id="update-ticker"
+                              value={updateTicker}
+                              onChange={(e) => {
+                                setUpdateTicker(e.target.value.toUpperCase());
+                                setUpdateTickerValidationResult(null); // Clear validation when user types
+                              }}
+                              placeholder="Enter ticker (e.g., TCS)"
+                              className="font-mono flex-1"
+                            />
+                            <Button
+                              onClick={handleValidateUpdateTicker}
+                              disabled={!updateTicker.trim() || isValidatingUpdateTicker}
+                              variant="outline"
+                              size="sm"
+                            >
+                              {isValidatingUpdateTicker ? (
+                                <>
+                                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                                  Validating
+                                </>
+                              ) : (
+                                "Validate"
+                              )}
+                            </Button>
+                          </div>
+                          {updateTickerValidationResult && (
+                            <div className={`p-2 rounded-md text-xs ${updateTickerValidationResult.valid
+                              ? "bg-green-50 dark:bg-green-950/20 border border-green-200 dark:border-green-800"
+                              : "bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-800"
+                              }`}>
+                              {updateTickerValidationResult.valid ? (
+                                <div className="flex items-center gap-2">
+                                  <CheckCircle2 className="h-3 w-3 text-green-600 dark:text-green-400" />
+                                  <span className="text-green-900 dark:text-green-100">
+                                    Valid: {updateTickerValidationResult.companyName}
+                                  </span>
+                                </div>
+                              ) : (
+                                <div className="flex items-center gap-2">
+                                  <XCircle className="h-3 w-3 text-red-600 dark:text-red-400" />
+                                  <span className="text-red-900 dark:text-red-100">
+                                    {updateTickerValidationResult.error}
+                                  </span>
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="space-y-2">
+                          <Label htmlFor="update-sector">Sector</Label>
+                          <Select
+                            value={updateSectorId || undefined}
+                            onValueChange={(value) => setUpdateSectorId(value === "none" ? "" : value)}
+                          >
+                            <SelectTrigger id="update-sector">
+                              <SelectValue placeholder="Select sector" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="none">None</SelectItem>
+                              {sectors?.map((sector) => (
+                                <SelectItem key={sector.id} value={sector.id}>
+                                  {sector.name}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+
+                        <div className="flex gap-2 pt-2">
+                          <Button
+                            variant="outline"
+                            onClick={() => {
+                              setShowUpdateCompanyDialog(false);
+                              setUpdateTickerValidationResult(null);
+                            }}
+                            disabled={updateCompanyDetailsMutation.isPending}
+                            className="flex-1"
+                          >
+                            Cancel
+                          </Button>
+                          <Button
+                            onClick={handleUpdateCompanyDetails}
+                            disabled={
+                              updateCompanyDetailsMutation.isPending ||
+                              (updateTicker.trim().toUpperCase() !== company?.ticker && !updateTickerValidationResult?.valid)
+                            }
+                            className="flex-1"
+                          >
+                            {updateCompanyDetailsMutation.isPending ? (
+                              <>
+                                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                                Updating...
+                              </>
+                            ) : (
+                              "Update Company"
+                            )}
+                          </Button>
+                        </div>
+                      </div>
+                    </DialogContent>
+                  </Dialog>
                 </div>
               </div>
             </CardHeader>
@@ -1796,7 +1848,7 @@ export default function CompanyDetail() {
                                   // Handle both old format (result is object) and new format (result is primitive)
                                   let actualResult = data.result;
                                   let actualType = data.resultType;
-                                  
+
                                   // If result is an object with a nested result property, extract it
                                   if (actualResult && typeof actualResult === 'object' && 'result' in actualResult) {
                                     actualType = actualResult.resultType || actualType;
@@ -1876,8 +1928,9 @@ export default function CompanyDetail() {
                               <Textarea
                                 value={customFormula}
                                 onChange={(e) => setCustomFormula(e.target.value)}
-                                placeholder='IF(AND(Q14>0, P14>0, Q12>=20%, Q15>=20%, ...), "BUY", ...)'
+                                placeholder='IF(AND(SalesGrowth[Q1]>0, EPS[Q1]>10), "BUY", "HOLD")'
                                 className="font-mono text-sm min-h-24"
+                                ref={formulaInputRef}
                               />
                               <div className="flex items-center gap-2">
                                 <Checkbox
@@ -1904,89 +1957,28 @@ export default function CompanyDetail() {
                     </Card>
                   )}
 
-                  <div className="w-full overflow-x-auto">
-                    <Table className="min-w-full">
-                      <TableHeader>
-                        <TableRow>
-                          <TableHead className="sticky left-0 bg-background z-30 min-w-[200px] whitespace-nowrap border-r border-border">
-                            <div className="flex items-center gap-2">
-                              <span>Metric</span>
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                className="h-6 px-2"
-                                onClick={() => setShowFormulaBar(!showFormulaBar)}
-                                title="Show formula bar"
-                              >
-                                <Calculator className="h-3 w-3" />
-                              </Button>
-                            </div>
-                          </TableHead>
-                          {filteredQuarters.map((quarter) => (
-                            <TableHead key={quarter.quarter} className="text-right min-w-[120px] whitespace-nowrap">
-                              <div className="flex items-center justify-end gap-2">
-                                <Checkbox
-                                  checked={selectedQuartersForFormula.has(quarter.quarter)}
-                                  onCheckedChange={(checked) => {
-                                    const newSet = new Set(selectedQuartersForFormula);
-                                    if (checked) {
-                                      newSet.add(quarter.quarter);
-                                    } else {
-                                      newSet.delete(quarter.quarter);
-                                    }
-                                    setSelectedQuartersForFormula(newSet);
-                                    if (newSet.size > 0 && !showFormulaBar) {
-                                      setShowFormulaBar(true);
-                                    }
-                                  }}
-                                  className="h-4 w-4"
-                                />
-                                <span>{formatQuarterWithLabel(quarter.quarter)}</span>
-                              </div>
-                            </TableHead>
-                          ))}
-                          {showSignalColumn && (
-                            <TableHead className="text-center min-w-[100px] sticky right-0 bg-background z-30 whitespace-nowrap border-l border-border font-semibold">
-                              Signal
-                              {activeFormula && (
-                                <span className="block text-xs text-muted-foreground font-normal">
-                                  ({activeFormula.id === "custom" ? "Custom" : activeFormula.name || "Main Signal Formula"})
-                                </span>
-                              )}
-                            </TableHead>
-                          )}
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {filteredMetrics.map((metric) => {
-                          // Get all values for this metric across filtered quarters
-                          const metricValues = filteredQuarters.map(q => q.metrics[metric]);
-
-                          return (
-                            <TableRow key={metric}>
-                              <TableCell className="font-medium sticky left-0 bg-background z-20 whitespace-nowrap border-r border-border">
-                                {metric.replace(/([A-Z])/g, ' $1').trim()}
-                              </TableCell>
-                              {metricValues.map((value, idx) => (
-                                <TableCell key={`${metric}-${filteredQuarters[idx].quarter}`} className="text-right font-mono whitespace-nowrap">
-                                  {value !== null && value !== undefined
-                                    ? (typeof value === 'string' && value.includes('%')
-                                      ? value
-                                      : formatCurrency(parseFloat(value)))
-                                    : "—"}
-                                </TableCell>
-                              ))}
-                              {showSignalColumn && (
-                                <TableCell className="text-center sticky right-0 bg-background z-20 whitespace-nowrap border-l border-border">
-                                  <SignalBadge signal={(formulaResultForSelected || formulaResult) as "BUY" | "SELL" | "HOLD" | "Check_OPM (Sell)" | "No Signal"} />
-                                </TableCell>
-                              )}
-                            </TableRow>
-                          );
-                        })}
-                      </TableBody>
-                    </Table>
-                  </div>
+                  <QuarterlyDataSpreadsheet
+                    data={{
+                      sectorId: company?.sectorId || "",
+                      quarters: filteredQuarters.map(q => q.quarter),
+                      metrics: filteredMetrics,
+                      companies: [{
+                        ticker: company?.ticker || ticker || "",
+                        companyId: company?.id || null,
+                        companyName: company?.name || ticker || "",
+                        quarters: filteredQuarters.reduce((acc, q) => {
+                          acc[q.quarter] = q.metrics;
+                          return acc;
+                        }, {} as Record<string, Record<string, string | null>>)
+                      }]
+                    }}
+                    selectedMetrics={filteredMetrics}
+                    selectedQuarters={filteredQuarters.map(q => q.quarter)}
+                    onCellSelect={handleCellSelect}
+                    selectedCells={new Set()}
+                    formulaResults={{ result: { result: formulaResultForSelected || formulaResult || "—", type: "string" } }}
+                    mode="company"
+                  />
                 </div>
               )}
             </CardContent>
