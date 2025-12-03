@@ -268,12 +268,15 @@ class ScreenerScraper {
    * Scrape quarterly data for a single company
    */
   async scrapeCompany(ticker: string, companyId?: string, sectorOverride?: string, userId?: string): Promise<ScrapeResult> {
-    const url = `https://www.screener.in/company/${ticker}/consolidated/#quarters`;
+    // Primary URL: consolidated quarterly data (preferred)
+    let url = `https://www.screener.in/company/${ticker}/consolidated/#quarters`;
+    const fallbackUrl = `https://www.screener.in/company/${ticker}/#quarters`;
     const startedAt = new Date();
     let logId: string | null = null;
 
-    console.log(`[SCRAPER] Starting scrape for ticker: ${ticker.toUpperCase()}`);
-    console.log(`[SCRAPER] URL: ${url}`);
+      console.log(`[SCRAPER] Starting scrape for ticker: ${ticker.toUpperCase()}`);
+      console.log(`[SCRAPER] Primary URL: ${url}`);
+      console.log(`[SCRAPER] Fallback URL: ${fallbackUrl}`);
     console.log(`[SCRAPER] Parameters: companyId=${companyId || 'none'}, sectorOverride=${sectorOverride || 'none'}, userId=${userId || 'none'}`);
 
     try {
@@ -329,7 +332,7 @@ class ScreenerScraper {
       console.log(`[SCRAPER] Waiting ${Math.round(delayMs)}ms before fetching full page to avoid rate limiting...`);
       await this.delay(delayMs);
 
-      console.log(`[SCRAPER] Fetching full company page URL: ${url}`);
+      console.log(`[SCRAPER] Fetching full company page URL (primary): ${url}`);
       const fetchStartTime = Date.now();
       let response: Response;
       try {
@@ -465,14 +468,53 @@ class ScreenerScraper {
       }
 
       // Find quarterly data table
-      console.log(`[SCRAPER] Extracting quarterly data...`);
+      console.log(`[SCRAPER] Extracting quarterly data from primary page...`);
       const extractStartTime = Date.now();
-      const quarterlyData = this.extractQuarterlyData($, ticker, finalCompanyId || undefined);
-      const extractDuration = Date.now() - extractStartTime;
-      console.log(`[SCRAPER] Extracted ${quarterlyData.length} quarterly data rows in ${extractDuration}ms`);
+      let quarterlyData = this.extractQuarterlyData($, ticker, finalCompanyId || undefined);
+      let extractDuration = Date.now() - extractStartTime;
+      console.log(`[SCRAPER] Extracted ${quarterlyData.length} quarterly data rows from primary page in ${extractDuration}ms`);
+
+      // Fallback: if no quarterly data found on consolidated page, try the non-consolidated quarters URL
+      if (quarterlyData.length === 0) {
+        try {
+          console.warn(`[SCRAPER] No quarterly data found on consolidated page for ${ticker}. Trying fallback URL...`);
+          const fallbackDelayMs = Math.random() * 2000 + 1000;
+          console.log(`[SCRAPER] Waiting ${Math.round(fallbackDelayMs)}ms before fetching fallback page to avoid rate limiting...`);
+          await this.delay(fallbackDelayMs);
+
+          url = fallbackUrl;
+          console.log(`[SCRAPER] Fetching fallback company page URL: ${url}`);
+          const fallbackFetchStart = Date.now();
+          const fallbackResponse = await this.fetchWithRetry(url);
+          const fallbackFetchDuration = Date.now() - fallbackFetchStart;
+          console.log(`[SCRAPER] Fallback HTTP Response: ${fallbackResponse.status} ${fallbackResponse.statusText} (took ${fallbackFetchDuration}ms)`);
+
+          if (fallbackResponse.ok) {
+            const fallbackHtmlStart = Date.now();
+            const fallbackHtml = await fallbackResponse.text();
+            const fallbackHtmlDuration = Date.now() - fallbackHtmlStart;
+            console.log(`[SCRAPER] Received fallback HTML (${fallbackHtml.length} bytes) in ${fallbackHtmlDuration}ms`);
+
+            const fallbackParseStart = Date.now();
+            const fallback$ = load(fallbackHtml);
+            const fallbackParseDuration = Date.now() - fallbackParseStart;
+            console.log(`[SCRAPER] Parsed fallback HTML with Cheerio in ${fallbackParseDuration}ms`);
+
+            console.log(`[SCRAPER] Extracting quarterly data from fallback page...`);
+            const fallbackExtractStart = Date.now();
+            quarterlyData = this.extractQuarterlyData(fallback$, ticker, finalCompanyId || undefined);
+            extractDuration = Date.now() - fallbackExtractStart;
+            console.log(`[SCRAPER] Extracted ${quarterlyData.length} quarterly data rows from fallback page in ${extractDuration}ms`);
+          } else {
+            console.warn(`[SCRAPER] Fallback URL returned non-OK status: ${fallbackResponse.status} ${fallbackResponse.statusText}`);
+          }
+        } catch (fallbackError) {
+          console.error(`[SCRAPER] Error while trying fallback URL for ${ticker}:`, fallbackError);
+        }
+      }
 
       if (quarterlyData.length === 0) {
-        console.warn(`[SCRAPER] No quarterly data found for ticker: ${ticker}`);
+        console.warn(`[SCRAPER] No quarterly data found for ticker: ${ticker} on either primary or fallback URLs`);
         console.warn(`[SCRAPER] Company name: ${companyName || 'NOT FOUND'}`);
         console.warn(`[SCRAPER] Sector: ${sectorName || 'NOT FOUND'}`);
         return {
@@ -1312,12 +1354,6 @@ class ScreenerScraper {
     };
   }
 
-  /**
-   * Delay helper
-   */
-  private delay(ms: number): Promise<void> {
-    return new Promise(resolve => setTimeout(resolve, ms));
-  }
 }
 
 export const scraper = new ScreenerScraper();

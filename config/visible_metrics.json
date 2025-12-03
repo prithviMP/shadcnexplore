@@ -1,5 +1,5 @@
 {
-  "Sales": false,
+  "Sales": true,
   "Sales Growth(YoY) %": true,
   "Sales Growth(QoQ) %": true,
   "Expenses": false,
