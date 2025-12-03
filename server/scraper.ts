@@ -271,6 +271,8 @@ class ScreenerScraper {
     // Primary URL: consolidated quarterly data (preferred)
     let url = `https://www.screener.in/company/${ticker}/consolidated/#quarters`;
     const fallbackUrl = `https://www.screener.in/company/${ticker}/#quarters`;
+    // Track where we finally loaded quarterly data from for better observability
+    let quarterlyDataSource: 'primary' | 'fallback' | 'none' = 'none';
     const startedAt = new Date();
     let logId: string | null = null;
 
@@ -468,11 +470,14 @@ class ScreenerScraper {
       }
 
       // Find quarterly data table
-      console.log(`[SCRAPER] Extracting quarterly data from primary page...`);
+      console.log(`[SCRAPER] Extracting quarterly data from primary page (consolidated)...`);
       const extractStartTime = Date.now();
       let quarterlyData = this.extractQuarterlyData($, ticker, finalCompanyId || undefined);
       let extractDuration = Date.now() - extractStartTime;
       console.log(`[SCRAPER] Extracted ${quarterlyData.length} quarterly data rows from primary page in ${extractDuration}ms`);
+      if (quarterlyData.length > 0) {
+        quarterlyDataSource = 'primary';
+      }
 
       // Fallback: if no quarterly data found on consolidated page, try the non-consolidated quarters URL
       if (quarterlyData.length === 0) {
@@ -500,11 +505,14 @@ class ScreenerScraper {
             const fallbackParseDuration = Date.now() - fallbackParseStart;
             console.log(`[SCRAPER] Parsed fallback HTML with Cheerio in ${fallbackParseDuration}ms`);
 
-            console.log(`[SCRAPER] Extracting quarterly data from fallback page...`);
+            console.log(`[SCRAPER] Extracting quarterly data from fallback page (standalone #quarters)...`);
             const fallbackExtractStart = Date.now();
             quarterlyData = this.extractQuarterlyData(fallback$, ticker, finalCompanyId || undefined);
             extractDuration = Date.now() - fallbackExtractStart;
             console.log(`[SCRAPER] Extracted ${quarterlyData.length} quarterly data rows from fallback page in ${extractDuration}ms`);
+            if (quarterlyData.length > 0) {
+              quarterlyDataSource = 'fallback';
+            }
           } else {
             console.warn(`[SCRAPER] Fallback URL returned non-OK status: ${fallbackResponse.status} ${fallbackResponse.statusText}`);
           }
@@ -534,6 +542,7 @@ class ScreenerScraper {
       console.log(`[SCRAPER] Quarterly data summary: ${uniqueQuartersBefore.size} unique quarters, ${uniqueMetricsBefore.size} unique metrics`);
       console.log(`[SCRAPER] Quarters found:`, Array.from(uniqueQuartersBefore).sort().join(', '));
       console.log(`[SCRAPER] Metrics found (first 20):`, Array.from(uniqueMetricsBefore).slice(0, 20).join(', '));
+      console.log(`[SCRAPER] Quarterly data source for ${ticker}: ${quarterlyDataSource.toUpperCase()}`);
 
       // Store in database
       console.log(`[SCRAPER] Storing ${quarterlyData.length} quarterly data rows in database...`);
@@ -592,6 +601,7 @@ class ScreenerScraper {
       const uniqueQuarters = new Set(quarterlyData.map(d => d.quarter));
       const uniqueMetrics = new Set(quarterlyData.map(d => d.metricName));
       console.log(`[SCRAPER] Final counts: ${uniqueQuarters.size} quarters, ${uniqueMetrics.size} metrics`);
+      console.log(`[SCRAPER] Data source for stored quarterly data: ${quarterlyDataSource.toUpperCase()}`);
 
       // Get sector ID for logging
       let sectorIdForLog = null;
