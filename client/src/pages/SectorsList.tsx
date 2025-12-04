@@ -156,6 +156,18 @@ export default function SectorsList() {
   }, [sectorFormulaData, globalFormula]);
   const currentSector = sectors?.find(s => s.id === displaySectorId);
 
+  // Human-readable label for which formula is currently active
+  const activeFormulaLabel = useMemo(() => {
+    if (!activeSectorFormula) return "";
+    const scopeLabel =
+      activeSectorFormula.scope === "sector"
+        ? "Sector formula"
+        : activeSectorFormula.scope === "company"
+        ? "Company formula"
+        : "Global formula";
+    return `${activeSectorFormula.name} (${scopeLabel}, priority ${activeSectorFormula.priority})`;
+  }, [activeSectorFormula]);
+
   // Fetch quarterly data for the selected sector
   const { data: quarterlyData, isLoading: quarterlyLoading } = useQuery<QuarterlyDataResponse>({
     queryKey: ["/api/v1/sectors", displaySectorId, "quarterly-data"],
@@ -1028,70 +1040,82 @@ export default function SectorsList() {
           </p>
         </div>
 
-        {isAdmin && (
-          <div className="ml-auto flex gap-2 shrink-0">
-            <Dialog open={manageMappingsOpen} onOpenChange={setManageMappingsOpen}>
-              <DialogTrigger asChild>
-                <Button variant="outline" size="sm">
-                  <Settings className="h-4 w-4 sm:mr-2" />
-                  <span className="hidden sm:inline">Manage Mappings</span>
-                </Button>
-              </DialogTrigger>
-              <DialogContent>
-                <DialogHeader>
-                  <DialogTitle>Sector Mappings</DialogTitle>
-                  <DialogDescription>
-                    Map this custom sector to Screener.in sector names for scraping.
-                  </DialogDescription>
-                </DialogHeader>
+        <div className="ml-auto flex items-center gap-3 shrink-0">
+          {activeFormulaLabel && (
+            <div className="hidden sm:flex flex-col items-end max-w-[260px]">
+              <span className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                Active Formula
+              </span>
+              <span className="text-xs sm:text-sm font-medium text-slate-700 dark:text-slate-200 truncate">
+                {activeFormulaLabel}
+              </span>
+            </div>
+          )}
+          {isAdmin && (
+            <div className="flex gap-2 shrink-0">
+              <Dialog open={manageMappingsOpen} onOpenChange={setManageMappingsOpen}>
+                <DialogTrigger asChild>
+                  <Button variant="outline" size="sm">
+                    <Settings className="h-4 w-4 sm:mr-2" />
+                    <span className="hidden sm:inline">Manage Mappings</span>
+                  </Button>
+                </DialogTrigger>
+                <DialogContent>
+                  <DialogHeader>
+                    <DialogTitle>Sector Mappings</DialogTitle>
+                    <DialogDescription>
+                      Map this custom sector to Screener.in sector names for scraping.
+                    </DialogDescription>
+                  </DialogHeader>
 
-                <div className="space-y-4 py-4">
-                  <div className="flex gap-2">
-                    <Input
-                      placeholder="Screener Sector Name"
-                      value={newMappingName}
-                      onChange={(e) => setNewMappingName(e.target.value)}
-                    />
-                    <Button onClick={handleAddMapping} disabled={createMappingMutation.isPending || !newMappingName}>
-                      {createMappingMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
-                    </Button>
-                  </div>
+                  <div className="space-y-4 py-4">
+                    <div className="flex gap-2">
+                      <Input
+                        placeholder="Screener Sector Name"
+                        value={newMappingName}
+                        onChange={(e) => setNewMappingName(e.target.value)}
+                      />
+                      <Button onClick={handleAddMapping} disabled={createMappingMutation.isPending || !newMappingName}>
+                        {createMappingMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
+                      </Button>
+                    </div>
 
-                  <div className="space-y-2">
-                    <Label>Existing Mappings</Label>
-                    {mappingsLoading ? (
-                      <div className="space-y-2">
-                        <Skeleton className="h-10 w-full" />
-                        <Skeleton className="h-10 w-full" />
-                      </div>
-                    ) : sectorMappings && sectorMappings.length > 0 ? (
-                      <div className="space-y-2">
-                        {sectorMappings.map((mapping) => (
-                          <div key={mapping.id} className="flex items-center justify-between p-2 border rounded-md bg-muted/50">
-                            <span className="font-medium">{mapping.screenerSector}</span>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="h-8 w-8 text-destructive hover:text-destructive hover:bg-destructive/10"
-                              onClick={() => handleDeleteMapping(mapping.id)}
-                              disabled={deleteMappingMutation.isPending}
-                            >
-                              <Trash2 className="h-4 w-4" />
-                            </Button>
-                          </div>
-                        ))}
-                      </div>
-                    ) : (
-                      <div className="text-center py-4 text-muted-foreground text-sm border rounded-md border-dashed">
-                        No mappings found. Add a Screener.in sector name above.
-                      </div>
-                    )}
+                    <div className="space-y-2">
+                      <Label>Existing Mappings</Label>
+                      {mappingsLoading ? (
+                        <div className="space-y-2">
+                          <Skeleton className="h-10 w-full" />
+                          <Skeleton className="h-10 w-full" />
+                        </div>
+                      ) : sectorMappings && sectorMappings.length > 0 ? (
+                        <div className="space-y-2">
+                          {sectorMappings.map((mapping) => (
+                            <div key={mapping.id} className="flex items-center justify-between p-2 border rounded-md bg-muted/50">
+                              <span className="font-medium">{mapping.screenerSector}</span>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-8 w-8 text-destructive hover:text-destructive hover:bg-destructive/10"
+                                onClick={() => handleDeleteMapping(mapping.id)}
+                                disabled={deleteMappingMutation.isPending}
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="text-center py-4 text-muted-foreground text-sm border rounded-md border-dashed">
+                          No mappings found. Add a Screener.in sector name above.
+                        </div>
+                      )}
+                    </div>
                   </div>
-                </div>
-              </DialogContent>
-            </Dialog>
-          </div>
-        )}
+                </DialogContent>
+              </Dialog>
+            </div>
+          )}
+        </div>
       </div>
 
       <Tabs defaultValue="companies" className="space-y-4">
