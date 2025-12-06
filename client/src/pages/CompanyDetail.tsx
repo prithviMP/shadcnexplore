@@ -939,6 +939,15 @@ export default function CompanyDetail() {
               <div className="flex items-center gap-2 mt-1 flex-wrap">
                 <p className="text-sm sm:text-base text-muted-foreground truncate" data-testid="text-company-name">{company.name}</p>
                 <Badge variant="outline" data-testid="badge-sector" className="text-xs">{sectorName}</Badge>
+                {activeFormulaForPage && (
+                  <Badge variant="outline" className="text-xs">
+                    <Calculator className="h-3 w-3 mr-1" />
+                    Formula: {activeFormulaForPage.name}
+                    {activeFormulaForPage.scope === "company" && " (Company)"}
+                    {activeFormulaForPage.scope === "sector" && " (Sector)"}
+                    {activeFormulaForPage.scope === "global" && " (Global)"}
+                  </Badge>
+                )}
               </div>
             </div>
             {lastScrape && (

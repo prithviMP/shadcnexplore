@@ -112,6 +112,188 @@ interface BulkImportItemType {
   createdAt: string;
 }
 
+interface SchedulerSetting {
+  id: string;
+  jobType: string;
+  schedule: string;
+  enabled: boolean;
+  description: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+// Scheduler Settings Editor Component
+function SchedulerSettingsEditor() {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const [editingJobType, setEditingJobType] = useState<string | null>(null);
+  const [editSchedule, setEditSchedule] = useState<string>("");
+  const [editEnabled, setEditEnabled] = useState<boolean>(true);
+
+  const { data: settings, isLoading } = useQuery<SchedulerSetting[]>({
+    queryKey: ["/api/v1/scheduler/settings"],
+  });
+
+  const updateMutation = useMutation({
+    mutationFn: async ({ jobType, schedule, enabled }: { jobType: string; schedule: string; enabled: boolean }) => {
+      const res = await apiRequest("PUT", `/api/v1/scheduler/settings/${jobType}`, {
+        schedule,
+        enabled,
+      });
+      return res.json();
+    },
+    onSuccess: () => {
+      toast({
+        title: "Schedule updated",
+        description: "Scheduler settings have been updated and will take effect immediately.",
+      });
+      queryClient.invalidateQueries({ queryKey: ["/api/v1/scheduler/settings"] });
+      setEditingJobType(null);
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Update failed",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  const parseCronToTime = (cron: string): string => {
+    // Parse cron expression: "0 6 * * *" -> "06:00"
+    const parts = cron.split(" ");
+    if (parts.length >= 2) {
+      const hour = parts[1].padStart(2, "0");
+      const minute = parts[0].padStart(2, "0");
+      return `${hour}:${minute}`;
+    }
+    return "06:00";
+  };
+
+  const timeToCron = (time: string, dayOfWeek?: string): string => {
+    // Convert "HH:MM" to cron: "0 MM HH * * *" or "0 MM HH * * DOW"
+    const [hour, minute] = time.split(":");
+    if (dayOfWeek !== undefined) {
+      return `${minute} ${hour} * * ${dayOfWeek}`;
+    }
+    return `${minute} ${hour} * * *`;
+  };
+
+  const handleEdit = (setting: SchedulerSetting) => {
+    setEditingJobType(setting.jobType);
+    setEditSchedule(parseCronToTime(setting.schedule));
+    setEditEnabled(setting.enabled);
+  };
+
+  const handleSave = (jobType: string) => {
+    // Determine day of week from original schedule if it's weekly
+    const originalSetting = settings?.find(s => s.jobType === jobType);
+    let dayOfWeek: string | undefined;
+    if (originalSetting?.schedule.includes("0")) {
+      const parts = originalSetting.schedule.split(" ");
+      if (parts.length === 5 && parts[4] !== "*") {
+        dayOfWeek = parts[4];
+      }
+    }
+
+    const cronExpression = timeToCron(editSchedule, dayOfWeek);
+    updateMutation.mutate({
+      jobType,
+      schedule: cronExpression,
+      enabled: editEnabled,
+    });
+  };
+
+  const getJobDisplayName = (jobType: string): string => {
+    const names: Record<string, string> = {
+      "daily-scraping": "Daily Scraping",
+      "signal-incremental": "Incremental Signal Refresh",
+      "signal-full": "Full Signal Refresh",
+    };
+    return names[jobType] || jobType;
+  };
+
+  if (isLoading) {
+    return <div className="text-center py-4 text-muted-foreground">Loading settings...</div>;
+  }
+
+  return (
+    <div className="space-y-4">
+      {settings?.map((setting) => (
+        <div key={setting.id} className="flex items-center justify-between p-4 border rounded-lg">
+          <div className="flex-1">
+            <div className="font-medium">{getJobDisplayName(setting.jobType)}</div>
+            <div className="text-sm text-muted-foreground">
+              {setting.description || "No description"}
+            </div>
+            {editingJobType === setting.jobType ? (
+              <div className="mt-2 space-y-2">
+                <div className="flex items-center gap-2">
+                  <Input
+                    type="time"
+                    value={editSchedule}
+                    onChange={(e) => setEditSchedule(e.target.value)}
+                    className="w-32"
+                  />
+                  <Checkbox
+                    checked={editEnabled}
+                    onCheckedChange={(checked) => setEditEnabled(checked === true)}
+                    id={`enabled-${setting.jobType}`}
+                  />
+                  <Label htmlFor={`enabled-${setting.jobType}`} className="text-sm">
+                    Enabled
+                  </Label>
+                </div>
+                <div className="flex gap-2">
+                  <Button
+                    size="sm"
+                    onClick={() => handleSave(setting.jobType)}
+                    disabled={updateMutation.isPending}
+                  >
+                    {updateMutation.isPending ? (
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    ) : (
+                      <Save className="h-4 w-4 mr-2" />
+                    )}
+                    Save
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => setEditingJobType(null)}
+                  >
+                    Cancel
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <div className="mt-1 text-xs text-muted-foreground">
+                Schedule: {setting.schedule} ({parseCronToTime(setting.schedule)})
+                {setting.jobType === "signal-full" && " on Sundays"}
+              </div>
+            )}
+          </div>
+          {editingJobType !== setting.jobType && (
+            <div className="flex items-center gap-2">
+              <Badge variant={setting.enabled ? "default" : "secondary"}>
+                {setting.enabled ? "Enabled" : "Disabled"}
+              </Badge>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => handleEdit(setting)}
+              >
+                <Edit className="h-4 w-4 mr-2" />
+                Edit
+              </Button>
+            </div>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export default function SchedulerSettings() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
@@ -482,41 +664,6 @@ export default function SchedulerSettings() {
         <p className="text-muted-foreground mt-1">Manage automatic scraping schedules</p>
       </div>
 
-      <Card>
-        <CardHeader>
-          <div className="flex items-center justify-between">
-            <div>
-              <CardTitle>Daily Automatic Scraping</CardTitle>
-              <CardDescription>
-                Scheduled to run daily at 6:00 AM (IST). Scrapes all companies in all sectors.
-              </CardDescription>
-            </div>
-            <Badge variant="outline" className="flex items-center gap-2">
-              <Clock className="h-4 w-4" />
-              Active
-            </Badge>
-          </div>
-        </CardHeader>
-        <CardContent>
-          <div className="space-y-4">
-            <div className="flex items-center justify-between p-4 border rounded-lg">
-              <div>
-                <div className="font-medium">Default Daily Schedule</div>
-                <div className="text-sm text-muted-foreground">
-                  Cron: 0 6 * * * (6:00 AM daily)
-                </div>
-              </div>
-              <div className="flex items-center gap-2">
-                <Badge variant="secondary">Enabled</Badge>
-              </div>
-            </div>
-            <p className="text-sm text-muted-foreground">
-              This schedule automatically scrapes all companies in all sectors every morning.
-              The scheduler is initialized when the server starts and runs continuously.
-            </p>
-          </div>
-        </CardContent>
-      </Card>
 
       <Card>
         <CardHeader>
@@ -1046,16 +1193,22 @@ export default function SchedulerSettings() {
 
       <Card>
         <CardHeader>
+          <CardTitle>Scheduler Settings</CardTitle>
+          <CardDescription>Configure schedule times for automated jobs</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <SchedulerSettingsEditor />
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
           <CardTitle>Scheduler Information</CardTitle>
         </CardHeader>
         <CardContent className="space-y-2 text-sm">
           <div className="flex justify-between">
             <span className="text-muted-foreground">Timezone:</span>
             <span className="font-medium">Asia/Kolkata (IST)</span>
-          </div>
-          <div className="flex justify-between">
-            <span className="text-muted-foreground">Default Schedule:</span>
-            <span className="font-medium">Daily at 6:00 AM</span>
           </div>
           <div className="flex justify-between">
             <span className="text-muted-foreground">Total Sectors:</span>

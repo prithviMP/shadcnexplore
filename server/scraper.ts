@@ -594,6 +594,14 @@ class ScreenerScraper {
           // If company.sectorId exists, we NEVER update it - preserve user's choice
 
           await storage.updateCompany(company.id, updateData);
+          
+          // Trigger signal recalculation for this company in the background
+          if (finalCompanyId) {
+            const { signalProcessor } = await import("./signalProcessor");
+            signalProcessor.enqueueJob("company", [finalCompanyId]).catch((error) => {
+              console.error(`[SCRAPER] Failed to queue signal recalculation for ${ticker}:`, error);
+            });
+          }
         }
       }
 

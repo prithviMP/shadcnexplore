@@ -2,7 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Building2, TrendingUp, Layers, Clock, Filter, Search, List, Grid3x3, ExternalLink, ChevronDown, ArrowUp, ArrowDown, ArrowUpDown } from "lucide-react";
+import { Building2, TrendingUp, Layers, Clock, Filter, Search, List, Grid3x3, ExternalLink, ChevronDown, ArrowUp, ArrowDown, ArrowUpDown, RefreshCw, AlertCircle, CheckCircle2 } from "lucide-react";
 import SignalBadge from "@/components/SignalBadge";
 import { Link, useLocation } from "wouter";
 import type { Company, Sector, Signal } from "@shared/schema";
@@ -10,6 +10,8 @@ import { formatDistanceToNow } from "date-fns";
 import { ChartContainer, ChartTooltip, ChartTooltipContent } from "@/components/ui/chart";
 import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, CartesianGrid, Legend } from "recharts";
 import { useMemo, useState, useEffect } from "react";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useToast } from "@/hooks/use-toast";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
@@ -50,6 +52,62 @@ export default function Dashboard() {
     queryKey: ["/api/signals"],
   });
 
+  // Fetch signal status
+  const { data: signalStatus, isLoading: signalStatusLoading } = useQuery<{
+    totalSignals: number;
+    staleSignals: number;
+    lastCalculationTime: string | null;
+    signalsByType: { signal: string; count: number }[];
+    queue: {
+      queueLength: number;
+      activeJob: any;
+      isProcessing: boolean;
+    };
+  }>({
+    queryKey: ["/api/v1/signals/status"],
+    refetchInterval: 30000, // Refetch every 30 seconds
+  });
+
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
+  const refreshSignalsMutation = useMutation({
+    mutationFn: async (incremental: boolean) => {
+      const res = await apiRequest("POST", "/api/signals/calculate", {
+        incremental,
+        async: true,
+        batchSize: 50,
+      });
+      return res.json();
+    },
+    onSuccess: (data) => {
+      toast({
+        title: "Signal refresh started",
+        description: `Job ${data.jobId} has been queued. Signals will be updated in the background.`,
+      });
+      // Refetch signal status after a short delay
+      setTimeout(() => {
+        queryClient.invalidateQueries({ queryKey: ["/api/v1/signals/status"] });
+      }, 2000);
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to start signal refresh",
+        variant: "destructive",
+      });
+    },
+    onSettled: () => {
+      setIsRefreshing(false);
+    },
+  });
+
+  const handleRefreshSignals = (incremental = true) => {
+    setIsRefreshing(true);
+    refreshSignalsMutation.mutate(incremental);
+  };
+
   const isLoading = companiesLoading || sectorsLoading || signalsLoading;
 
   // Calculate stats from real data
@@ -59,7 +117,11 @@ export default function Dashboard() {
     sectors: sectors?.length || 0,
     lastUpdate: companies && companies.length > 0
       ? formatDistanceToNow(new Date(Math.max(...companies.map(c => new Date(c.updatedAt).getTime()))), { addSuffix: true })
-      : "Never"
+      : "Never",
+    lastSignalCalculation: signalStatus?.lastCalculationTime
+      ? formatDistanceToNow(new Date(signalStatus.lastCalculationTime), { addSuffix: true })
+      : "Never",
+    staleSignals: signalStatus?.staleSignals || 0,
   };
 
   // Get sector overview with signal counts
@@ -470,10 +532,46 @@ export default function Dashboard() {
   return (
     <div className="space-y-4 sm:space-y-6 w-full min-w-0">
       <div>
-        <h1 className="text-2xl sm:text-3xl font-bold">
-          Dashboard
-        </h1>
-        <p className="text-sm sm:text-base text-muted-foreground mt-1">Real-time overview of your financial screening data</p>
+        <div className="flex items-start justify-between">
+          <div>
+            <h1 className="text-2xl sm:text-3xl font-bold">
+              Dashboard
+            </h1>
+            <p className="text-sm sm:text-base text-muted-foreground mt-1">Real-time overview of your financial screening data</p>
+          </div>
+          <div className="flex items-center gap-2">
+            {signalStatus && (
+              <div className="flex items-center gap-2 text-sm">
+                {signalStatus.staleSignals > 0 ? (
+                  <div className="flex items-center gap-1 text-amber-600 dark:text-amber-500">
+                    <AlertCircle className="h-4 w-4" />
+                    <span>{signalStatus.staleSignals} stale</span>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-1 text-green-600 dark:text-green-500">
+                    <CheckCircle2 className="h-4 w-4" />
+                    <span>Up to date</span>
+                  </div>
+                )}
+                {signalStatus.lastCalculationTime && (
+                  <span className="text-muted-foreground">
+                    • {formatDistanceToNow(new Date(signalStatus.lastCalculationTime), { addSuffix: true })}
+                  </span>
+                )}
+              </div>
+            )}
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => handleRefreshSignals(true)}
+              disabled={isRefreshing || signalStatus?.queue.isProcessing}
+              className="gap-2"
+            >
+              <RefreshCw className={`h-4 w-4 ${isRefreshing || signalStatus?.queue.isProcessing ? 'animate-spin' : ''}`} />
+              Refresh Signals
+            </Button>
+          </div>
+        </div>
       </div>
 
       <div className="grid gap-3 sm:gap-4 grid-cols-2 lg:grid-cols-4">

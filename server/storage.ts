@@ -46,9 +46,12 @@ import {
   type BulkImportJob,
   type InsertBulkImportJob,
   type BulkImportItem,
-  type InsertBulkImportItem
+  type InsertBulkImportItem,
+  type SchedulerSettings,
+  type InsertSchedulerSettings,
+  schedulerSettings
 } from "@shared/schema";
-import { eq, and, inArray, desc, sql, gte, lte } from "drizzle-orm";
+import { eq, and, inArray, desc, sql, gte, lte, lt, or, isNull, max } from "drizzle-orm";
 import { randomBytes } from "crypto";
 
 export interface IStorage {
@@ -131,6 +134,13 @@ export interface IStorage {
   createSignal(signal: InsertSignal): Promise<Signal>;
   deleteSignal(id: string): Promise<void>;
   deleteSignalsByCompany(companyId: string): Promise<void>;
+  getStaleSignalCount(): Promise<number>;
+  getSignalStatistics(): Promise<{
+    totalSignals: number;
+    staleSignals: number;
+    lastCalculationTime: Date | null;
+    signalsByType: { signal: string; count: number }[];
+  }>;
 
   // Custom Table operations
   getCustomTable(id: string): Promise<CustomTable | undefined>;
@@ -434,6 +444,71 @@ export class DbStorage implements IStorage {
 
   async deleteSignalsByCompany(companyId: string): Promise<void> {
     await db.delete(signals).where(eq(signals.companyId, companyId));
+  }
+
+  async getStaleSignalCount(): Promise<number> {
+    const { companies: companiesTable } = await import("@shared/schema");
+    
+    // Count companies where company.updatedAt > signal.updatedAt or no signal exists
+    const result = await db
+      .select({ count: sql<number>`count(distinct ${companiesTable.id})` })
+      .from(companiesTable)
+      .leftJoin(signals, eq(companiesTable.id, signals.companyId))
+      .where(
+        or(
+          isNull(signals.id),
+          lt(signals.updatedAt, companiesTable.updatedAt)
+        )
+      );
+    
+    return result[0]?.count || 0;
+  }
+
+  async getSignalStatistics(): Promise<{
+    totalSignals: number;
+    staleSignals: number;
+    lastCalculationTime: Date | null;
+    signalsByType: { signal: string; count: number }[];
+  }> {
+    const { companies: companiesTable } = await import("@shared/schema");
+    
+    // Get total signals count
+    const totalSignalsResult = await db
+      .select({ count: sql<number>`count(*)` })
+      .from(signals);
+    const totalSignals = Number(totalSignalsResult[0]?.count || 0);
+
+    // Get stale signals count
+    const staleSignals = await this.getStaleSignalCount();
+
+    // Get last calculation time (max updatedAt from signals)
+    const lastCalcResult = await db
+      .select({ maxUpdatedAt: max(signals.updatedAt) })
+      .from(signals);
+    const lastCalculationTime = lastCalcResult[0]?.maxUpdatedAt 
+      ? new Date(lastCalcResult[0].maxUpdatedAt) 
+      : null;
+
+    // Get signals by type
+    const signalsByTypeResult = await db
+      .select({
+        signal: signals.signal,
+        count: sql<number>`count(*)`,
+      })
+      .from(signals)
+      .groupBy(signals.signal);
+    
+    const signalsByType = signalsByTypeResult.map(row => ({
+      signal: row.signal,
+      count: Number(row.count),
+    }));
+
+    return {
+      totalSignals,
+      staleSignals,
+      lastCalculationTime,
+      signalsByType,
+    };
   }
 
   // OTP operations

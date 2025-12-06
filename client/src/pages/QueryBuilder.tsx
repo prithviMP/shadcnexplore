@@ -238,10 +238,10 @@ export default function QueryBuilder() {
       <Card className="bg-gradient-to-br from-white to-slate-50/50 dark:from-slate-900 dark:to-slate-900/50 border-slate-200 dark:border-slate-800 shadow-lg">
         <CardHeader>
           <CardTitle>Write Query</CardTitle>
-          <CardDescription>
-            Use Excel-like syntax to filter companies. Examples: <code className="text-xs">ROE &gt; 20</code>, <code className="text-xs">AND(ROE &gt; 25, P/E &lt; 15)</code>
+                  <CardDescription className="dark:text-slate-300">
+            Use Excel-like syntax to filter companies. Examples: <code className="text-xs dark:text-slate-200 dark:bg-slate-800">ROE &gt; 20</code>, <code className="text-xs dark:text-slate-200 dark:bg-slate-800">AND(ROE &gt; 25, P/E &lt; 15)</code>
             <br />
-            <span className="text-xs text-muted-foreground mt-1 block">
+            <span className="text-xs text-muted-foreground dark:text-slate-400 mt-1 block">
               Excel formulas: Use Q12-Q16 (current quarter) and P12-P16 (previous quarter) metrics. Supports IF(), AND(), OR(), NOT(), ISNUMBER(), MIN(), ABS()
             </span>
           </CardDescription>
@@ -255,18 +255,18 @@ export default function QueryBuilder() {
               className="min-h-[120px] font-mono text-sm"
               data-testid="textarea-query"
             />
-            <div className="flex items-center justify-between text-xs text-muted-foreground">
+            <div className="flex items-center justify-between text-xs text-muted-foreground dark:text-slate-400">
               <div className="flex gap-4">
-                <span>
-                  <strong>Fields:</strong> Ticker, Company, Sector, Revenue, ROE, P/E, Debt, Signal
+                <span className="dark:text-slate-300">
+                  <strong className="dark:text-slate-200">Fields:</strong> Ticker, Company, Sector, Revenue, ROE, P/E, Debt, Signal
                 </span>
               </div>
               <div className="flex gap-4">
-                <span>
-                  <strong>Operators:</strong> =, &gt;, &lt;, &gt;=, &lt;=, &lt;&gt;
+                <span className="dark:text-slate-300">
+                  <strong className="dark:text-slate-200">Operators:</strong> =, &gt;, &lt;, &gt;=, &lt;=, &lt;&gt;
                 </span>
-                <span>
-                  <strong>Functions:</strong> AND(), OR(), IF()
+                <span className="dark:text-slate-300">
+                  <strong className="dark:text-slate-200">Functions:</strong> AND(), OR(), IF()
                 </span>
               </div>
             </div>
@@ -290,7 +290,7 @@ export default function QueryBuilder() {
         <Card className="bg-gradient-to-br from-white to-slate-50/50 dark:from-slate-900 dark:to-slate-900/50 border-slate-200 dark:border-slate-800 shadow-lg">
           <CardHeader>
             <CardTitle>Query Results</CardTitle>
-            <CardDescription>
+            <CardDescription className="dark:text-slate-300">
               {results.length} of {totalResults} companies match your criteria
             </CardDescription>
           </CardHeader>
@@ -311,9 +311,9 @@ export default function QueryBuilder() {
                 <TableBody>
                   {results.map((row) => (
                     <TableRow key={row.ticker} className="border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/50" data-testid={`result-${row.ticker.toLowerCase()}`}>
-                      <TableCell className="font-mono font-semibold">{row.ticker}</TableCell>
-                      <TableCell>{row.name}</TableCell>
-                      <TableCell>{row.sectorName}</TableCell>
+                      <TableCell className="font-mono font-semibold dark:text-slate-200">{row.ticker}</TableCell>
+                      <TableCell className="dark:text-slate-200">{row.name}</TableCell>
+                      <TableCell className="dark:text-slate-200">{row.sectorName}</TableCell>
                       <TableCell className="text-right font-mono">
                         {row.revenue !== null ? (() => {
                           const val = row.revenue;
@@ -326,7 +326,7 @@ export default function QueryBuilder() {
                       <TableCell className="text-right font-mono text-emerald-600 dark:text-emerald-400">
                         {row.roe !== null ? `${row.roe.toFixed(1)}%` : "N/A"}
                       </TableCell>
-                      <TableCell className="text-right font-mono">
+                      <TableCell className="text-right font-mono dark:text-slate-200">
                         {row.pe !== null ? row.pe.toFixed(1) : "N/A"}
                       </TableCell>
                       <TableCell>

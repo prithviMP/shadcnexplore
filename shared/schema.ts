@@ -94,6 +94,7 @@ export const signals = pgTable("signals", {
   value: decimal("value", { precision: 10, scale: 4 }),
   metadata: jsonb("metadata"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
 
 export const quarterlyData = pgTable("quarterly_data", {
@@ -215,6 +216,7 @@ export const insertQuerySchema = createInsertSchema(queries).omit({
 export const insertSignalSchema = createInsertSchema(signals).omit({
   id: true,
   createdAt: true,
+  updatedAt: true,
 });
 
 export const insertCustomTableSchema = createInsertSchema(customTables).omit({
@@ -317,3 +319,23 @@ export type InsertBulkImportJob = z.infer<typeof insertBulkImportJobSchema>;
 
 export type BulkImportItem = typeof bulkImportItems.$inferSelect;
 export type InsertBulkImportItem = z.infer<typeof insertBulkImportItemSchema>;
+
+// Scheduler Settings - stores configurable schedule times
+export const schedulerSettings = pgTable("scheduler_settings", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  jobType: text("job_type").notNull().unique(), // 'daily-scraping', 'signal-incremental', 'signal-full'
+  schedule: text("schedule").notNull(), // Cron expression
+  enabled: boolean("enabled").notNull().default(true),
+  description: text("description"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export const insertSchedulerSettingsSchema = createInsertSchema(schedulerSettings).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export type SchedulerSettings = typeof schedulerSettings.$inferSelect;
+export type InsertSchedulerSettings = z.infer<typeof insertSchedulerSettingsSchema>;

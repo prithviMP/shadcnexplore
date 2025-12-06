@@ -759,6 +759,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!company) {
         return res.status(404).json({ error: "Company not found" });
       }
+      
+      // Trigger signal recalculation for this company in the background
+      // Only trigger if financial data or market cap was updated (data that affects signals)
+      if (data.financialData !== undefined || data.marketCap !== undefined) {
+        const { signalProcessor } = await import("./signalProcessor");
+        signalProcessor.enqueueJob("company", [company.id]).catch((error) => {
+          console.error(`[Routes] Failed to queue signal recalculation for company ${company.id}:`, error);
+        });
+      }
+      
       res.json(company);
     } catch (error: any) {
       res.status(400).json({ error: error.message });
@@ -1181,7 +1191,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Signal routes
   app.get("/api/signals", requireAuth, async (req, res) => {
     try {
-      const { companyId, formulaId } = req.query;
+      const { companyId, formulaId, stale } = req.query;
       let signals;
 
       if (companyId) {
@@ -1191,6 +1201,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
       } else {
         signals = await storage.getAllSignals();
       }
+
+      // If stale parameter is true, filter to only return signals for companies with stale data
+      if (stale === "true") {
+        const { FormulaEvaluator } = await import("./formulaEvaluator");
+        const staleCompanies = await FormulaEvaluator.findStaleSignalCompanies();
+        const staleCompanyIds = new Set(staleCompanies.map(c => c.id));
+        signals = signals.filter(s => staleCompanyIds.has(s.companyId));
+      }
+
+      // Add caching headers (5 minutes TTL for signal data)
+      res.setHeader("Cache-Control", "public, max-age=300");
+      res.setHeader("ETag", `"${Date.now()}"`);
 
       res.json(signals);
     } catch (error: any) {
@@ -1405,14 +1427,46 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Signal calculation routes
   app.post("/api/signals/calculate", requireAuth, requireRole("admin", "analyst"), async (req, res) => {
     try {
-      const { companyIds } = req.body;
+      const schema = z.object({
+        companyIds: z.array(z.string()).optional(),
+        incremental: z.boolean().optional().default(false),
+        batchSize: z.number().optional(),
+        async: z.boolean().optional().default(false),
+      });
+      const { companyIds, incremental, batchSize, async: asyncMode } = schema.parse(req.body);
 
       if (companyIds && !Array.isArray(companyIds)) {
         return res.status(400).json({ error: "companyIds must be an array" });
       }
 
-      const count = await FormulaEvaluator.calculateAndStoreSignals(companyIds);
-      res.json({ success: true, signalsGenerated: count });
+      // If async mode, queue the job and return immediately
+      if (asyncMode) {
+        const { signalProcessor } = await import("./signalProcessor");
+        const jobType = incremental ? "incremental" : companyIds ? "company" : "full";
+        const jobId = await signalProcessor.enqueueJob(jobType, companyIds, batchSize);
+        
+        return res.json({
+          success: true,
+          jobId,
+          message: "Signal calculation queued",
+          type: jobType,
+        });
+      }
+
+      // Synchronous processing
+      if (incremental) {
+        const { FormulaEvaluator } = await import("./formulaEvaluator");
+        const result = await FormulaEvaluator.calculateStaleSignals(batchSize);
+        res.json({
+          success: true,
+          signalsGenerated: result.signalsGenerated,
+          processed: result.processed,
+          incremental: true,
+        });
+      } else {
+        const count = await FormulaEvaluator.calculateAndStoreSignals(companyIds);
+        res.json({ success: true, signalsGenerated: count });
+      }
     } catch (error: any) {
       res.status(400).json({ error: error.message });
     }
@@ -1427,6 +1481,38 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const count = await FormulaEvaluator.calculateAndStoreSignals([req.params.companyId]);
       res.json({ success: true, signalsGenerated: count, companyId: req.params.companyId });
+    } catch (error: any) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
+  // Signal status endpoint
+  app.get("/api/v1/signals/status", requireAuth, requirePermission("signals:read"), async (req, res) => {
+    try {
+      const statistics = await storage.getSignalStatistics();
+      const { signalProcessor } = await import("./signalProcessor");
+      const queueStatus = signalProcessor.getQueueStatus();
+
+      res.json({
+        ...statistics,
+        queue: queueStatus,
+      });
+    } catch (error: any) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
+  // Get job status
+  app.get("/api/v1/signals/job/:jobId", requireAuth, requirePermission("signals:read"), async (req, res) => {
+    try {
+      const { signalProcessor } = await import("./signalProcessor");
+      const job = signalProcessor.getJobStatus(req.params.jobId);
+      
+      if (!job) {
+        return res.status(404).json({ error: "Job not found" });
+      }
+
+      res.json(job);
     } catch (error: any) {
       res.status(400).json({ error: error.message });
     }
@@ -1720,6 +1806,43 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Get specific history entry with details
+  // Scheduler Settings endpoints
+  app.get("/api/v1/scheduler/settings", requireAuth, requirePermission("scraper:read"), async (req, res) => {
+    try {
+      const settings = await storage.getAllSchedulerSettings();
+      res.json(settings);
+    } catch (error: any) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
+  app.put("/api/v1/scheduler/settings/:jobType", requireAuth, requirePermission("scraper:update"), async (req, res) => {
+    try {
+      const { jobType } = req.params;
+      const schema = z.object({
+        schedule: z.string().optional(),
+        enabled: z.boolean().optional(),
+        description: z.string().optional(),
+      });
+      const data = schema.parse(req.body);
+
+      const setting = await storage.upsertSchedulerSetting({
+        jobType,
+        schedule: data.schedule || "0 6 * * *",
+        enabled: data.enabled !== undefined ? data.enabled : true,
+        description: data.description,
+      });
+
+      // Reload scheduler with new settings
+      const { scrapingScheduler } = await import("./scheduler");
+      await scrapingScheduler.reloadSchedules();
+
+      res.json(setting);
+    } catch (error: any) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
   app.get("/api/v1/scheduler/history/:id", requireAuth, requirePermission("scraper:read"), async (req, res) => {
     try {
       const history = await storage.getSectorUpdateHistory(req.params.id);

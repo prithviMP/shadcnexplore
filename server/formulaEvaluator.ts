@@ -1,7 +1,7 @@
 import type { Company, Formula, Signal } from "@shared/schema";
 import { db } from "./db";
 import { signals } from "@shared/schema";
-import { eq, inArray, and } from "drizzle-orm";
+import { eq, inArray, and, or, lt, isNull, sql, desc } from "drizzle-orm";
 import { evaluateExcelFormulaForCompany } from "./excelFormulaEvaluator";
 
 type ComparisonOperator = ">" | "<" | ">=" | "<=" | "=" | "!=";
@@ -308,7 +308,8 @@ export class FormulaEvaluator {
                 condition: result.value,
                 formulaName: result.formulaName,
                 usedQuarters: result.usedQuarters
-              }
+              },
+              updatedAt: new Date()
             });
             signalsGenerated++;
           }
@@ -321,5 +322,78 @@ export class FormulaEvaluator {
     }
 
     return signalsGenerated;
+  }
+
+  /**
+   * Find companies with stale signals (where company data was updated after signal was calculated)
+   * or companies without any signals
+   */
+  static async findStaleSignalCompanies(): Promise<Company[]> {
+    const { companies: companiesTable, signals: signalsTable } = await import("@shared/schema");
+
+    // Find companies where:
+    // 1. Company has no signals at all, OR
+    // 2. Company's updatedAt > signal's updatedAt (data changed after signal calculation)
+    const staleCompanies = await db
+      .select({
+        id: companiesTable.id,
+        ticker: companiesTable.ticker,
+        name: companiesTable.name,
+        sectorId: companiesTable.sectorId,
+        marketCap: companiesTable.marketCap,
+        financialData: companiesTable.financialData,
+        createdAt: companiesTable.createdAt,
+        updatedAt: companiesTable.updatedAt,
+      })
+      .from(companiesTable)
+      .leftJoin(
+        signalsTable,
+        eq(companiesTable.id, signalsTable.companyId)
+      )
+      .where(
+        or(
+          // No signal exists for this company
+          isNull(signalsTable.id),
+          // Signal exists but company was updated after signal was calculated
+          lt(signalsTable.updatedAt, companiesTable.updatedAt)
+        )
+      )
+      .groupBy(
+        companiesTable.id,
+        companiesTable.ticker,
+        companiesTable.name,
+        companiesTable.sectorId,
+        companiesTable.marketCap,
+        companiesTable.financialData,
+        companiesTable.createdAt,
+        companiesTable.updatedAt
+      );
+
+    return staleCompanies as Company[];
+  }
+
+  /**
+   * Calculate signals only for companies with stale data
+   * This is the incremental calculation method
+   */
+  static async calculateStaleSignals(batchSize?: number): Promise<{ processed: number; signalsGenerated: number }> {
+    const staleCompanies = await this.findStaleSignalCompanies();
+    
+    if (staleCompanies.length === 0) {
+      return { processed: 0, signalsGenerated: 0 };
+    }
+
+    // Process in batches if batchSize is specified
+    const companiesToProcess = batchSize 
+      ? staleCompanies.slice(0, batchSize)
+      : staleCompanies;
+
+    const companyIds = companiesToProcess.map(c => c.id);
+    const signalsGenerated = await this.calculateAndStoreSignals(companyIds);
+
+    return {
+      processed: companiesToProcess.length,
+      signalsGenerated
+    };
   }
 }

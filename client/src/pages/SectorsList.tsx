@@ -62,6 +62,9 @@ export default function SectorsList() {
   const [selectedSectorId, setSelectedSectorId] = useState<string | null>(null);
   const [bulkScrapeOpen, setBulkScrapeOpen] = useState(false);
   const [scrapingSectorId, setScrapingSectorId] = useState<string | null>(null);
+  const [bulkSectorUpdateOpen, setBulkSectorUpdateOpen] = useState(false);
+  const [bulkUpdateTargetSectorId, setBulkUpdateTargetSectorId] = useState<string>("");
+  const [selectedCompaniesForBulkUpdate, setSelectedCompaniesForBulkUpdate] = useState<Set<string>>(new Set());
   const [marketCapMin, setMarketCapMin] = useState<string>("");
   const [marketCapMax, setMarketCapMax] = useState<string>("");
   const [signalFilter, setSignalFilter] = useState<string>("all");
@@ -606,6 +609,61 @@ export default function SectorsList() {
 
   const handleRefreshCompany = (ticker: string) => {
     refreshCompanyMutation.mutate(ticker);
+  };
+
+  // Bulk Sector Update Mutation
+  const bulkSectorUpdateMutation = useMutation({
+    mutationFn: async ({ companyIds, targetSectorId }: { companyIds: string[]; targetSectorId: string }) => {
+      const results = await Promise.allSettled(
+        companyIds.map(id => apiRequest("PUT", `/api/companies/${id}`, { sectorId: targetSectorId }))
+      );
+      return results;
+    },
+    onSuccess: (results) => {
+      const successCount = results.filter(r => r.status === "fulfilled").length;
+      const failedCount = results.filter(r => r.status === "rejected").length;
+
+      queryClient.invalidateQueries({ queryKey: ["/api/companies"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/sectors"] });
+      setBulkSectorUpdateOpen(false);
+      setBulkUpdateTargetSectorId("");
+      setSelectedCompaniesForBulkUpdate(new Set());
+
+      toast({
+        title: `Bulk sector update completed`,
+        description: `Successfully updated ${successCount} companies${failedCount > 0 ? `, ${failedCount} failed` : ""}`
+      });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Bulk sector update failed",
+        description: error.message,
+        variant: "destructive"
+      });
+    }
+  });
+
+  const handleBulkSectorUpdate = () => {
+    if (selectedCompaniesForBulkUpdate.size === 0) {
+      toast({
+        title: "No companies selected",
+        description: "Please select companies to update",
+        variant: "destructive"
+      });
+      return;
+    }
+    if (!bulkUpdateTargetSectorId) {
+      toast({
+        title: "Target sector required",
+        description: "Please select a target sector",
+        variant: "destructive"
+      });
+      return;
+    }
+    bulkSectorUpdateMutation.mutate({
+      companyIds: Array.from(selectedCompaniesForBulkUpdate),
+      targetSectorId: bulkUpdateTargetSectorId
+    });
   };
 
   const handleBulkScrape = () => {
@@ -1239,6 +1297,102 @@ export default function SectorsList() {
                     {signalFilter !== "all" && ` (filtered by ${signalFilter})`}
                   </CardDescription>
                 </div>
+                <Dialog open={bulkSectorUpdateOpen} onOpenChange={setBulkSectorUpdateOpen}>
+                  <DialogTrigger asChild>
+                    <Button
+                      variant="outline"
+                      onClick={() => {
+                        // Pre-select all companies in current sector
+                        if (filteredCompanies) {
+                          setSelectedCompaniesForBulkUpdate(new Set(filteredCompanies.map(c => c.id)));
+                        }
+                      }}
+                      disabled={!displaySectorId || filteredCompanies.length === 0}
+                    >
+                      <Settings className="h-4 w-4 mr-2" />
+                      Bulk Update Sector
+                    </Button>
+                  </DialogTrigger>
+                  <DialogContent>
+                    <DialogHeader>
+                      <DialogTitle>Bulk Update Sector</DialogTitle>
+                      <DialogDescription>
+                        Update sector for multiple companies. {selectedCompaniesForBulkUpdate.size > 0 && `${selectedCompaniesForBulkUpdate.size} companies selected.`}
+                      </DialogDescription>
+                    </DialogHeader>
+                    <div className="space-y-4">
+                      <div className="space-y-2">
+                        <Label>Current Sector: {currentSector?.name}</Label>
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="target-sector">Target Sector</Label>
+                        <Select value={bulkUpdateTargetSectorId} onValueChange={setBulkUpdateTargetSectorId}>
+                          <SelectTrigger id="target-sector">
+                            <SelectValue placeholder="Select target sector" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {sectors?.filter(s => s.id !== displaySectorId).map(sector => (
+                              <SelectItem key={sector.id} value={sector.id}>
+                                {sector.name}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Selected Companies: {selectedCompaniesForBulkUpdate.size}</Label>
+                        <div className="max-h-40 overflow-y-auto border rounded p-2">
+                          {filteredCompanies.filter(c => selectedCompaniesForBulkUpdate.has(c.id)).map(company => (
+                            <div key={company.id} className="flex items-center justify-between py-1">
+                              <span className="text-sm">{company.ticker} - {company.name}</span>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => {
+                                  setSelectedCompaniesForBulkUpdate(prev => {
+                                    const next = new Set(prev);
+                                    next.delete(company.id);
+                                    return next;
+                                  });
+                                }}
+                              >
+                                <XCircle className="h-4 w-4" />
+                              </Button>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                      <div className="flex justify-end gap-2">
+                        <Button
+                          variant="outline"
+                          onClick={() => {
+                            setBulkSectorUpdateOpen(false);
+                            setBulkUpdateTargetSectorId("");
+                            setSelectedCompaniesForBulkUpdate(new Set());
+                          }}
+                        >
+                          Cancel
+                        </Button>
+                        <Button
+                          onClick={handleBulkSectorUpdate}
+                          disabled={bulkSectorUpdateMutation.isPending || !bulkUpdateTargetSectorId || selectedCompaniesForBulkUpdate.size === 0}
+                        >
+                          {bulkSectorUpdateMutation.isPending ? (
+                            <>
+                              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                              Updating...
+                            </>
+                          ) : (
+                            <>
+                              <Settings className="h-4 w-4 mr-2" />
+                              Update {selectedCompaniesForBulkUpdate.size} Companies
+                            </>
+                          )}
+                        </Button>
+                      </div>
+                    </div>
+                  </DialogContent>
+                </Dialog>
                 <Dialog open={bulkScrapeOpen} onOpenChange={setBulkScrapeOpen}>
                   <DialogTrigger asChild>
                     <Button
