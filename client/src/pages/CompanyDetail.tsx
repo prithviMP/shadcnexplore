@@ -892,11 +892,15 @@ export default function CompanyDetail() {
   return (
     <div className="space-y-4 sm:space-y-6">
       <div className="flex items-start sm:items-center gap-2 sm:gap-4">
-        <Link href="/company-manager">
-          <Button variant="ghost" size="icon" data-testid="button-back" className="shrink-0">
-            <ArrowLeft className="h-5 w-5" />
-          </Button>
-        </Link>
+        <Button
+          variant="ghost"
+          size="icon"
+          data-testid="button-back"
+          className="shrink-0"
+          onClick={() => window.history.back()}
+        >
+          <ArrowLeft className="h-5 w-5" />
+        </Button>
         <div className="flex-1 min-w-0">
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
             <div className="min-w-0">

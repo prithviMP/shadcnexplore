@@ -1123,7 +1123,7 @@ export default function SectorsList() {
         <Button
           variant="ghost"
           size="icon"
-          onClick={() => setSelectedSectorId(null)}
+          onClick={() => window.history.back()}
           className="shrink-0"
         >
           <ArrowLeft className="h-4 w-4" />

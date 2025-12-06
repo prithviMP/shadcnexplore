@@ -116,7 +116,7 @@ export default function FormulaBuilder() {
           const firstCompany = companies[0];
           const res = await apiRequest("GET", `/api/v1/companies/${firstCompany.ticker}/data`);
           const data = await res.json();
-          
+
           if (!data || !data.quarters || data.quarters.length === 0) {
             throw new Error("No quarterly data available for preview");
           }
@@ -560,11 +560,13 @@ export default function FormulaBuilder() {
   return (
     <div className="space-y-6">
       <div className="flex items-center gap-4">
-        <Link href="/formulas">
-          <Button variant="ghost" size="icon">
-            <ArrowLeft className="h-4 w-4" />
-          </Button>
-        </Link>
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={() => window.history.back()}
+        >
+          <ArrowLeft className="h-4 w-4" />
+        </Button>
         <div>
           <h1 className="text-3xl font-bold">Formula Builder</h1>
           <p className="text-muted-foreground">Build and test formulas for companies or sectors</p>
@@ -646,8 +648,8 @@ export default function FormulaBuilder() {
                 {entityType === "global"
                   ? "Global (applies to all entities)"
                   : entityType === "company"
-                  ? `${selectedCompany?.ticker} - ${selectedCompany?.name}`
-                  : selectedSector?.name}
+                    ? `${selectedCompany?.ticker} - ${selectedCompany?.name}`
+                    : selectedSector?.name}
               </p>
               {existingFormulaData?.formula && (
                 <p className="text-xs text-muted-foreground mt-1">
