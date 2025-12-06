@@ -76,6 +76,14 @@ class ScrapingScheduler {
     if (signalFullSetting.enabled) {
       this.scheduleSignalRefreshFull(signalFullSetting.schedule);
     }
+
+    // Load and schedule sector-specific schedules
+    const sectorSchedules = await storage.getAllSectorSchedules();
+    for (const sectorSchedule of sectorSchedules) {
+      if (sectorSchedule.enabled) {
+        this.scheduleSectorScraping(sectorSchedule.sectorId, sectorSchedule.schedule);
+      }
+    }
   }
 
   /**

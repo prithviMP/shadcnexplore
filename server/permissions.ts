@@ -31,6 +31,7 @@ export type Permission =
   | "scraper:trigger"
   | "scraper:view"
   | "scraper:read"
+  | "scraper:update"
   // User Management
   | "users:read"
   | "users:create"
@@ -84,6 +85,7 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<string, Permission[]> = {
     "scraper:trigger",
     "scraper:view",
     "scraper:read",
+    "scraper:update",
     "users:read",
     "users:create",
     "users:update",

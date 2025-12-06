@@ -49,7 +49,10 @@ import {
   type InsertBulkImportItem,
   type SchedulerSettings,
   type InsertSchedulerSettings,
-  schedulerSettings
+  schedulerSettings,
+  type SectorSchedule,
+  type InsertSectorSchedule,
+  sectorSchedules
 } from "@shared/schema";
 import { eq, and, inArray, desc, sql, gte, lte, lt, or, isNull, max } from "drizzle-orm";
 import { randomBytes } from "crypto";
@@ -174,6 +177,18 @@ export interface IStorage {
   getSectorUpdateHistory(id: string): Promise<SectorUpdateHistory | undefined>;
   getAllSectorUpdateHistory(limit?: number): Promise<SectorUpdateHistory[]>;
   updateSectorUpdateHistory(id: string, data: Partial<InsertSectorUpdateHistory>): Promise<SectorUpdateHistory | undefined>;
+
+  // Scheduler Settings operations
+  getSchedulerSetting(jobType: string): Promise<SchedulerSettings | undefined>;
+  getAllSchedulerSettings(): Promise<SchedulerSettings[]>;
+  upsertSchedulerSetting(setting: InsertSchedulerSettings): Promise<SchedulerSettings>;
+
+  // Sector Schedule operations
+  getSectorSchedule(sectorId: string): Promise<SectorSchedule | undefined>;
+  getAllSectorSchedules(): Promise<SectorSchedule[]>;
+  getSectorSchedulesBySector(sectorId: string): Promise<SectorSchedule[]>;
+  upsertSectorSchedule(schedule: InsertSectorSchedule): Promise<SectorSchedule>;
+  deleteSectorSchedule(id: string): Promise<void>;
 }
 
 export class DbStorage implements IStorage {
@@ -921,6 +936,72 @@ export class DbStorage implements IStorage {
       failed: items.filter(i => i.status === 'failed').length,
       skipped: items.filter(i => i.status === 'skipped').length,
     };
+  }
+
+  // Scheduler Settings operations
+  async getSchedulerSetting(jobType: string): Promise<SchedulerSettings | undefined> {
+    const result = await db.select().from(schedulerSettings).where(eq(schedulerSettings.jobType, jobType)).limit(1);
+    return result[0];
+  }
+
+  async getAllSchedulerSettings(): Promise<SchedulerSettings[]> {
+    return await db.select().from(schedulerSettings).orderBy(schedulerSettings.jobType);
+  }
+
+  async upsertSchedulerSetting(setting: InsertSchedulerSettings): Promise<SchedulerSettings> {
+    const existing = await this.getSchedulerSetting(setting.jobType);
+    
+    if (existing) {
+      const result = await db
+        .update(schedulerSettings)
+        .set({
+          ...setting,
+          updatedAt: new Date(),
+        })
+        .where(eq(schedulerSettings.jobType, setting.jobType))
+        .returning();
+      return result[0];
+    } else {
+      const result = await db.insert(schedulerSettings).values(setting).returning();
+      return result[0];
+    }
+  }
+
+  // Sector Schedule operations
+  async getSectorSchedule(sectorId: string): Promise<SectorSchedule | undefined> {
+    const result = await db.select().from(sectorSchedules).where(eq(sectorSchedules.sectorId, sectorId)).limit(1);
+    return result[0];
+  }
+
+  async getAllSectorSchedules(): Promise<SectorSchedule[]> {
+    return await db.select().from(sectorSchedules).orderBy(sectorSchedules.sectorId);
+  }
+
+  async getSectorSchedulesBySector(sectorId: string): Promise<SectorSchedule[]> {
+    return await db.select().from(sectorSchedules).where(eq(sectorSchedules.sectorId, sectorId));
+  }
+
+  async upsertSectorSchedule(schedule: InsertSectorSchedule): Promise<SectorSchedule> {
+    const existing = await this.getSectorSchedule(schedule.sectorId);
+    
+    if (existing) {
+      const result = await db
+        .update(sectorSchedules)
+        .set({
+          ...schedule,
+          updatedAt: new Date(),
+        })
+        .where(eq(sectorSchedules.sectorId, schedule.sectorId))
+        .returning();
+      return result[0];
+    } else {
+      const result = await db.insert(sectorSchedules).values(schedule).returning();
+      return result[0];
+    }
+  }
+
+  async deleteSectorSchedule(id: string): Promise<void> {
+    await db.delete(sectorSchedules).where(eq(sectorSchedules.id, id));
   }
 }
 

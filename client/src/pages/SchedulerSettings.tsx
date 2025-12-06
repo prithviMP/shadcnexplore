@@ -8,7 +8,10 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, Di
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
-import { Clock, Play, Pause, Calendar, RefreshCw, Loader2, CheckCircle2, XCircle, AlertCircle, History, Eye, User, Upload, Download, Trash2, FileText, Search, Filter } from "lucide-react";
+import { Clock, Play, Pause, Calendar, RefreshCw, Loader2, CheckCircle2, XCircle, AlertCircle, History, Eye, User, Upload, Download, Trash2, FileText, Search, Filter, Save, Edit, Plus, Trash } from "lucide-react";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import type { Sector, BulkImportJob, BulkImportItem } from "@shared/schema";
 import { apiRequest } from "@/lib/queryClient";
@@ -189,8 +192,9 @@ function SchedulerSettingsEditor() {
     // Determine day of week from original schedule if it's weekly
     const originalSetting = settings?.find(s => s.jobType === jobType);
     let dayOfWeek: string | undefined;
-    if (originalSetting?.schedule.includes("0")) {
+    if (originalSetting) {
       const parts = originalSetting.schedule.split(" ");
+      // Check if it's a weekly schedule (has day of week specified, not "*")
       if (parts.length === 5 && parts[4] !== "*") {
         dayOfWeek = parts[4];
       }
@@ -217,9 +221,19 @@ function SchedulerSettingsEditor() {
     return <div className="text-center py-4 text-muted-foreground">Loading settings...</div>;
   }
 
+  if (!settings || settings.length === 0) {
+    return (
+      <div className="text-center py-8 text-muted-foreground">
+        <Clock className="h-12 w-12 mx-auto mb-4 opacity-50" />
+        <p>No scheduler settings found.</p>
+        <p className="text-xs mt-2">Default settings will be created automatically.</p>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-4">
-      {settings?.map((setting) => (
+      {settings.map((setting) => (
         <div key={setting.id} className="flex items-center justify-between p-4 border rounded-lg">
           <div className="flex-1">
             <div className="font-medium">{getJobDisplayName(setting.jobType)}</div>
@@ -285,6 +299,324 @@ function SchedulerSettingsEditor() {
               >
                 <Edit className="h-4 w-4 mr-2" />
                 Edit
+              </Button>
+            </div>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// Sector Schedule Manager Component
+interface SectorSchedule {
+  id: string;
+  sectorId: string;
+  schedule: string;
+  enabled: boolean;
+  description: string | null;
+  sector?: { id: string; name: string } | null;
+}
+
+function SectorScheduleManager({ sectors }: { sectors: Sector[] }) {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const [editingScheduleId, setEditingScheduleId] = useState<string | null>(null);
+  const [newScheduleSectorId, setNewScheduleSectorId] = useState<string>("");
+  const [editSchedule, setEditSchedule] = useState<string>("");
+  const [editEnabled, setEditEnabled] = useState<boolean>(true);
+  const [showAddForm, setShowAddForm] = useState(false);
+
+  const { data: schedules, isLoading } = useQuery<SectorSchedule[]>({
+    queryKey: ["/api/v1/scheduler/sector-schedules"],
+  });
+
+  const createMutation = useMutation({
+    mutationFn: async ({ sectorId, schedule, enabled }: { sectorId: string; schedule: string; enabled: boolean }) => {
+      const res = await apiRequest("POST", "/api/v1/scheduler/sector-schedules", {
+        sectorId,
+        schedule,
+        enabled,
+      });
+      return res.json();
+    },
+    onSuccess: () => {
+      toast({
+        title: "Schedule created",
+        description: "Sector schedule has been created and will take effect immediately.",
+      });
+      queryClient.invalidateQueries({ queryKey: ["/api/v1/scheduler/sector-schedules"] });
+      setShowAddForm(false);
+      setNewScheduleSectorId("");
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Creation failed",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  const updateMutation = useMutation({
+    mutationFn: async ({ sectorId, schedule, enabled }: { sectorId: string; schedule: string; enabled: boolean }) => {
+      const res = await apiRequest("PUT", `/api/v1/scheduler/sector-schedules/${sectorId}`, {
+        schedule,
+        enabled,
+      });
+      return res.json();
+    },
+    onSuccess: () => {
+      toast({
+        title: "Schedule updated",
+        description: "Sector schedule has been updated and will take effect immediately.",
+      });
+      queryClient.invalidateQueries({ queryKey: ["/api/v1/scheduler/sector-schedules"] });
+      setEditingScheduleId(null);
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Update failed",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: async (id: string) => {
+      const res = await apiRequest("DELETE", `/api/v1/scheduler/sector-schedules/${id}`);
+      return res.json();
+    },
+    onSuccess: () => {
+      toast({
+        title: "Schedule deleted",
+        description: "Sector schedule has been deleted.",
+      });
+      queryClient.invalidateQueries({ queryKey: ["/api/v1/scheduler/sector-schedules"] });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Deletion failed",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  const parseCronToTime = (cron: string): string => {
+    const parts = cron.split(" ");
+    if (parts.length >= 2) {
+      const hour = parts[1].padStart(2, "0");
+      const minute = parts[0].padStart(2, "0");
+      return `${hour}:${minute}`;
+    }
+    return "06:00";
+  };
+
+  const handleEdit = (schedule: SectorSchedule) => {
+    setEditingScheduleId(schedule.id);
+    setEditSchedule(parseCronToTime(schedule.schedule));
+    setEditEnabled(schedule.enabled);
+  };
+
+  const handleSave = (schedule: SectorSchedule) => {
+    updateMutation.mutate({
+      sectorId: schedule.sectorId,
+      schedule: editSchedule,
+      enabled: editEnabled,
+    });
+  };
+
+  const handleCreate = () => {
+    if (!newScheduleSectorId) {
+      toast({
+        title: "Validation error",
+        description: "Please select a sector",
+        variant: "destructive",
+      });
+      return;
+    }
+    createMutation.mutate({
+      sectorId: newScheduleSectorId,
+      schedule: editSchedule || "06:00",
+      enabled: editEnabled,
+    });
+  };
+
+  const handleDelete = (schedule: SectorSchedule) => {
+    if (confirm(`Are you sure you want to delete the schedule for ${schedule.sector?.name || schedule.sectorId}?`)) {
+      deleteMutation.mutate(schedule.id);
+    }
+  };
+
+  // Get sectors that don't have schedules yet
+  const scheduledSectorIds = new Set(schedules?.map(s => s.sectorId) || []);
+  const availableSectors = sectors.filter(s => !scheduledSectorIds.has(s.id));
+
+  if (isLoading) {
+    return <div className="text-center py-4 text-muted-foreground">Loading schedules...</div>;
+  }
+
+  return (
+    <div className="space-y-4">
+      {!showAddForm && (
+        <Button onClick={() => setShowAddForm(true)} className="w-full sm:w-auto">
+          <Plus className="h-4 w-4 mr-2" />
+          Add Sector Schedule
+        </Button>
+      )}
+
+      {showAddForm && (
+        <div className="p-4 border rounded-lg bg-muted/50">
+          <div className="space-y-3">
+            <div>
+              <Label htmlFor="new-sector">Sector</Label>
+              <Select value={newScheduleSectorId} onValueChange={setNewScheduleSectorId}>
+                <SelectTrigger id="new-sector" className="w-full">
+                  <SelectValue placeholder="Select a sector" />
+                </SelectTrigger>
+                <SelectContent>
+                  {availableSectors.map((sector) => (
+                    <SelectItem key={sector.id} value={sector.id}>
+                      {sector.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label htmlFor="new-time">Schedule Time</Label>
+              <Input
+                id="new-time"
+                type="time"
+                value={editSchedule}
+                onChange={(e) => setEditSchedule(e.target.value)}
+                className="w-full"
+              />
+            </div>
+            <div className="flex items-center gap-2">
+              <Checkbox
+                checked={editEnabled}
+                onCheckedChange={(checked) => setEditEnabled(checked === true)}
+                id="new-enabled"
+              />
+              <Label htmlFor="new-enabled" className="text-sm">
+                Enabled
+              </Label>
+            </div>
+            <div className="flex gap-2">
+              <Button
+                size="sm"
+                onClick={handleCreate}
+                disabled={createMutation.isPending || !newScheduleSectorId}
+              >
+                {createMutation.isPending ? (
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                ) : (
+                  <Save className="h-4 w-4 mr-2" />
+                )}
+                Save
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => {
+                  setShowAddForm(false);
+                  setNewScheduleSectorId("");
+                  setEditSchedule("");
+                }}
+              >
+                Cancel
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {schedules && schedules.length === 0 && !showAddForm && (
+        <div className="text-center py-8 text-muted-foreground">
+          <Calendar className="h-12 w-12 mx-auto mb-4 opacity-50" />
+          <p>No sector-specific schedules configured.</p>
+          <p className="text-xs mt-2">
+            Add a schedule to automatically scrape specific sectors at custom times.
+          </p>
+        </div>
+      )}
+
+      {schedules?.map((schedule) => (
+        <div key={schedule.id} className="flex items-center justify-between p-4 border rounded-lg">
+          <div className="flex-1">
+            <div className="font-medium">{schedule.sector?.name || schedule.sectorId}</div>
+            <div className="text-sm text-muted-foreground">
+              {schedule.description || "Sector-specific scraping schedule"}
+            </div>
+            {editingScheduleId === schedule.id ? (
+              <div className="mt-2 space-y-2">
+                <div className="flex items-center gap-2">
+                  <Input
+                    type="time"
+                    value={editSchedule}
+                    onChange={(e) => setEditSchedule(e.target.value)}
+                    className="w-32"
+                  />
+                  <Checkbox
+                    checked={editEnabled}
+                    onCheckedChange={(checked) => setEditEnabled(checked === true)}
+                    id={`enabled-${schedule.id}`}
+                  />
+                  <Label htmlFor={`enabled-${schedule.id}`} className="text-sm">
+                    Enabled
+                  </Label>
+                </div>
+                <div className="flex gap-2">
+                  <Button
+                    size="sm"
+                    onClick={() => handleSave(schedule)}
+                    disabled={updateMutation.isPending}
+                  >
+                    {updateMutation.isPending ? (
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    ) : (
+                      <Save className="h-4 w-4 mr-2" />
+                    )}
+                    Save
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => setEditingScheduleId(null)}
+                  >
+                    Cancel
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <div className="mt-1 text-xs text-muted-foreground">
+                Schedule: {parseCronToTime(schedule.schedule)} daily
+              </div>
+            )}
+          </div>
+          {editingScheduleId !== schedule.id && (
+            <div className="flex items-center gap-2">
+              <Badge variant={schedule.enabled ? "default" : "secondary"}>
+                {schedule.enabled ? "Enabled" : "Disabled"}
+              </Badge>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => handleEdit(schedule)}
+              >
+                <Edit className="h-4 w-4 mr-2" />
+                Edit
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => handleDelete(schedule)}
+                disabled={deleteMutation.isPending}
+              >
+                <Trash className="h-4 w-4" />
               </Button>
             </div>
           )}
@@ -1177,17 +1509,11 @@ export default function SchedulerSettings() {
         <CardHeader>
           <CardTitle>Sector-Specific Schedules</CardTitle>
           <CardDescription>
-            Configure custom scraping schedules for specific sectors (Coming soon)
+            Configure custom scraping schedules for specific sectors. Each sector can have its own schedule time.
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <div className="text-center py-8 text-muted-foreground">
-            <Calendar className="h-12 w-12 mx-auto mb-4 opacity-50" />
-            <p>Custom sector schedules will be available in a future update.</p>
-            <p className="text-xs mt-2">
-              For now, use the "Bulk Scrape Sector" button in the Sectors page to manually trigger scraping.
-            </p>
-          </div>
+          <SectorScheduleManager sectors={sectors || []} />
         </CardContent>
       </Card>
 

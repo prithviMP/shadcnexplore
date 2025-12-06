@@ -27,7 +27,7 @@ import {
   type InsertSectorMapping
 } from "@shared/schema";
 import { db } from "./db";
-import { eq, sql } from "drizzle-orm";
+import { eq, sql, and } from "drizzle-orm";
 import { z } from "zod";
 import { queryExecutor, type QueryCondition } from "./queryExecutor";
 import { FormulaEvaluator } from "./formulaEvaluator";
@@ -1863,6 +1863,137 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Sector Schedule endpoints
+  app.get("/api/v1/scheduler/sector-schedules", requireAuth, requirePermission("scraper:read"), async (req, res) => {
+    try {
+      const schedules = await storage.getAllSectorSchedules();
+      // Enrich with sector information
+      const enrichedSchedules = await Promise.all(
+        schedules.map(async (schedule) => {
+          const sector = await storage.getSector(schedule.sectorId);
+          return {
+            ...schedule,
+            sector: sector ? { id: sector.id, name: sector.name } : null,
+          };
+        })
+      );
+      res.json(enrichedSchedules);
+    } catch (error: any) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
+  app.get("/api/v1/scheduler/sector-schedules/:sectorId", requireAuth, requirePermission("scraper:read"), async (req, res) => {
+    try {
+      const schedule = await storage.getSectorSchedule(req.params.sectorId);
+      if (!schedule) {
+        return res.status(404).json({ error: "Schedule not found" });
+      }
+      const sector = await storage.getSector(schedule.sectorId);
+      res.json({
+        ...schedule,
+        sector: sector ? { id: sector.id, name: sector.name } : null,
+      });
+    } catch (error: any) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/v1/scheduler/sector-schedules", requireAuth, requirePermission("scraper:update"), async (req, res) => {
+    try {
+      const schema = z.object({
+        sectorId: z.string().min(1),
+        schedule: z.string().min(1),
+        enabled: z.boolean().optional(),
+        description: z.string().optional(),
+      });
+      const data = schema.parse(req.body);
+
+      // Convert time to cron if needed (format: "HH:MM" -> "MM HH * * *")
+      let cronSchedule = data.schedule;
+      if (data.schedule.match(/^\d{2}:\d{2}$/)) {
+        const [hour, minute] = data.schedule.split(":");
+        cronSchedule = `${minute} ${hour} * * *`;
+      }
+
+      const schedule = await storage.upsertSectorSchedule({
+        sectorId: data.sectorId,
+        schedule: cronSchedule,
+        enabled: data.enabled !== undefined ? data.enabled : true,
+        description: data.description,
+      });
+
+      // Reload scheduler with new settings
+      const { scrapingScheduler } = await import("./scheduler");
+      await scrapingScheduler.reloadSchedules();
+
+      const sector = await storage.getSector(schedule.sectorId);
+      res.json({
+        ...schedule,
+        sector: sector ? { id: sector.id, name: sector.name } : null,
+      });
+    } catch (error: any) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
+  app.put("/api/v1/scheduler/sector-schedules/:sectorId", requireAuth, requirePermission("scraper:update"), async (req, res) => {
+    try {
+      const { sectorId } = req.params;
+      const schema = z.object({
+        schedule: z.string().optional(),
+        enabled: z.boolean().optional(),
+        description: z.string().optional(),
+      });
+      const data = schema.parse(req.body);
+
+      const existing = await storage.getSectorSchedule(sectorId);
+      if (!existing) {
+        return res.status(404).json({ error: "Schedule not found" });
+      }
+
+      // Convert time to cron if needed
+      let cronSchedule = data.schedule || existing.schedule;
+      if (data.schedule && data.schedule.match(/^\d{2}:\d{2}$/)) {
+        const [hour, minute] = data.schedule.split(":");
+        cronSchedule = `${minute} ${hour} * * *`;
+      }
+
+      const schedule = await storage.upsertSectorSchedule({
+        sectorId,
+        schedule: cronSchedule,
+        enabled: data.enabled !== undefined ? data.enabled : existing.enabled,
+        description: data.description !== undefined ? data.description : existing.description,
+      });
+
+      // Reload scheduler with new settings
+      const { scrapingScheduler } = await import("./scheduler");
+      await scrapingScheduler.reloadSchedules();
+
+      const sector = await storage.getSector(schedule.sectorId);
+      res.json({
+        ...schedule,
+        sector: sector ? { id: sector.id, name: sector.name } : null,
+      });
+    } catch (error: any) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
+  app.delete("/api/v1/scheduler/sector-schedules/:id", requireAuth, requirePermission("scraper:update"), async (req, res) => {
+    try {
+      await storage.deleteSectorSchedule(req.params.id);
+      
+      // Reload scheduler with new settings
+      const { scrapingScheduler } = await import("./scheduler");
+      await scrapingScheduler.reloadSchedules();
+
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
   // Main Signal Evaluation - Calculate signals using the main formula
   app.post("/api/v1/signals/calculate-main", requireAuth, requirePermission("signals:create"), async (req: AuthRequest, res) => {
     try {
@@ -1945,6 +2076,80 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json({
         success: true,
         processed: companiesToProcess.length,
+        results,
+      });
+    } catch (error: any) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
+  // Calculate signals for all companies in a sector
+  app.post("/api/v1/signals/calculate-sector", requireAuth, requirePermission("signals:create"), async (req: AuthRequest, res) => {
+    try {
+      const schema = z.object({
+        sectorId: z.string().min(1),
+      });
+      const { sectorId } = schema.parse(req.body);
+
+      // Get all companies in this sector
+      const companies = await storage.getCompaniesBySector(sectorId);
+
+      if (companies.length === 0) {
+        return res.status(404).json({ error: "No companies found in this sector" });
+      }
+
+      const { signals: signalsTable, formulas } = await import("@shared/schema");
+      let mainFormula = await db.select().from(formulas).where(eq(formulas.name, "Main Signal Formula")).limit(1);
+
+      if (mainFormula.length === 0) {
+        // Create the main signal formula
+        const [newFormula] = await db.insert(formulas).values({
+          name: "Main Signal Formula",
+          condition: "Main signal evaluation based on quarterly metrics",
+          signal: "BUY",
+          enabled: true,
+          priority: 0,
+          scope: "global",
+        }).returning();
+        mainFormula = [newFormula];
+      }
+
+      const mainFormulaId = mainFormula[0].id;
+      const results: Array<{ ticker: string; signal: string; error?: string }> = [];
+
+      for (const company of companies) {
+        try {
+          const signal = await evaluateMainSignalForCompany(company.ticker);
+
+          // Delete existing main signals for this company
+          await db.delete(signalsTable).where(
+            and(
+              eq(signalsTable.companyId, company.id),
+              eq(signalsTable.formulaId, mainFormulaId)
+            )
+          );
+
+          // Insert new signal if not "No Signal"
+          if (signal !== "No Signal") {
+            await db.insert(signalsTable).values({
+              companyId: company.id,
+              formulaId: mainFormulaId,
+              signal: signal,
+              value: null,
+              metadata: { type: "main_signal", formula: "main" },
+            });
+          }
+
+          results.push({ ticker: company.ticker, signal });
+        } catch (error: any) {
+          results.push({ ticker: company.ticker, signal: "No Signal", error: error.message });
+        }
+      }
+
+      res.json({
+        success: true,
+        sectorId,
+        processed: companies.length,
         results,
       });
     } catch (error: any) {

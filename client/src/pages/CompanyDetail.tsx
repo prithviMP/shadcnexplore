@@ -67,13 +67,10 @@ export default function CompanyDetail() {
   const { toast } = useToast();
 
   // Analysis state
-  const [selectedMetrics, setSelectedMetrics] = useState<Set<string>>(new Set());
-  const [selectedQuarters, setSelectedQuarters] = useState<Set<string>>(new Set());
   const [selectedFormulaId, setSelectedFormulaId] = useState<string>("");
   const [customFormula, setCustomFormula] = useState<string>("");
   const [customFormulaSignal, setCustomFormulaSignal] = useState<string>("BUY");
   const [useCustomFormula, setUseCustomFormula] = useState(false);
-  const [showAnalysisSettings, setShowAnalysisSettings] = useState(false);
   const [selectedQuartersForFormula, setSelectedQuartersForFormula] = useState<Set<string>>(new Set());
   const [formulaResultForSelected, setFormulaResultForSelected] = useState<string | null>(null);
   const [showFormulaBar, setShowFormulaBar] = useState(false);
@@ -204,52 +201,7 @@ export default function CompanyDetail() {
     retry: 1, // Retry once if it fails
   });
 
-  // Initialize selected metrics to default metrics from settings if empty
-  useEffect(() => {
-    if (availableMetrics.length > 0 && selectedMetrics.size === 0) {
-      // Use default metrics from API if available
-      let defaultMetricNames: string[] = [];
 
-      if (defaultMetricsData?.visibleMetrics && defaultMetricsData.visibleMetrics.length > 0) {
-        // Use metrics from settings API
-        defaultMetricNames = defaultMetricsData.visibleMetrics;
-      } else {
-        // Fallback to hardcoded defaults if API fails
-        defaultMetricNames = [
-          'Sales',
-          'Sales Growth(YoY) %',
-          'Sales Growth(QoQ) %',
-          'OPM %',
-          'EPS in Rs',
-          'EPS Growth(YoY) %',
-          'EPS Growth(QoQ) %',
-        ];
-      }
-
-      // Find metrics that match default names exactly
-      const matchedMetrics = defaultMetricNames.filter(metricName =>
-        availableMetrics.includes(metricName)
-      );
-
-      if (matchedMetrics.length > 0) {
-        setSelectedMetrics(new Set(matchedMetrics));
-      } else {
-        // If default metrics not found, use first 6 metrics
-        setSelectedMetrics(new Set(availableMetrics.slice(0, 6)));
-      }
-    }
-  }, [availableMetrics, selectedMetrics.size, defaultMetricsData]);
-
-  // Initialize selected quarters to last 12 quarters if empty
-  useEffect(() => {
-    if (sortedQuarterlyData && sortedQuarterlyData.quarters.length > 0 && selectedQuarters.size === 0) {
-      // Default to last 12 quarters (most recent)
-      const quartersToSelect = sortedQuarterlyData.quarters.length > 12
-        ? sortedQuarterlyData.quarters.slice(-12)
-        : sortedQuarterlyData.quarters;
-      setSelectedQuarters(new Set(quartersToSelect.map(q => q.quarter)));
-    }
-  }, [sortedQuarterlyData, selectedQuarters.size]);
 
   // Auto-select last 12 quarters for formula evaluation when data loads
   useEffect(() => {
@@ -261,20 +213,38 @@ export default function CompanyDetail() {
     }
   }, [sortedQuarterlyData, selectedQuartersForFormula.size]);
 
-  // Filter metrics and quarters based on selection
+  // Filter metrics and quarters based on settings
   const filteredMetrics = useMemo(() => {
-    if (selectedMetrics.size === 0) return availableMetrics;
-    return availableMetrics.filter(m => selectedMetrics.has(m));
-  }, [availableMetrics, selectedMetrics]);
+    if (availableMetrics.length === 0) return [];
+
+    let targetMetrics: string[] = [];
+    if (defaultMetricsData?.visibleMetrics && defaultMetricsData.visibleMetrics.length > 0) {
+      targetMetrics = defaultMetricsData.visibleMetrics;
+    } else {
+      // Fallback
+      targetMetrics = [
+        'Sales',
+        'Sales Growth(YoY) %',
+        'Sales Growth(QoQ) %',
+        'OPM %',
+        'EPS in Rs',
+        'EPS Growth(YoY) %',
+        'EPS Growth(QoQ) %',
+      ];
+    }
+
+    // Filter available metrics to only those in target list
+    return availableMetrics.filter(m => targetMetrics.includes(m));
+  }, [availableMetrics, defaultMetricsData]);
 
   const filteredQuarters = useMemo(() => {
     if (!sortedQuarterlyData) return [];
-    if (selectedQuarters.size === 0) {
-      // Default to all available quarters (up to 12) if nothing selected
-      return sortedQuarterlyData.quarters.slice(0, Math.min(12, sortedQuarterlyData.quarters.length));
-    }
-    return sortedQuarterlyData.quarters.filter(q => selectedQuarters.has(q.quarter));
-  }, [sortedQuarterlyData, selectedQuarters]);
+    // Always use last 12 quarters (most recent)
+    const len = sortedQuarterlyData.quarters.length;
+    return len > 12
+      ? sortedQuarterlyData.quarters.slice(len - 12)
+      : sortedQuarterlyData.quarters;
+  }, [sortedQuarterlyData]);
 
   // Get active formula
   // Priority: Custom formula > Selected formula > Entity-specific formula > Global formula (default)
@@ -1173,221 +1143,7 @@ export default function CompanyDetail() {
                     <Calculator className="h-4 w-4 mr-2" />
                     Build Formula
                   </Button>
-                  <Dialog open={showAnalysisSettings} onOpenChange={setShowAnalysisSettings}>
-                    <DialogTrigger asChild>
-                      <Button variant="outline" size="sm">
-                        <Settings className="h-4 w-4 mr-2" />
-                        Analysis Settings
-                      </Button>
-                    </DialogTrigger>
-                    <DialogContent className="max-w-3xl max-h-[80vh] overflow-y-auto">
-                      <DialogHeader>
-                        <DialogTitle>Analysis Settings</DialogTitle>
-                        <DialogDescription>
-                          Select metrics to display, choose quarters to analyze, and apply formulas
-                        </DialogDescription>
-                      </DialogHeader>
-                      <SettingsTabs defaultValue="metrics" className="w-full">
-                        <SettingsTabsList className="grid w-full grid-cols-3">
-                          <SettingsTabsTrigger value="metrics">Metrics (Rows)</SettingsTabsTrigger>
-                          <SettingsTabsTrigger value="quarters">Quarters (Columns)</SettingsTabsTrigger>
-                          <SettingsTabsTrigger value="formula">Formula</SettingsTabsTrigger>
-                        </SettingsTabsList>
 
-                        <SettingsTabsContent value="metrics" className="space-y-4">
-                          <div className="space-y-3">
-                            <div className="flex items-center justify-between">
-                              <Label>Select Metrics to Display</Label>
-                              <div className="flex gap-2">
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  onClick={() => setSelectedMetrics(new Set(availableMetrics))}
-                                >
-                                  Select All
-                                </Button>
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  onClick={() => setSelectedMetrics(new Set())}
-                                >
-                                  Deselect All
-                                </Button>
-                              </div>
-                            </div>
-                            <ScrollArea className="h-[300px] border rounded-md p-4">
-                              <div className="space-y-2">
-                                {availableMetrics.map((metric) => (
-                                  <div key={metric} className="flex items-center space-x-2">
-                                    <Checkbox
-                                      id={`metric-${metric}`}
-                                      checked={selectedMetrics.has(metric)}
-                                      onCheckedChange={(checked) => {
-                                        const newSet = new Set(selectedMetrics);
-                                        if (checked) {
-                                          newSet.add(metric);
-                                        } else {
-                                          newSet.delete(metric);
-                                        }
-                                        setSelectedMetrics(newSet);
-                                      }}
-                                    />
-                                    <Label
-                                      htmlFor={`metric-${metric}`}
-                                      className="text-sm font-normal cursor-pointer flex-1"
-                                    >
-                                      {metric.replace(/([A-Z])/g, ' $1').trim()}
-                                    </Label>
-                                  </div>
-                                ))}
-                              </div>
-                            </ScrollArea>
-                          </div>
-                        </SettingsTabsContent>
-
-                        <SettingsTabsContent value="quarters" className="space-y-4">
-                          <div className="space-y-3">
-                            <div className="flex items-center justify-between">
-                              <Label>Select Quarters to Analyze</Label>
-                              <div className="flex gap-2">
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  onClick={() => {
-                                    if (sortedQuarterlyData) {
-                                      setSelectedQuarters(new Set(sortedQuarterlyData.quarters.map(q => q.quarter)));
-                                    }
-                                  }}
-                                >
-                                  Select All
-                                </Button>
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  onClick={() => setSelectedQuarters(new Set())}
-                                >
-                                  Deselect All
-                                </Button>
-                              </div>
-                            </div>
-                            <ScrollArea className="h-[300px] border rounded-md p-4">
-                              <div className="space-y-2">
-                                {sortedQuarterlyData?.quarters.map((quarter) => (
-                                  <div key={quarter.quarter} className="flex items-center space-x-2">
-                                    <Checkbox
-                                      id={`quarter-${quarter.quarter}`}
-                                      checked={selectedQuarters.has(quarter.quarter)}
-                                      onCheckedChange={(checked) => {
-                                        const newSet = new Set(selectedQuarters);
-                                        if (checked) {
-                                          newSet.add(quarter.quarter);
-                                        } else {
-                                          newSet.delete(quarter.quarter);
-                                        }
-                                        setSelectedQuarters(newSet);
-                                      }}
-                                    />
-                                    <Label
-                                      htmlFor={`quarter-${quarter.quarter}`}
-                                      className="text-sm font-normal cursor-pointer flex-1"
-                                    >
-                                      {formatQuarterWithLabel(quarter.quarter)}
-                                    </Label>
-                                  </div>
-                                ))}
-                              </div>
-                            </ScrollArea>
-                            <p className="text-xs text-muted-foreground">
-                              If no quarters selected, all available quarters (up to 12) will be used by default.
-                            </p>
-                          </div>
-                        </SettingsTabsContent>
-
-                        <SettingsTabsContent value="formula" className="space-y-4">
-                          <div className="space-y-3">
-                            <Label>Formula Selection</Label>
-                            <div className="space-y-2">
-                              <div className="flex items-center space-x-2">
-                                <Checkbox
-                                  id="use-custom-formula"
-                                  checked={useCustomFormula}
-                                  onCheckedChange={(checked) => setUseCustomFormula(checked === true)}
-                                />
-                                <Label htmlFor="use-custom-formula" className="text-sm font-normal cursor-pointer">
-                                  Use custom formula
-                                </Label>
-                              </div>
-                              {useCustomFormula ? (
-                                <div className="space-y-2">
-                                  <div>
-                                    <Label htmlFor="custom-formula-condition">Formula Condition</Label>
-                                    <Input
-                                      id="custom-formula-condition"
-                                      placeholder="e.g., Sales > 100000 AND EPS > 10"
-                                      value={customFormula}
-                                      onChange={(e) => setCustomFormula(e.target.value)}
-                                      className="mt-1"
-                                    />
-                                    <p className="text-xs text-muted-foreground mt-1">
-                                      Use metric names from quarterly data (e.g., Sales, EPS, Operating Profit).
-                                      Operators: &gt;, &lt;, &gt;=, &lt;=, =, !=. Use AND/OR for multiple conditions.
-                                    </p>
-                                  </div>
-                                  <div>
-                                    <Label htmlFor="custom-formula-signal">Signal Type</Label>
-                                    <Select value={customFormulaSignal} onValueChange={setCustomFormulaSignal}>
-                                      <SelectTrigger className="mt-1">
-                                        <SelectValue />
-                                      </SelectTrigger>
-                                      <SelectContent>
-                                        <SelectItem value="BUY">BUY</SelectItem>
-                                        <SelectItem value="SELL">SELL</SelectItem>
-                                        <SelectItem value="HOLD">HOLD</SelectItem>
-                                      </SelectContent>
-                                    </Select>
-                                  </div>
-                                </div>
-                              ) : (
-                                <div>
-                                  <Label htmlFor="formula-select">Select Formula</Label>
-                                  <Select value={selectedFormulaId || "default"} onValueChange={(value) => {
-                                    if (value === "default") {
-                                      setSelectedFormulaId("");
-                                    } else {
-                                      setSelectedFormulaId(value);
-                                    }
-                                  }}>
-                                    <SelectTrigger className="mt-1">
-                                      <SelectValue placeholder={globalFormula ? `Using: ${globalFormula.name} (Global)` : "Select a formula"} />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                      <SelectItem value="default">{globalFormula ? `Default: ${globalFormula.name} (Global)` : "None (No formula)"}</SelectItem>
-                                      {formulas?.filter(f => f.enabled).map((formula) => (
-                                        <SelectItem key={formula.id} value={formula.id}>
-                                          {formula.name} ({formula.signal}) - {formula.condition}
-                                          {formula.scope === "global" && " [Global]"}
-                                        </SelectItem>
-                                      ))}
-                                    </SelectContent>
-                                  </Select>
-                                  <p className="text-xs text-muted-foreground mt-1">
-                                    {globalFormula
-                                      ? `Default: Global formula "${globalFormula.name}" is used automatically. Select another formula to override.`
-                                      : "Formulas from database. Note: Only formulas referencing quarterly metrics will work."}
-                                  </p>
-                                </div>
-                              )}
-                            </div>
-                          </div>
-                        </SettingsTabsContent>
-                      </SettingsTabs>
-                      <div className="flex justify-end gap-2 pt-4">
-                        <Button variant="outline" onClick={() => setShowAnalysisSettings(false)}>
-                          Close
-                        </Button>
-                      </div>
-                    </DialogContent>
-                  </Dialog>
 
                   {/* Ticker Update Dialog */}
                   <Dialog open={showTickerUpdateDialog} onOpenChange={(open) => {

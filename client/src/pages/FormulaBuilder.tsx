@@ -81,6 +81,15 @@ export default function FormulaBuilder() {
     queryKey: ["/api/sectors"]
   });
 
+  // Fetch default metrics from settings
+  const { data: defaultMetricsData } = useQuery<{
+    metrics: Record<string, boolean>;
+    visibleMetrics: string[];
+  }>({
+    queryKey: ["/api/settings/default-metrics"],
+    retry: 1, // Retry once if it fails
+  });
+
   // Get selected entity details
   const selectedCompany = useMemo(() => {
     if (entityType === "company" && selectedEntityId) {
@@ -249,7 +258,7 @@ export default function FormulaBuilder() {
 
   // Initialize selected quarters and metrics
   useEffect(() => {
-    if (sortedQuarterlyData) {
+    if (sortedQuarterlyData && selectedMetrics.length === 0) {
       // Default to last 12 quarters
       const quartersToShow = sortedQuarterlyData.quarters.length > 12
         ? sortedQuarterlyData.quarters.slice(-12)
@@ -257,11 +266,39 @@ export default function FormulaBuilder() {
       setSelectedQuartersForTable(quartersToShow);
       setSelectedQuarters(new Set(quartersToShow));
 
-      // Default to first 6 metrics or all if less than 6
-      setSelectedMetrics(sortedQuarterlyData.metrics.slice(0, Math.min(6, sortedQuarterlyData.metrics.length)));
+      // Use default metrics from settings API if available
+      let defaultMetricNames: string[] = [];
+
+      if (defaultMetricsData?.visibleMetrics && defaultMetricsData.visibleMetrics.length > 0) {
+        // Use metrics from settings API
+        defaultMetricNames = defaultMetricsData.visibleMetrics;
+      } else {
+        // Fallback to hardcoded defaults if API fails
+        defaultMetricNames = [
+          'Sales',
+          'Sales Growth(YoY) %',
+          'Sales Growth(QoQ) %',
+          'OPM %',
+          'EPS in Rs',
+          'EPS Growth(YoY) %',
+          'EPS Growth(QoQ) %',
+        ];
+      }
+
+      // Find metrics that match default names exactly
+      const matchedMetrics = defaultMetricNames.filter(metricName =>
+        sortedQuarterlyData.metrics.includes(metricName)
+      );
+
+      if (matchedMetrics.length > 0) {
+        setSelectedMetrics(matchedMetrics);
+      } else if (sortedQuarterlyData.metrics.length > 0) {
+        // If default metrics not found, use first 6 metrics
+        setSelectedMetrics(sortedQuarterlyData.metrics.slice(0, Math.min(6, sortedQuarterlyData.metrics.length)));
+      }
       setHasAutoEvaluated(false); // Reset auto-evaluation flag when data changes
     }
-  }, [sortedQuarterlyData]);
+  }, [sortedQuarterlyData, selectedMetrics.length, defaultMetricsData]);
 
   // Auto-evaluate formula when entity is first selected or formula is loaded
   useEffect(() => {

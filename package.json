@@ -16,6 +16,9 @@
     "db:create-history": "tsx server/createSectorUpdateHistory.ts",
     "db:update-companies": "tsx server/updateCompaniesSchema.ts",
     "db:add-enabled-column": "tsx server/addEnabledColumnToUsers.ts",
+    "db:migrate-signals-updated-at": "tsx server/migrations/addUpdatedAtToSignals.ts",
+    "db:create-scheduler-settings": "tsx server/migrations/createSchedulerSettingsTable.ts",
+    "db:update-permissions": "tsx server/updatePermissions.ts",
     "update-csv-tickers": "tsx scripts/update_csv_tickers.ts"
   },
   "dependencies": {

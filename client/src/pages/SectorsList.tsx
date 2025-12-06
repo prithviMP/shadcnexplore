@@ -166,8 +166,8 @@ export default function SectorsList() {
       activeSectorFormula.scope === "sector"
         ? "Sector formula"
         : activeSectorFormula.scope === "company"
-        ? "Company formula"
-        : "Global formula";
+          ? "Company formula"
+          : "Global formula";
     return `${activeSectorFormula.name} (${scopeLabel}, priority ${activeSectorFormula.priority})`;
   }, [activeSectorFormula]);
 
@@ -612,10 +612,11 @@ export default function SectorsList() {
   };
 
   // Bulk Sector Update Mutation
+  // Renamed to bulkRefreshMutation but keeping variable name to minimize diffs
   const bulkSectorUpdateMutation = useMutation({
-    mutationFn: async ({ companyIds, targetSectorId }: { companyIds: string[]; targetSectorId: string }) => {
+    mutationFn: async (tickers: string[]) => {
       const results = await Promise.allSettled(
-        companyIds.map(id => apiRequest("PUT", `/api/companies/${id}`, { sectorId: targetSectorId }))
+        tickers.map(ticker => apiRequest("POST", "/api/v1/scraper/scrape/single", { ticker }))
       );
       return results;
     },
@@ -623,20 +624,21 @@ export default function SectorsList() {
       const successCount = results.filter(r => r.status === "fulfilled").length;
       const failedCount = results.filter(r => r.status === "rejected").length;
 
-      queryClient.invalidateQueries({ queryKey: ["/api/companies"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/sectors"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/v1/companies"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/v1/sectors", displaySectorId, "quarterly-data"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/v1/sectors", displaySectorId, "company-signals"] });
       setBulkSectorUpdateOpen(false);
       setBulkUpdateTargetSectorId("");
       setSelectedCompaniesForBulkUpdate(new Set());
 
       toast({
-        title: `Bulk sector update completed`,
-        description: `Successfully updated ${successCount} companies${failedCount > 0 ? `, ${failedCount} failed` : ""}`
+        title: `Bulk data refresh completed`,
+        description: `Successfully refreshed data for ${successCount} companies${failedCount > 0 ? `, ${failedCount} failed` : ""}`
       });
     },
     onError: (error: Error) => {
       toast({
-        title: "Bulk sector update failed",
+        title: "Bulk data refresh failed",
         description: error.message,
         variant: "destructive"
       });
@@ -647,23 +649,24 @@ export default function SectorsList() {
     if (selectedCompaniesForBulkUpdate.size === 0) {
       toast({
         title: "No companies selected",
-        description: "Please select companies to update",
+        description: "Please select companies to refresh",
         variant: "destructive"
       });
       return;
     }
-    if (!bulkUpdateTargetSectorId) {
-      toast({
-        title: "Target sector required",
-        description: "Please select a target sector",
-        variant: "destructive"
-      });
-      return;
-    }
-    bulkSectorUpdateMutation.mutate({
-      companyIds: Array.from(selectedCompaniesForBulkUpdate),
-      targetSectorId: bulkUpdateTargetSectorId
+
+    // Get tickers for selected company IDs
+    const selectedTickers: string[] = [];
+    selectedCompaniesForBulkUpdate.forEach(id => {
+      const company = filteredCompanies.find(c => c.id === id) || allCompanies?.find(c => c.id === id);
+      if (company) {
+        selectedTickers.push(company.ticker);
+      }
     });
+
+    if (selectedTickers.length === 0) return;
+
+    bulkSectorUpdateMutation.mutate(selectedTickers);
   };
 
   const handleBulkScrape = () => {
@@ -683,6 +686,42 @@ export default function SectorsList() {
       sectorId: scrapingSectorId,
       conditions: Object.keys(conditions).length > 0 ? conditions : undefined,
     });
+  };
+
+  // Mutation for calculating signals for all companies in a sector
+  const calculateSectorSignalsMutation = useMutation({
+    mutationFn: async (sectorId: string) => {
+      const res = await apiRequest("POST", "/api/v1/signals/calculate-sector", { sectorId });
+      return res.json();
+    },
+    onSuccess: (data) => {
+      toast({
+        title: "Signals calculated",
+        description: `Successfully calculated signals for ${data.processed} companies in sector.`
+      });
+      // Invalidate queries to refresh signal data
+      queryClient.invalidateQueries({ queryKey: ["/api/v1/sectors", displaySectorId, "company-signals"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/v1/companies"] });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Failed to calculate signals",
+        description: error.message,
+        variant: "destructive"
+      });
+    }
+  });
+
+  const handleCalculateSectorSignals = () => {
+    if (!displaySectorId) {
+      toast({
+        title: "No sector selected",
+        description: "Please select a sector first",
+        variant: "destructive"
+      });
+      return;
+    }
+    calculateSectorSignalsMutation.mutate(displaySectorId);
   };
 
   const formatValue = (value: string | null, metricName: string): string => {
@@ -1297,182 +1336,187 @@ export default function SectorsList() {
                     {signalFilter !== "all" && ` (filtered by ${signalFilter})`}
                   </CardDescription>
                 </div>
-                <Dialog open={bulkSectorUpdateOpen} onOpenChange={setBulkSectorUpdateOpen}>
-                  <DialogTrigger asChild>
-                    <Button
-                      variant="outline"
-                      onClick={() => {
-                        // Pre-select all companies in current sector
-                        if (filteredCompanies) {
-                          setSelectedCompaniesForBulkUpdate(new Set(filteredCompanies.map(c => c.id)));
-                        }
-                      }}
-                      disabled={!displaySectorId || filteredCompanies.length === 0}
-                    >
-                      <Settings className="h-4 w-4 mr-2" />
-                      Bulk Update Sector
-                    </Button>
-                  </DialogTrigger>
-                  <DialogContent>
-                    <DialogHeader>
-                      <DialogTitle>Bulk Update Sector</DialogTitle>
-                      <DialogDescription>
-                        Update sector for multiple companies. {selectedCompaniesForBulkUpdate.size > 0 && `${selectedCompaniesForBulkUpdate.size} companies selected.`}
-                      </DialogDescription>
-                    </DialogHeader>
-                    <div className="space-y-4">
-                      <div className="space-y-2">
-                        <Label>Current Sector: {currentSector?.name}</Label>
-                      </div>
-                      <div className="space-y-2">
-                        <Label htmlFor="target-sector">Target Sector</Label>
-                        <Select value={bulkUpdateTargetSectorId} onValueChange={setBulkUpdateTargetSectorId}>
-                          <SelectTrigger id="target-sector">
-                            <SelectValue placeholder="Select target sector" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {sectors?.filter(s => s.id !== displaySectorId).map(sector => (
-                              <SelectItem key={sector.id} value={sector.id}>
-                                {sector.name}
-                              </SelectItem>
+                <div className="flex gap-2">
+                  <Dialog open={bulkSectorUpdateOpen} onOpenChange={setBulkSectorUpdateOpen}>
+                    <DialogTrigger asChild>
+                      <Button
+                        variant="outline"
+                        onClick={() => {
+                          // Pre-select all companies in current sector
+                          if (filteredCompanies) {
+                            setSelectedCompaniesForBulkUpdate(new Set(filteredCompanies.map(c => c.id)));
+                          }
+                        }}
+                        disabled={!displaySectorId || filteredCompanies.length === 0}
+                      >
+                        <Settings className="h-4 w-4 mr-2" />
+                        Bulk Data Refresh
+                      </Button>
+                    </DialogTrigger>
+                    <DialogContent>
+                      <DialogHeader>
+                        <DialogTitle>Bulk Data Refresh</DialogTitle>
+                        <DialogDescription>
+                          Refresh data for multiple companies. {selectedCompaniesForBulkUpdate.size > 0 && `${selectedCompaniesForBulkUpdate.size} companies selected.`}
+                        </DialogDescription>
+                      </DialogHeader>
+                      <div className="space-y-4">
+                        <div className="space-y-2">
+                          <Label>Current Sector: {currentSector?.name}</Label>
+                        </div>
+
+                        <div className="space-y-2">
+                          <Label>Selected Companies: {selectedCompaniesForBulkUpdate.size}</Label>
+                          <div className="max-h-40 overflow-y-auto border rounded p-2">
+                            {filteredCompanies.filter(c => selectedCompaniesForBulkUpdate.has(c.id)).map(company => (
+                              <div key={company.id} className="flex items-center justify-between py-1">
+                                <span className="text-sm">{company.ticker} - {company.name}</span>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => {
+                                    setSelectedCompaniesForBulkUpdate(prev => {
+                                      const next = new Set(prev);
+                                      next.delete(company.id);
+                                      return next;
+                                    });
+                                  }}
+                                >
+                                  <XCircle className="h-4 w-4" />
+                                </Button>
+                              </div>
                             ))}
-                          </SelectContent>
-                        </Select>
+                          </div>
+                        </div>
+                        <div className="flex justify-end gap-2">
+                          <Button
+                            variant="outline"
+                            onClick={() => {
+                              setBulkSectorUpdateOpen(false);
+                              setBulkUpdateTargetSectorId("");
+                              setSelectedCompaniesForBulkUpdate(new Set());
+                            }}
+                          >
+                            Cancel
+                          </Button>
+                          <Button
+                            onClick={handleBulkSectorUpdate}
+                            disabled={bulkSectorUpdateMutation.isPending || selectedCompaniesForBulkUpdate.size === 0}
+                          >
+                            {bulkSectorUpdateMutation.isPending ? (
+                              <>
+                                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                                Refreshing...
+                              </>
+                            ) : (
+                              <>
+                                <RefreshCw className="h-4 w-4 mr-2" />
+                                Refresh {selectedCompaniesForBulkUpdate.size} Companies
+                              </>
+                            )}
+                          </Button>
+                        </div>
                       </div>
-                      <div className="space-y-2">
-                        <Label>Selected Companies: {selectedCompaniesForBulkUpdate.size}</Label>
-                        <div className="max-h-40 overflow-y-auto border rounded p-2">
-                          {filteredCompanies.filter(c => selectedCompaniesForBulkUpdate.has(c.id)).map(company => (
-                            <div key={company.id} className="flex items-center justify-between py-1">
-                              <span className="text-sm">{company.ticker} - {company.name}</span>
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => {
-                                  setSelectedCompaniesForBulkUpdate(prev => {
-                                    const next = new Set(prev);
-                                    next.delete(company.id);
-                                    return next;
-                                  });
-                                }}
-                              >
-                                <XCircle className="h-4 w-4" />
-                              </Button>
+                    </DialogContent>
+                  </Dialog>
+                  <Dialog open={bulkScrapeOpen} onOpenChange={setBulkScrapeOpen}>
+                    <DialogTrigger asChild>
+                      <Button
+                        onClick={() => setScrapingSectorId(displaySectorId)}
+                        disabled={!displaySectorId}
+                      >
+                        <Play className="h-4 w-4 mr-2" />
+                        Bulk Scrape Sector
+                      </Button>
+                    </DialogTrigger>
+                    <DialogContent>
+                      <DialogHeader>
+                        <DialogTitle>Bulk Scrape Sector</DialogTitle>
+                        <DialogDescription>
+                          Scrape all companies in this sector. You can apply filters to scrape only specific companies.
+                        </DialogDescription>
+                      </DialogHeader>
+                      <div className="space-y-4">
+                        <div className="space-y-2">
+                          <Label>Sector: {currentSector?.name}</Label>
+                        </div>
+                        <div className="space-y-2">
+                          <Label>Market Cap Filters (in Crores)</Label>
+                          <div className="grid grid-cols-2 gap-4">
+                            <div className="space-y-2">
+                              <Label htmlFor="market-cap-min">Minimum (Crores)</Label>
+                              <Input
+                                id="market-cap-min"
+                                type="number"
+                                placeholder="e.g., 5000"
+                                value={marketCapMin}
+                                onChange={(e) => setMarketCapMin(e.target.value)}
+                              />
                             </div>
-                          ))}
+                            <div className="space-y-2">
+                              <Label htmlFor="market-cap-max">Maximum (Crores)</Label>
+                              <Input
+                                id="market-cap-max"
+                                type="number"
+                                placeholder="e.g., 100000"
+                                value={marketCapMax}
+                                onChange={(e) => setMarketCapMax(e.target.value)}
+                              />
+                            </div>
+                          </div>
+                          <p className="text-xs text-muted-foreground">
+                            Leave empty to scrape all companies. Market cap is in crores (e.g., 5000 = 5000 crores).
+                          </p>
+                        </div>
+                        <div className="flex justify-end gap-2">
+                          <Button
+                            variant="outline"
+                            onClick={() => {
+                              setBulkScrapeOpen(false);
+                              setMarketCapMin("");
+                              setMarketCapMax("");
+                            }}
+                          >
+                            Cancel
+                          </Button>
+                          <Button
+                            onClick={handleBulkScrape}
+                            disabled={bulkScrapeMutation.isPending || !scrapingSectorId}
+                          >
+                            {bulkScrapeMutation.isPending ? (
+                              <>
+                                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                                Starting...
+                              </>
+                            ) : (
+                              <>
+                                <Play className="h-4 w-4 mr-2" />
+                                Start Scraping
+                              </>
+                            )}
+                          </Button>
                         </div>
                       </div>
-                      <div className="flex justify-end gap-2">
-                        <Button
-                          variant="outline"
-                          onClick={() => {
-                            setBulkSectorUpdateOpen(false);
-                            setBulkUpdateTargetSectorId("");
-                            setSelectedCompaniesForBulkUpdate(new Set());
-                          }}
-                        >
-                          Cancel
-                        </Button>
-                        <Button
-                          onClick={handleBulkSectorUpdate}
-                          disabled={bulkSectorUpdateMutation.isPending || !bulkUpdateTargetSectorId || selectedCompaniesForBulkUpdate.size === 0}
-                        >
-                          {bulkSectorUpdateMutation.isPending ? (
-                            <>
-                              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                              Updating...
-                            </>
-                          ) : (
-                            <>
-                              <Settings className="h-4 w-4 mr-2" />
-                              Update {selectedCompaniesForBulkUpdate.size} Companies
-                            </>
-                          )}
-                        </Button>
-                      </div>
-                    </div>
-                  </DialogContent>
-                </Dialog>
-                <Dialog open={bulkScrapeOpen} onOpenChange={setBulkScrapeOpen}>
-                  <DialogTrigger asChild>
-                    <Button
-                      onClick={() => setScrapingSectorId(displaySectorId)}
-                      disabled={!displaySectorId}
-                    >
-                      <Play className="h-4 w-4 mr-2" />
-                      Bulk Scrape Sector
-                    </Button>
-                  </DialogTrigger>
-                  <DialogContent>
-                    <DialogHeader>
-                      <DialogTitle>Bulk Scrape Sector</DialogTitle>
-                      <DialogDescription>
-                        Scrape all companies in this sector. You can apply filters to scrape only specific companies.
-                      </DialogDescription>
-                    </DialogHeader>
-                    <div className="space-y-4">
-                      <div className="space-y-2">
-                        <Label>Sector: {currentSector?.name}</Label>
-                      </div>
-                      <div className="space-y-2">
-                        <Label>Market Cap Filters (in Crores)</Label>
-                        <div className="grid grid-cols-2 gap-4">
-                          <div className="space-y-2">
-                            <Label htmlFor="market-cap-min">Minimum (Crores)</Label>
-                            <Input
-                              id="market-cap-min"
-                              type="number"
-                              placeholder="e.g., 5000"
-                              value={marketCapMin}
-                              onChange={(e) => setMarketCapMin(e.target.value)}
-                            />
-                          </div>
-                          <div className="space-y-2">
-                            <Label htmlFor="market-cap-max">Maximum (Crores)</Label>
-                            <Input
-                              id="market-cap-max"
-                              type="number"
-                              placeholder="e.g., 100000"
-                              value={marketCapMax}
-                              onChange={(e) => setMarketCapMax(e.target.value)}
-                            />
-                          </div>
-                        </div>
-                        <p className="text-xs text-muted-foreground">
-                          Leave empty to scrape all companies. Market cap is in crores (e.g., 5000 = 5000 crores).
-                        </p>
-                      </div>
-                      <div className="flex justify-end gap-2">
-                        <Button
-                          variant="outline"
-                          onClick={() => {
-                            setBulkScrapeOpen(false);
-                            setMarketCapMin("");
-                            setMarketCapMax("");
-                          }}
-                        >
-                          Cancel
-                        </Button>
-                        <Button
-                          onClick={handleBulkScrape}
-                          disabled={bulkScrapeMutation.isPending || !scrapingSectorId}
-                        >
-                          {bulkScrapeMutation.isPending ? (
-                            <>
-                              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                              Starting...
-                            </>
-                          ) : (
-                            <>
-                              <Play className="h-4 w-4 mr-2" />
-                              Start Scraping
-                            </>
-                          )}
-                        </Button>
-                      </div>
-                    </div>
-                  </DialogContent>
-                </Dialog>
+                    </DialogContent>
+                  </Dialog>
+                  <Button
+                    onClick={handleCalculateSectorSignals}
+                    disabled={!displaySectorId || calculateSectorSignalsMutation.isPending || filteredCompanies.length === 0}
+                    variant="outline"
+                  >
+                    {calculateSectorSignalsMutation.isPending ? (
+                      <>
+                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                        Calculating...
+                      </>
+                    ) : (
+                      <>
+                        <Calculator className="h-4 w-4 mr-2" />
+                        Calculate Signals
+                      </>
+                    )}
+                  </Button>
+                </div>
               </div>
             </CardHeader>
             <CardContent>

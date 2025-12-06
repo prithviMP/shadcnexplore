@@ -339,3 +339,23 @@ export const insertSchedulerSettingsSchema = createInsertSchema(schedulerSetting
 
 export type SchedulerSettings = typeof schedulerSettings.$inferSelect;
 export type InsertSchedulerSettings = z.infer<typeof insertSchedulerSettingsSchema>;
+
+// Sector-Specific Schedules - allows scheduling scraping for individual sectors
+export const sectorSchedules = pgTable("sector_schedules", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  sectorId: varchar("sector_id").notNull().references(() => sectors.id, { onDelete: "cascade" }),
+  schedule: text("schedule").notNull(), // Cron expression
+  enabled: boolean("enabled").notNull().default(true),
+  description: text("description"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export const insertSectorScheduleSchema = createInsertSchema(sectorSchedules).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export type SectorSchedule = typeof sectorSchedules.$inferSelect;
+export type InsertSectorSchedule = z.infer<typeof insertSectorScheduleSchema>;
