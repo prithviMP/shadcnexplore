@@ -4,6 +4,7 @@ import "@silevis/reactgrid/styles.css";
 import { formatQuarterWithLabel } from "@/utils/quarterUtils";
 import { Link } from "wouter";
 import SignalBadge from "@/components/SignalBadge";
+import { useTheme } from "next-themes";
 
 interface QuarterlyDataSpreadsheetProps {
     data: {
@@ -34,6 +35,22 @@ export default function QuarterlyDataSpreadsheet({
     formulaResults,
     mode = "sector",
 }: QuarterlyDataSpreadsheetProps) {
+    const { resolvedTheme } = useTheme();
+    const isDark = resolvedTheme === "dark";
+
+    // Theme-based colors
+    const colors = useMemo(() => ({
+        text: isDark ? "#e2e8f0" : "#0f172a", // slate-200 : slate-900
+        textMuted: isDark ? "#94a3b8" : "#64748b", // slate-400 : slate-500
+        bg: isDark ? "#020617" : "#ffffff", // slate-950 : white
+        bgHeader: isDark ? "#1e293b" : "#f1f5f9", // slate-800 : slate-100
+        bgRowHeader: isDark ? "#0f172a" : "#f8fafc", // slate-900 : slate-50
+        border: isDark ? "#334155" : "#e2e8f0", // slate-700 : slate-200
+        selectionBorder: "#3b82f6", // blue-500
+        selectionBg: isDark ? "rgba(59, 130, 246, 0.2)" : "rgba(59, 130, 246, 0.1)",
+        resultText: isDark ? "#38bdf8" : "#0369a1", // sky-400 : sky-700
+        resultBg: isDark ? "rgba(56, 189, 248, 0.1)" : "#f0f9ff",
+    }), [isDark]);
 
     // State for column widths
     const [columnWidths, setColumnWidths] = React.useState<Record<string, number>>({});
@@ -72,6 +89,25 @@ export default function QuarterlyDataSpreadsheet({
         const quartersToShow = selectedQuarters.length > 0 ? selectedQuarters : data.quarters.slice(-12);
         const metricsToShow = selectedMetrics.length > 0 ? selectedMetrics : data.metrics.slice(0, 6);
 
+        // Common cell style for normal cells
+        const baseCellStyle: CellStyle = {
+            color: colors.text,
+            background: colors.bg,
+            border: {
+                bottom: { style: "solid", width: "1px", color: colors.border },
+                right: { style: "solid", width: "1px", color: colors.border }
+            }
+        };
+
+        const headerCellStyle: CellStyle = {
+            color: colors.text,
+            background: colors.bgHeader,
+            border: {
+                bottom: { style: "solid", width: "1px", color: colors.border },
+                right: { style: "solid", width: "1px", color: colors.border }
+            }
+        };
+
         // Single company mode: metrics as rows, no company grouping
         if (mode === "company" && data.companies.length === 1) {
             const company = data.companies[0];
@@ -82,19 +118,17 @@ export default function QuarterlyDataSpreadsheet({
             const headerRow: Row = {
                 rowId: "header",
                 cells: [
-                    { type: "header" as const, text: "Metric" },
+                    { type: "header" as const, text: "Metric", style: headerCellStyle, className: "font-semibold" },
                     ...quartersToShow.map((q, index) => {
-                        // Q1 = Oldest in selected window
-                        // quartersToShow is sorted Oldest -> Newest
-                        // So index 0 -> Q1
                         const label = `Q${index + 1}`;
-
                         return {
                             type: "header" as const,
-                            text: `${label} - ${q}`
+                            text: `${label} - ${q}`,
+                            style: headerCellStyle,
+                            className: "font-semibold"
                         };
                     }),
-                    { type: "header" as const, text: "Result" }
+                    { type: "header" as const, text: "Result", style: headerCellStyle, className: "font-semibold" }
                 ]
             };
 
@@ -107,7 +141,8 @@ export default function QuarterlyDataSpreadsheet({
                             type: "text" as const,
                             text: metric,
                             nonEditable: true,
-                            style: { color: "#64748b", fontWeight: "500" }
+                            style: { ...baseCellStyle, color: colors.textMuted },
+                            className: "font-medium"
                         },
                         ...quartersToShow.map((quarter) => {
                             const value = company.quarters[quarter]?.[metric];
@@ -115,14 +150,15 @@ export default function QuarterlyDataSpreadsheet({
                             const isSelected = selectedCells.has(`${metric}:${quarter}`);
 
                             const cellStyle: CellStyle = isSelected ? {
+                                ...baseCellStyle,
                                 border: {
-                                    left: { color: "#3b82f6", width: "2px", style: "solid" },
-                                    right: { color: "#3b82f6", width: "2px", style: "solid" },
-                                    top: { color: "#3b82f6", width: "2px", style: "solid" },
-                                    bottom: { color: "#3b82f6", width: "2px", style: "solid" },
+                                    left: { color: colors.selectionBorder, width: "2px", style: "solid" },
+                                    right: { color: colors.selectionBorder, width: "2px", style: "solid" },
+                                    top: { color: colors.selectionBorder, width: "2px", style: "solid" },
+                                    bottom: { color: colors.selectionBorder, width: "2px", style: "solid" },
                                 },
-                                background: "rgba(59, 130, 246, 0.1)"
-                            } : {};
+                                background: colors.selectionBg
+                            } : baseCellStyle;
 
                             // Format value
                             let displayValue = value || "—";
@@ -141,17 +177,17 @@ export default function QuarterlyDataSpreadsheet({
                                 style: cellStyle
                             } as TextCell;
                         }),
-                        // Show result in all metric rows for single company view (or just last row)
-                        // For now, show in all rows for better visibility
+                        // Show result in all metric rows for single company view
                         {
                             type: "text" as const,
                             text: companyResult ? String(companyResult.result) : "—",
                             nonEditable: true,
                             style: {
-                                background: companyResult ? "#f0f9ff" : "transparent",
-                                fontWeight: "600",
-                                color: companyResult ? "#0369a1" : "#64748b"
-                            }
+                                ...baseCellStyle,
+                                background: companyResult ? colors.resultBg : colors.bg,
+                                color: companyResult ? colors.resultText : colors.textMuted
+                            },
+                            className: "font-semibold"
                         }
                     ]
                 };
@@ -160,23 +196,22 @@ export default function QuarterlyDataSpreadsheet({
             return [headerRow, ...metricRows];
         }
 
-        // Sector mode: multiple companies (existing logic)
+        // Sector mode: multiple companies
         // 1. Header Row
         const headerRow: Row = {
             rowId: "header",
             cells: [
-                { type: "header" as const, text: "Company / Metric" },
+                { type: "header" as const, text: "Company / Metric", style: headerCellStyle, className: "font-semibold" },
                 ...quartersToShow.map((q, index) => {
-                    // Q1 = Oldest in selected window
-                    // quartersToShow is sorted Oldest -> Newest
                     const label = `Q${index + 1}`;
-
                     return {
                         type: "header" as const,
-                        text: `${label} - ${q}`
+                        text: `${label} - ${q}`,
+                        style: headerCellStyle,
+                        className: "font-semibold"
                     };
                 }),
-                { type: "header" as const, text: "Result" }
+                { type: "header" as const, text: "Result", style: headerCellStyle, className: "font-semibold" }
             ]
         };
 
@@ -190,14 +225,25 @@ export default function QuarterlyDataSpreadsheet({
                         type: "text" as const,
                         text: `${company.ticker} - ${company.companyName}`,
                         nonEditable: true,
-                        style: { background: "#f8fafc", border: { bottom: { style: "solid", width: "1px", color: "#e2e8f0" } } }
+                        style: {
+                            ...baseCellStyle,
+                            background: colors.bgRowHeader,
+                            border: { bottom: { style: "solid", width: "1px", color: colors.border } }
+                        },
+                        className: "font-semibold"
                     },
-                    ...quartersToShow.map(() => ({ type: "text" as const, text: "", nonEditable: true, style: { background: "#f8fafc" } })),
+                    ...quartersToShow.map(() => ({
+                        type: "text" as const,
+                        text: "",
+                        nonEditable: true,
+                        style: { ...baseCellStyle, background: colors.bgRowHeader }
+                    })),
                     {
                         type: "text" as const,
                         text: formulaResults[company.ticker] ? String(formulaResults[company.ticker].result) : "—",
                         nonEditable: true,
-                        style: { background: "#f8fafc" }
+                        style: { ...baseCellStyle, background: colors.bgRowHeader, color: colors.resultText },
+                        className: "font-semibold"
                     }
                 ]
             };
@@ -211,7 +257,7 @@ export default function QuarterlyDataSpreadsheet({
                             type: "text" as const,
                             text: metric,
                             nonEditable: true,
-                            style: { color: "#64748b" }
+                            style: { ...baseCellStyle, color: colors.textMuted }
                         },
                         ...quartersToShow.map((quarter) => {
                             const value = company.quarters[quarter]?.[metric];
@@ -219,14 +265,15 @@ export default function QuarterlyDataSpreadsheet({
                             const isSelected = selectedCells.has(`${metric}:${quarter}`);
 
                             const cellStyle: CellStyle = isSelected ? {
+                                ...baseCellStyle,
                                 border: {
-                                    left: { color: "#3b82f6", width: "2px", style: "solid" },
-                                    right: { color: "#3b82f6", width: "2px", style: "solid" },
-                                    top: { color: "#3b82f6", width: "2px", style: "solid" },
-                                    bottom: { color: "#3b82f6", width: "2px", style: "solid" },
+                                    left: { color: colors.selectionBorder, width: "2px", style: "solid" },
+                                    right: { color: colors.selectionBorder, width: "2px", style: "solid" },
+                                    top: { color: colors.selectionBorder, width: "2px", style: "solid" },
+                                    bottom: { color: colors.selectionBorder, width: "2px", style: "solid" },
                                 },
-                                background: "rgba(59, 130, 246, 0.1)"
-                            } : {};
+                                background: colors.selectionBg
+                            } : baseCellStyle;
 
                             // Format value
                             let displayValue = value || "—";
@@ -234,19 +281,18 @@ export default function QuarterlyDataSpreadsheet({
                                 if (metric.includes("%") || metric.includes("Growth") || metric.includes("YoY") || metric.includes("QoQ")) {
                                     displayValue = `${numValue.toFixed(2)}%`;
                                 } else if (Math.abs(numValue) >= 1000) {
-                                    // Simple formatting for large numbers to keep grid clean
                                     displayValue = numValue.toFixed(2);
                                 }
                             }
 
                             return {
-                                type: "text" as const, // Using text cell for formatted display
+                                type: "text" as const,
                                 text: displayValue,
                                 nonEditable: true,
                                 style: cellStyle
                             } as TextCell;
                         }),
-                        { type: "text" as const, text: "", nonEditable: true } // Empty result cell for metric rows
+                        { type: "text" as const, text: "", nonEditable: true, style: baseCellStyle }
                     ]
                 };
             });
@@ -255,7 +301,7 @@ export default function QuarterlyDataSpreadsheet({
         });
 
         return [headerRow, ...dataRows];
-    }, [data, selectedQuarters, selectedMetrics, selectedCells, formulaResults, mode]);
+    }, [data, selectedQuarters, selectedMetrics, selectedCells, formulaResults, mode, colors]);
 
     // Calculate dynamic height
     const rowHeight = 35; // Approximate height per row in pixels

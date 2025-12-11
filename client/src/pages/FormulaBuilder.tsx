@@ -51,6 +51,22 @@ export default function FormulaBuilder() {
   const [isEvaluating, setIsEvaluating] = useState(false);
   const [hasAutoEvaluated, setHasAutoEvaluated] = useState(false);
 
+  // Preview state (separate from selected entity for Global formulas)
+  const [previewType, setPreviewType] = useState<"company" | "sector">("company");
+  const [previewId, setPreviewId] = useState<string | null>(null);
+
+  // Sync preview settings with selected entity when not global
+  useEffect(() => {
+    if (entityType !== "global") {
+      setPreviewType(entityType as "company" | "sector");
+      setPreviewId(selectedEntityId);
+    } else if (!previewId && companies && companies.length > 0) {
+      // Default to first company for global preview if nothing selected
+      setPreviewId(companies[0].id);
+      setPreviewType("company");
+    }
+  }, [entityType, selectedEntityId, companies]);
+
   const formulaInputRef = useRef<HTMLTextAreaElement>(null);
 
   // Parse URL query parameters
@@ -91,63 +107,34 @@ export default function FormulaBuilder() {
     retry: 1, // Retry once if it fails
   });
 
-  // Get selected entity details
-  const selectedCompany = useMemo(() => {
-    if (entityType === "company" && selectedEntityId) {
-      return companies?.find(c => c.id === selectedEntityId);
+  // Get preview entity details
+  const previewCompany = useMemo(() => {
+    if (previewType === "company" && previewId) {
+      return companies?.find(c => c.id === previewId);
     }
     return null;
-  }, [entityType, selectedEntityId, companies]);
+  }, [previewType, previewId, companies]);
 
-  const selectedSector = useMemo(() => {
-    if (entityType === "sector" && selectedEntityId) {
-      return sectors?.find(s => s.id === selectedEntityId);
+  const previewSector = useMemo(() => {
+    if (previewType === "sector" && previewId) {
+      return sectors?.find(s => s.id === previewId);
     }
     return null;
-  }, [entityType, selectedEntityId, sectors]);
+  }, [previewType, previewId, sectors]);
 
   // Fetch quarterly data based on entity type
+  // Fetch quarterly data based on preview selection
   const { data: quarterlyData, isLoading: quarterlyLoading } = useQuery<QuarterlyDataResponse>({
-    queryKey: ["/api/v1/formula-builder/quarterly-data", entityType, selectedEntityId],
+    queryKey: ["/api/v1/formula-builder/quarterly-data", previewType, previewId],
     queryFn: async () => {
-      // For global scope, we can use the first company or sector for preview
-      if (entityType === "global") {
-        // Use first company for preview if available
-        if (companies && companies.length > 0) {
-          const firstCompany = companies[0];
-          const res = await apiRequest("GET", `/api/v1/companies/${firstCompany.ticker}/data`);
-          const data = await res.json();
+      if (!previewId) throw new Error("No entity selected for preview");
 
-          if (!data || !data.quarters || data.quarters.length === 0) {
-            throw new Error("No quarterly data available for preview");
-          }
+      if (previewType === "company") {
+        const company = companies?.find(c => c.id === previewId);
+        if (!company) throw new Error("Company not found");
 
-          const quarters = data.quarters.map((q: any) => q.quarter);
-          const metrics = data.quarters.length > 0 ? Object.keys(data.quarters[0].metrics || {}) : [];
-
-          return {
-            quarters: sortQuarterStrings(quarters),
-            metrics,
-            companies: [{
-              ticker: firstCompany.ticker,
-              companyId: firstCompany.id,
-              companyName: firstCompany.name || firstCompany.ticker,
-              quarters: data.quarters.reduce((acc: Record<string, Record<string, string | null>>, q: any) => {
-                acc[q.quarter] = q.metrics || {};
-                return acc;
-              }, {})
-            }],
-            raw: data.raw || []
-          };
-        }
-        throw new Error("No companies available for preview");
-      }
-
-      if (!selectedEntityId) throw new Error("No entity selected");
-
-      if (entityType === "company" && selectedCompany) {
         // Fetch company quarterly data
-        const res = await apiRequest("GET", `/api/v1/companies/${selectedCompany.ticker}/data`);
+        const res = await apiRequest("GET", `/api/v1/companies/${company.ticker}/data`);
         const data = await res.json();
 
         if (!data || !data.quarters || data.quarters.length === 0) {
@@ -162,9 +149,9 @@ export default function FormulaBuilder() {
           quarters: sortQuarterStrings(quarters),
           metrics,
           companies: [{
-            ticker: selectedCompany.ticker,
-            companyId: selectedCompany.id,
-            companyName: selectedCompany.name || selectedCompany.ticker,
+            ticker: company.ticker,
+            companyId: company.id,
+            companyName: company.name || company.ticker,
             quarters: data.quarters.reduce((acc: Record<string, Record<string, string | null>>, q: any) => {
               acc[q.quarter] = q.metrics || {};
               return acc;
@@ -172,14 +159,13 @@ export default function FormulaBuilder() {
           }],
           raw: data.raw || []
         };
-      } else if (entityType === "sector") {
+      } else {
         // Fetch sector quarterly data
-        const res = await apiRequest("GET", `/api/v1/sectors/${selectedEntityId}/quarterly-data`);
+        const res = await apiRequest("GET", `/api/v1/sectors/${previewId}/quarterly-data`);
         return res.json();
       }
-      throw new Error("Invalid entity type");
     },
-    enabled: entityType === "global" || (!!selectedEntityId && ((entityType === "company" && !!selectedCompany) || (entityType === "sector" && !!selectedSector)))
+    enabled: !!previewId
   });
 
   // Sort quarterly data
@@ -303,7 +289,7 @@ export default function FormulaBuilder() {
 
   // Auto-evaluate formula when entity is first selected or formula is loaded
   useEffect(() => {
-    if (formula && selectedEntityId && sortedQuarterlyData && selectedQuarters.size > 0 && !hasAutoEvaluated) {
+    if (formula && previewId && sortedQuarterlyData && selectedQuarters.size > 0 && !hasAutoEvaluated) {
       // Use setTimeout to avoid calling during render
       const timer = setTimeout(async () => {
         await handleTestFormula();
@@ -312,7 +298,7 @@ export default function FormulaBuilder() {
       return () => clearTimeout(timer);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [formula, selectedEntityId, sortedQuarterlyData, hasAutoEvaluated]); // Only auto-evaluate once when data loads
+  }, [formula, previewId, sortedQuarterlyData, hasAutoEvaluated]); // Only auto-evaluate once when data loads
 
   // Handle cell selection to add to formula
   const handleCellSelect = (metric: string, quarter: string) => {
@@ -369,7 +355,7 @@ export default function FormulaBuilder() {
   // Test formula
   const handleTestFormula = async () => {
     if (!formula.trim()) return; // Don't evaluate empty formulas
-    if (!formula || !selectedEntityId || !sortedQuarterlyData) {
+    if (!formula || !previewId || !sortedQuarterlyData) {
       toast({
         title: "Missing information",
         description: "Please select an entity and enter a formula",
@@ -382,35 +368,10 @@ export default function FormulaBuilder() {
     try {
       const results: Record<string, { result: string | number | boolean; type: string }> = {};
 
-      if (entityType === "global" && sortedQuarterlyData && sortedQuarterlyData.companies.length > 0) {
-        // For global, evaluate on the preview company
-        const previewCompany = sortedQuarterlyData.companies[0];
-        try {
-          const res = await apiRequest("POST", "/api/v1/formulas/test-excel", {
-            ticker: previewCompany.ticker,
-            formula: formula,
-            selectedQuarters: Array.from(selectedQuarters)
-          });
-          const data = await res.json();
-
-          let actualResult = data.result;
-          let actualType = data.resultType;
-
-          if (actualResult && typeof actualResult === 'object' && 'result' in actualResult) {
-            actualType = actualResult.resultType || actualType;
-            actualResult = actualResult.result;
-          }
-
-          results[previewCompany.ticker] = { result: actualResult, type: actualType };
-          results["result"] = { result: actualResult, type: actualType };
-        } catch (err) {
-          console.error(`Failed to evaluate for ${previewCompany.ticker}`, err);
-          results[previewCompany.ticker] = { result: "Error", type: "error" };
-        }
-      } else if (entityType === "company" && selectedCompany) {
+      if (previewType === "company" && previewCompany) {
         // Evaluate for single company
         const res = await apiRequest("POST", "/api/v1/formulas/test-excel", {
-          ticker: selectedCompany.ticker,
+          ticker: previewCompany.ticker,
           formula: formula,
           selectedQuarters: Array.from(selectedQuarters)
         });
@@ -424,10 +385,10 @@ export default function FormulaBuilder() {
           actualResult = actualResult.result;
         }
 
-        results[selectedCompany.ticker] = { result: actualResult, type: actualType };
+        results[previewCompany.ticker] = { result: actualResult, type: actualType };
         // For single company view, also store under "result" key for display
         results["result"] = { result: actualResult, type: actualType };
-      } else if (entityType === "sector" && sortedQuarterlyData.companies.length > 0) {
+      } else if (previewType === "sector" && sortedQuarterlyData.companies.length > 0) {
         // Evaluate for each company in sector
         for (const company of sortedQuarterlyData.companies) {
           try {
@@ -635,10 +596,60 @@ export default function FormulaBuilder() {
           )}
 
           {entityType === "global" && (
-            <div className="p-3 bg-muted rounded-md">
+            <div className="p-3 bg-muted rounded-md space-y-4">
               <p className="text-sm">
                 <span className="font-medium">Global Formula:</span> This formula will apply to all companies and sectors. Use priority to override other formulas.
               </p>
+
+              <div className="space-y-2 pt-2 border-t border-muted-foreground/20">
+                <Label className="text-xs font-semibold text-muted-foreground uppercase">Preview Data Source</Label>
+                <p className="text-xs text-muted-foreground pb-2">Select a company or sector to visualize data and test your global formula</p>
+                <RadioGroup
+                  value={previewType}
+                  onValueChange={(v) => {
+                    setPreviewType(v as "company" | "sector");
+                    setPreviewId(null);
+                  }}
+                  className="flex gap-4 mb-2"
+                >
+                  <div className="flex items-center space-x-2">
+                    <RadioGroupItem value="company" id="prev-company" />
+                    <Label htmlFor="prev-company">Preview with Company</Label>
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <RadioGroupItem value="sector" id="prev-sector" />
+                    <Label htmlFor="prev-sector">Preview with Sector</Label>
+                  </div>
+                </RadioGroup>
+
+                {previewType === "company" ? (
+                  <Select value={previewId || ""} onValueChange={setPreviewId}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select a company for preview" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {companies?.map(company => (
+                        <SelectItem key={company.id} value={company.id}>
+                          {company.ticker} - {company.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                ) : (
+                  <Select value={previewId || ""} onValueChange={setPreviewId}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select a sector for preview" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {sectors?.map(sector => (
+                        <SelectItem key={sector.id} value={sector.id}>
+                          {sector.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
+              </div>
             </div>
           )}
 
@@ -652,6 +663,14 @@ export default function FormulaBuilder() {
                     ? `${selectedCompany?.ticker} - ${selectedCompany?.name}`
                     : selectedSector?.name}
               </p>
+              {entityType === "global" && (previewCompany || previewSector) && (
+                <p className="text-sm">
+                  <span className="font-medium">Previewing with:</span>{" "}
+                  {previewType === "company"
+                    ? `${previewCompany?.ticker} - ${previewCompany?.name}`
+                    : previewSector?.name}
+                </p>
+              )}
               {existingFormulaData?.formula && (
                 <p className="text-xs text-muted-foreground mt-1">
                   Using existing formula: {existingFormulaData.formula.name}
@@ -668,7 +687,7 @@ export default function FormulaBuilder() {
       </Card>
 
       {/* Formula Input */}
-      {(selectedEntityId || entityType === "global") && (
+      {(selectedEntityId || entityType === "global") && (previewId || entityType !== "global") && (
         <Card>
           <CardHeader>
             <CardTitle>Formula</CardTitle>
