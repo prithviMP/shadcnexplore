@@ -55,6 +55,16 @@ export default function FormulaBuilder() {
   const [previewType, setPreviewType] = useState<"company" | "sector">("company");
   const [previewId, setPreviewId] = useState<string | null>(null);
 
+  // Fetch companies
+  const { data: companies } = useQuery<Company[]>({
+    queryKey: ["/api/companies"]
+  });
+
+  // Fetch sectors
+  const { data: sectors } = useQuery<Sector[]>({
+    queryKey: ["/api/sectors"]
+  });
+
   // Sync preview settings with selected entity when not global
   useEffect(() => {
     if (entityType !== "global") {
@@ -88,16 +98,6 @@ export default function FormulaBuilder() {
     }
   }, []);
 
-  // Fetch companies
-  const { data: companies } = useQuery<Company[]>({
-    queryKey: ["/api/companies"]
-  });
-
-  // Fetch sectors
-  const { data: sectors } = useQuery<Sector[]>({
-    queryKey: ["/api/sectors"]
-  });
-
   // Fetch default metrics from settings
   const { data: defaultMetricsData } = useQuery<{
     metrics: Record<string, boolean>;
@@ -106,6 +106,21 @@ export default function FormulaBuilder() {
     queryKey: ["/api/settings/default-metrics"],
     retry: 1, // Retry once if it fails
   });
+
+  // Get selected entity details (for displaying selection info)
+  const selectedCompany = useMemo(() => {
+    if (entityType === "company" && selectedEntityId) {
+      return companies?.find(c => c.id === selectedEntityId);
+    }
+    return null;
+  }, [entityType, selectedEntityId, companies]);
+
+  const selectedSector = useMemo(() => {
+    if (entityType === "sector" && selectedEntityId) {
+      return sectors?.find(s => s.id === selectedEntityId);
+    }
+    return null;
+  }, [entityType, selectedEntityId, sectors]);
 
   // Get preview entity details
   const previewCompany = useMemo(() => {
