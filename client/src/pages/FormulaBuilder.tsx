@@ -17,6 +17,7 @@ import type { Company, Sector, Formula } from "@shared/schema";
 import QuarterlyDataSpreadsheet from "@/components/QuarterlyDataSpreadsheet";
 import { sortQuarterStrings } from "@/utils/quarterUtils";
 import SignalBadge from "@/components/SignalBadge";
+import { FormulaEditor } from "@/components/FormulaEditor";
 
 interface QuarterlyDataResponse {
   sectorId?: string;
@@ -741,17 +742,16 @@ export default function FormulaBuilder() {
             </div>
             <div className="space-y-2">
               <Label htmlFor="formula">Formula Condition</Label>
-              <Textarea
-                id="formula"
+              <FormulaEditor
                 value={formula}
-                onChange={(e) => {
-                  setFormula(e.target.value);
+                onChange={(val) => {
+                  setFormula(val);
                   setUseExistingFormula(false); // User is editing, so it's a new formula
                   setSelectedFormulaId(""); // Clear selection when editing
                 }}
+                textareaRef={formulaInputRef}
                 placeholder='e.g., IF(AND(SalesGrowth[Q1]>0, EPS[Q1]>10), "BUY", "HOLD")'
-                className="font-mono text-sm min-h-32"
-                ref={formulaInputRef}
+                height="min-h-32"
               />
             </div>
             <div className="flex items-center gap-4">

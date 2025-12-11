@@ -28,6 +28,7 @@ import { sortQuarterStrings, formatQuarterWithLabel } from "@/utils/quarterUtils
 import SignalBadge from "@/components/SignalBadge";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import QuarterlyDataSpreadsheet from "@/components/QuarterlyDataSpreadsheet";
+import { FormulaEditor } from "@/components/FormulaEditor";
 
 interface QuarterlyDataResponse {
   sectorId: string;
@@ -1931,15 +1932,15 @@ export default function SectorsList() {
                     {useCustomFormula || selectedFormulaId === "" || !selectedFormulaId ? (
                       <div className="space-y-2">
                         <Label>Custom Excel Formula</Label>
-                        <Textarea
+                        <FormulaEditor
                           value={customFormula || (activeSectorFormula && !useCustomFormula ? activeSectorFormula.condition : "")}
-                          onChange={(e) => {
-                            setCustomFormula(e.target.value);
+                          onChange={(val) => {
+                            setCustomFormula(val);
                             setUseCustomFormula(true);
                           }}
+                          textareaRef={formulaInputRef}
                           placeholder='IF(AND(Q14>0, P14>0, Q12>=20%, Q15>=20%, ...), "BUY", ...)'
-                          className="font-mono text-sm min-h-24"
-                          ref={formulaInputRef}
+                          height="min-h-24"
                         />
                         <div className="flex items-center gap-2">
                           <Label htmlFor="signal-type" className="text-xs">Expected Signal:</Label>

@@ -26,6 +26,7 @@ import { useToast } from "@/hooks/use-toast";
 import { Textarea } from "@/components/ui/textarea";
 import { sortQuarters, formatQuarterWithLabel } from "@/utils/quarterUtils";
 import QuarterlyDataSpreadsheet from "@/components/QuarterlyDataSpreadsheet";
+import { FormulaEditor } from "@/components/FormulaEditor";
 
 const formatCurrency = (value: number): string => {
   // Format in Indian currency (Rupees) with Crores/Lakhs/Thousands
@@ -1694,12 +1695,12 @@ export default function CompanyDetail() {
                           {useCustomFormula || selectedFormulaId === "" || !selectedFormulaId ? (
                             <div className="space-y-2">
                               <Label>Custom Excel Formula</Label>
-                              <Textarea
+                              <FormulaEditor
                                 value={customFormula}
-                                onChange={(e) => setCustomFormula(e.target.value)}
+                                onChange={(val) => setCustomFormula(val)}
+                                textareaRef={formulaInputRef}
                                 placeholder='IF(AND(SalesGrowth[Q1]>0, EPS[Q1]>10), "BUY", "HOLD")'
-                                className="font-mono text-sm min-h-24"
-                                ref={formulaInputRef}
+                                height="min-h-24"
                               />
                               <div className="flex items-center gap-2">
                                 <Checkbox
