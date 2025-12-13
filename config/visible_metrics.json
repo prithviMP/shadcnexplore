@@ -12,7 +12,7 @@
   "Depreciation": false,
   "Profit before tax": false,
   "Tax %": false,
-  "Net Profit": false,
+  "Net Profit": true,
   "EPS in Rs": true,
   "EPS Growth(YoY) %": true,
   "EPS Growth(QoQ) %": true,

@@ -143,6 +143,10 @@ function SchedulerSettingsEditor() {
         schedule,
         enabled,
       });
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({ error: res.statusText }));
+        throw new Error(errorData.error || errorData.message || "Failed to update schedule");
+      }
       return res.json();
     },
     onSuccess: () => {

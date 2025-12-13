@@ -5,6 +5,13 @@
  * Supports dynamic metric referencing using MetricName[Qn] syntax.
  * Q1 = Most Recent Quarter, Q2 = Previous Quarter, etc.
  * Normalizes percentage values to decimals (e.g. 20% -> 0.2).
+ * 
+ * Supported Functions:
+ * - Logical: IF, AND, OR, NOT, ISNUMBER, ISBLANK
+ * - Math: MIN, MAX, ABS, SUM, AVERAGE, COUNT, ROUND, ROUNDUP, ROUNDDOWN, SQRT, POWER, LOG, CEILING, FLOOR
+ * - Text: TRIM, CONCAT, CONCATENATE
+ * - Error Handling: IFERROR, NOTNULL, COALESCE
+ * - Conditional: SUMIF, COUNTIF
  */
 
 import type { QuarterlyData } from "@shared/schema";
@@ -235,7 +242,15 @@ export class ExcelFormulaEvaluator {
 
         // Check if it's a known function
         const upperIdent = ident.toUpperCase();
-        if (['IF', 'AND', 'OR', 'NOT', 'ISNUMBER', 'MIN', 'MAX', 'ABS'].includes(upperIdent)) {
+        const knownFunctions = [
+          'IF', 'AND', 'OR', 'NOT', 'ISNUMBER', 'ISBLANK',
+          'MIN', 'MAX', 'ABS', 'SUM', 'AVERAGE', 'COUNT', 'ROUND', 'ROUNDUP', 'ROUNDDOWN',
+          'SQRT', 'POWER', 'LOG', 'CEILING', 'FLOOR',
+          'TRIM', 'CONCAT', 'CONCATENATE',
+          'IFERROR', 'NOTNULL', 'COALESCE',
+          'SUMIF', 'COUNTIF'
+        ];
+        if (knownFunctions.includes(upperIdent)) {
           this.tokens.push({ type: TokenType.FUNCTION, value: upperIdent, position: i });
         } else {
           // Otherwise treat as Identifier (Metric Name)
@@ -424,6 +439,7 @@ export class ExcelFormulaEvaluator {
 
   private executeFunction(name: string, args: FormulaResult[]): FormulaResult {
     switch (name) {
+      // Logical Functions
       case 'IF':
         if (args.length < 2) throw new Error("IF requires at least 2 arguments");
         return this.toBoolean(args[0]) ? args[1] : (args[2] ?? false);
@@ -437,6 +453,11 @@ export class ExcelFormulaEvaluator {
       case 'ISNUMBER':
         if (args.length !== 1) throw new Error("ISNUMBER requires 1 argument");
         return typeof args[0] === 'number' && !isNaN(args[0]);
+      case 'ISBLANK':
+        if (args.length !== 1) throw new Error("ISBLANK requires 1 argument");
+        return args[0] === null || args[0] === undefined || args[0] === '';
+
+      // Math Functions
       case 'MIN':
         const numsMin = args.filter(a => typeof a === 'number') as number[];
         return numsMin.length > 0 ? Math.min(...numsMin) : null;
@@ -446,10 +467,209 @@ export class ExcelFormulaEvaluator {
       case 'ABS':
         if (args.length !== 1) throw new Error("ABS requires 1 argument");
         return typeof args[0] === 'number' ? Math.abs(args[0]) : null;
+      case 'SUM':
+        const numsSum = args.filter(a => typeof a === 'number' && !isNaN(a)) as number[];
+        return numsSum.length > 0 ? numsSum.reduce((a, b) => a + b, 0) : 0;
+      case 'AVERAGE':
+        const numsAvg = args.filter(a => typeof a === 'number' && !isNaN(a)) as number[];
+        return numsAvg.length > 0 ? numsAvg.reduce((a, b) => a + b, 0) / numsAvg.length : null;
+      case 'COUNT':
+        return args.filter(a => a !== null && a !== undefined && (typeof a === 'number' || typeof a === 'string')).length;
+      case 'ROUND':
+        if (args.length !== 2) throw new Error("ROUND requires 2 arguments");
+        if (typeof args[0] !== 'number' || typeof args[1] !== 'number') return null;
+        return Math.round(args[0] * Math.pow(10, args[1])) / Math.pow(10, args[1]);
+      case 'ROUNDUP':
+        if (args.length !== 2) throw new Error("ROUNDUP requires 2 arguments");
+        if (typeof args[0] !== 'number' || typeof args[1] !== 'number') return null;
+        const factorUp = Math.pow(10, args[1]);
+        return Math.ceil(args[0] * factorUp) / factorUp;
+      case 'ROUNDDOWN':
+        if (args.length !== 2) throw new Error("ROUNDDOWN requires 2 arguments");
+        if (typeof args[0] !== 'number' || typeof args[1] !== 'number') return null;
+        const factorDown = Math.pow(10, args[1]);
+        return Math.floor(args[0] * factorDown) / factorDown;
+      case 'SQRT':
+        if (args.length !== 1) throw new Error("SQRT requires 1 argument");
+        if (typeof args[0] !== 'number' || args[0] < 0) return null;
+        return Math.sqrt(args[0]);
+      case 'POWER':
+        if (args.length !== 2) throw new Error("POWER requires 2 arguments");
+        if (typeof args[0] !== 'number' || typeof args[1] !== 'number') return null;
+        return Math.pow(args[0], args[1]);
+      case 'LOG':
+        if (args.length < 1 || args.length > 2) throw new Error("LOG requires 1 or 2 arguments");
+        if (typeof args[0] !== 'number' || args[0] <= 0) return null;
+        const base = args.length === 2 && typeof args[1] === 'number' ? args[1] : 10;
+        if (base <= 0 || base === 1) return null;
+        return Math.log(args[0]) / Math.log(base);
+      case 'CEILING':
+        if (args.length < 1 || args.length > 2) throw new Error("CEILING requires 1 or 2 arguments");
+        if (typeof args[0] !== 'number') return null;
+        const significance = args.length === 2 && typeof args[1] === 'number' && args[1] > 0 ? args[1] : 1;
+        return Math.ceil(args[0] / significance) * significance;
+      case 'FLOOR':
+        if (args.length < 1 || args.length > 2) throw new Error("FLOOR requires 1 or 2 arguments");
+        if (typeof args[0] !== 'number') return null;
+        const floorSignificance = args.length === 2 && typeof args[1] === 'number' && args[1] > 0 ? args[1] : 1;
+        return Math.floor(args[0] / floorSignificance) * floorSignificance;
+
+      // Text Functions
+      case 'TRIM':
+        if (args.length !== 1) throw new Error("TRIM requires 1 argument");
+        if (args[0] === null || args[0] === undefined) return '';
+        return String(args[0]).trim();
+      case 'CONCAT':
+      case 'CONCATENATE':
+        return args.map(a => a === null || a === undefined ? '' : String(a)).join('');
+
+      // Error Handling Functions
+      case 'IFERROR':
+        if (args.length !== 2) throw new Error("IFERROR requires 2 arguments");
+        const value = args[0];
+        if (value === null || value === undefined || (typeof value === 'number' && isNaN(value))) {
+          return args[1];
+        }
+        return value;
+      case 'NOTNULL':
+        if (args.length < 1) throw new Error("NOTNULL requires at least 1 argument");
+        return args[0] !== null && args[0] !== undefined ? args[0] : (args[1] ?? null);
+      case 'COALESCE':
+        if (args.length === 0) throw new Error("COALESCE requires at least 1 argument");
+        for (const arg of args) {
+          if (arg !== null && arg !== undefined) return arg;
+        }
+        return null;
+
+      // Conditional Aggregation Functions
+      case 'SUMIF':
+        if (args.length < 2 || args.length > 3) throw new Error("SUMIF requires 2 or 3 arguments");
+        return this.evaluateSUMIF(args);
+      case 'COUNTIF':
+        if (args.length !== 2) throw new Error("COUNTIF requires 2 arguments");
+        return this.evaluateCOUNTIF(args);
+
       default:
         console.warn(`Unknown function: ${name}`);
         return null;
     }
+  }
+
+  /**
+   * Evaluate SUMIF function
+   * SUMIF(range, criteria, sum_range?)
+   * For quarterly metrics, range and sum_range are arrays of values
+   */
+  private evaluateSUMIF(args: FormulaResult[]): FormulaResult {
+    const range = Array.isArray(args[0]) ? args[0] : [args[0]];
+    const criteria = args[1];
+    const sumRange = args.length === 3 
+      ? (Array.isArray(args[2]) ? args[2] : [args[2]])
+      : range; // Default to range if sum_range not provided
+
+    if (typeof criteria !== 'string') {
+      // If criteria is not a string, do exact match
+      let sum = 0;
+      for (let i = 0; i < Math.min(range.length, sumRange.length); i++) {
+        if (this.matchesCriteria(range[i], criteria)) {
+          const val = sumRange[i];
+          if (typeof val === 'number' && !isNaN(val)) {
+            sum += val;
+          }
+        }
+      }
+      return sum;
+    }
+
+    // Parse criteria string (e.g., ">10", "<5", "=value", "<>value")
+    let sum = 0;
+    for (let i = 0; i < Math.min(range.length, sumRange.length); i++) {
+      if (this.matchesCriteria(range[i], criteria)) {
+        const val = sumRange[i];
+        if (typeof val === 'number' && !isNaN(val)) {
+          sum += val;
+        }
+      }
+    }
+    return sum;
+  }
+
+  /**
+   * Evaluate COUNTIF function
+   * COUNTIF(range, criteria)
+   */
+  private evaluateCOUNTIF(args: FormulaResult[]): FormulaResult {
+    const range = Array.isArray(args[0]) ? args[0] : [args[0]];
+    const criteria = args[1];
+
+    let count = 0;
+    for (const value of range) {
+      if (this.matchesCriteria(value, criteria)) {
+        count++;
+      }
+    }
+    return count;
+  }
+
+  /**
+   * Check if a value matches the given criteria
+   * Supports: ">10", "<5", ">=10", "<=5", "=value", "<>value", "!=value", or exact match
+   */
+  private matchesCriteria(value: FormulaResult, criteria: FormulaResult): boolean {
+    if (criteria === null || criteria === undefined) {
+      return value === null || value === undefined;
+    }
+
+    if (typeof criteria === 'string') {
+      const trimmed = criteria.trim();
+      
+      // Handle comparison operators
+      if (trimmed.startsWith('>=')) {
+        const num = parseFloat(trimmed.substring(2));
+        if (!isNaN(num) && typeof value === 'number') {
+          return value >= num;
+        }
+      } else if (trimmed.startsWith('<=')) {
+        const num = parseFloat(trimmed.substring(2));
+        if (!isNaN(num) && typeof value === 'number') {
+          return value <= num;
+        }
+      } else if (trimmed.startsWith('<>') || trimmed.startsWith('!=')) {
+        const num = parseFloat(trimmed.substring(2));
+        if (!isNaN(num) && typeof value === 'number') {
+          return value !== num;
+        }
+        return value !== trimmed.substring(2);
+      } else if (trimmed.startsWith('>')) {
+        const num = parseFloat(trimmed.substring(1));
+        if (!isNaN(num) && typeof value === 'number') {
+          return value > num;
+        }
+      } else if (trimmed.startsWith('<')) {
+        const num = parseFloat(trimmed.substring(1));
+        if (!isNaN(num) && typeof value === 'number') {
+          return value < num;
+        }
+      } else if (trimmed.startsWith('=')) {
+        const num = parseFloat(trimmed.substring(1));
+        if (!isNaN(num) && typeof value === 'number') {
+          const epsilon = 0.0000001;
+          return Math.abs(value - num) < epsilon;
+        }
+        return value === trimmed.substring(1);
+      }
+      
+      // Exact match (string comparison)
+      return value === trimmed || String(value) === trimmed;
+    }
+
+    // Direct comparison
+    if (typeof criteria === 'number' && typeof value === 'number') {
+      const epsilon = 0.0000001;
+      return Math.abs(value - criteria) < epsilon;
+    }
+
+    return value === criteria;
   }
 
   private evaluateArithmetic(left: FormulaResult, op: string, right: FormulaResult): FormulaResult {

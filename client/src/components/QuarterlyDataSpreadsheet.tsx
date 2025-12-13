@@ -160,12 +160,13 @@ export default function QuarterlyDataSpreadsheet({
                                 background: colors.selectionBg
                             } : baseCellStyle;
 
-                            // Format value
+                            // Format value - always show 2 decimal places for numbers
                             let displayValue = value || "—";
                             if (numValue !== null && !isNaN(numValue)) {
                                 if (metric.includes("%") || metric.includes("Growth") || metric.includes("YoY") || metric.includes("QoQ")) {
                                     displayValue = `${numValue.toFixed(2)}%`;
-                                } else if (Math.abs(numValue) >= 1000) {
+                                } else {
+                                    // Always show 2 decimal places for all numbers
                                     displayValue = numValue.toFixed(2);
                                 }
                             }
@@ -275,12 +276,13 @@ export default function QuarterlyDataSpreadsheet({
                                 background: colors.selectionBg
                             } : baseCellStyle;
 
-                            // Format value
+                            // Format value - always show 2 decimal places for numbers
                             let displayValue = value || "—";
                             if (numValue !== null && !isNaN(numValue)) {
                                 if (metric.includes("%") || metric.includes("Growth") || metric.includes("YoY") || metric.includes("QoQ")) {
                                     displayValue = `${numValue.toFixed(2)}%`;
-                                } else if (Math.abs(numValue) >= 1000) {
+                                } else {
+                                    // Always show 2 decimal places for all numbers
                                     displayValue = numValue.toFixed(2);
                                 }
                             }

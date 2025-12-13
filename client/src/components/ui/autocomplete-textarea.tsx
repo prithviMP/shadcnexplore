@@ -35,18 +35,40 @@ const OPERATORS = [
 
 // Allowed Excel functions
 const EXCEL_FUNCTIONS = [
+  // Logical Functions
   { name: "AND", description: "Logical AND - AND(condition1, condition2, ...)", args: "2+" },
   { name: "OR", description: "Logical OR - OR(condition1, condition2, ...)", args: "2+" },
   { name: "IF", description: "Conditional - IF(condition, true_value, false_value)", args: "3" },
   { name: "NOT", description: "Logical NOT - NOT(condition)", args: "1" },
   { name: "XOR", description: "Exclusive OR - XOR(condition1, condition2)", args: "2" },
+  { name: "ISNUMBER", description: "Check if value is a number - ISNUMBER(value)", args: "1" },
+  { name: "ISBLANK", description: "Check if value is blank - ISBLANK(value)", args: "1" },
+  // Math Functions
   { name: "SUM", description: "Sum values - SUM(value1, value2, ...)", args: "2+" },
   { name: "AVERAGE", description: "Average values - AVERAGE(value1, value2, ...)", args: "2+" },
   { name: "MAX", description: "Maximum value - MAX(value1, value2, ...)", args: "2+" },
   { name: "MIN", description: "Minimum value - MIN(value1, value2, ...)", args: "2+" },
   { name: "COUNT", description: "Count values - COUNT(value1, value2, ...)", args: "1+" },
   { name: "ROUND", description: "Round number - ROUND(number, digits)", args: "2" },
+  { name: "ROUNDUP", description: "Round up - ROUNDUP(number, digits)", args: "2" },
+  { name: "ROUNDDOWN", description: "Round down - ROUNDDOWN(number, digits)", args: "2" },
   { name: "ABS", description: "Absolute value - ABS(number)", args: "1" },
+  { name: "SQRT", description: "Square root - SQRT(number)", args: "1" },
+  { name: "POWER", description: "Power/exponentiation - POWER(base, exponent)", args: "2" },
+  { name: "LOG", description: "Logarithm - LOG(number, base?)", args: "1-2" },
+  { name: "CEILING", description: "Round up to nearest multiple - CEILING(number, significance?)", args: "1-2" },
+  { name: "FLOOR", description: "Round down to nearest multiple - FLOOR(number, significance?)", args: "1-2" },
+  // Text Functions
+  { name: "TRIM", description: "Remove leading/trailing spaces - TRIM(text)", args: "1" },
+  { name: "CONCAT", description: "Concatenate strings - CONCAT(text1, text2, ...)", args: "2+" },
+  { name: "CONCATENATE", description: "Concatenate strings - CONCATENATE(text1, text2, ...)", args: "2+" },
+  // Error Handling Functions
+  { name: "IFERROR", description: "Return error_value if value is error - IFERROR(value, error_value)", args: "2" },
+  { name: "NOTNULL", description: "Return value if not null - NOTNULL(value, alternative?)", args: "1-2" },
+  { name: "COALESCE", description: "Return first non-null value - COALESCE(value1, value2, ...)", args: "2+" },
+  // Conditional Aggregation Functions
+  { name: "SUMIF", description: "Sum values matching criteria - SUMIF(range, criteria, sum_range?)", args: "2-3" },
+  { name: "COUNTIF", description: "Count values matching criteria - COUNTIF(range, criteria)", args: "2" },
 ];
 
 interface AutocompleteTextareaProps

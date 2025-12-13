@@ -11,13 +11,17 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { ArrowLeft, Calculator, Save, Play, Loader2, AlertCircle } from "lucide-react";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
+import { ArrowLeft, Calculator, Save, Play, Loader2, AlertCircle, Check, ChevronsUpDown, HelpCircle } from "lucide-react";
+import { cn } from "@/lib/utils";
 import { Link, useLocation } from "wouter";
 import type { Company, Sector, Formula } from "@shared/schema";
 import QuarterlyDataSpreadsheet from "@/components/QuarterlyDataSpreadsheet";
 import { sortQuarterStrings } from "@/utils/quarterUtils";
 import SignalBadge from "@/components/SignalBadge";
 import { FormulaEditor } from "@/components/FormulaEditor";
+import { FormulaHelpPanel } from "@/components/FormulaHelpPanel";
 
 interface QuarterlyDataResponse {
   sectorId?: string;
@@ -54,6 +58,9 @@ export default function FormulaBuilder() {
   // Preview state (separate from selected entity for Global formulas)
   const [previewType, setPreviewType] = useState<"company" | "sector">("company");
   const [previewId, setPreviewId] = useState<string | null>(null);
+  const [previewCompanyOpen, setPreviewCompanyOpen] = useState(false);
+  const [previewSectorOpen, setPreviewSectorOpen] = useState(false);
+  const [helpPanelOpen, setHelpPanelOpen] = useState(false);
 
   // Fetch companies
   const { data: companies } = useQuery<Company[]>({
@@ -638,31 +645,93 @@ export default function FormulaBuilder() {
                 </RadioGroup>
 
                 {previewType === "company" ? (
-                  <Select value={previewId || ""} onValueChange={setPreviewId}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select a company for preview" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {companies?.map(company => (
-                        <SelectItem key={company.id} value={company.id}>
-                          {company.ticker} - {company.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <Popover open={previewCompanyOpen} onOpenChange={setPreviewCompanyOpen}>
+                    <PopoverTrigger asChild>
+                      <Button
+                        variant="outline"
+                        role="combobox"
+                        aria-expanded={previewCompanyOpen}
+                        className="w-full justify-between"
+                      >
+                        {previewId
+                          ? `${previewCompany?.ticker} - ${previewCompany?.name}`
+                          : "Select a company for preview"}
+                        <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0" align="start">
+                      <Command>
+                        <CommandInput placeholder="Search companies..." />
+                        <CommandList>
+                          <CommandEmpty>No company found.</CommandEmpty>
+                          <CommandGroup>
+                            {companies?.map((company) => (
+                              <CommandItem
+                                key={company.id}
+                                value={`${company.ticker} ${company.name}`}
+                                onSelect={() => {
+                                  setPreviewId(company.id);
+                                  setPreviewCompanyOpen(false);
+                                }}
+                              >
+                                <Check
+                                  className={cn(
+                                    "mr-2 h-4 w-4",
+                                    previewId === company.id ? "opacity-100" : "opacity-0"
+                                  )}
+                                />
+                                {company.ticker} - {company.name}
+                              </CommandItem>
+                            ))}
+                          </CommandGroup>
+                        </CommandList>
+                      </Command>
+                    </PopoverContent>
+                  </Popover>
                 ) : (
-                  <Select value={previewId || ""} onValueChange={setPreviewId}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select a sector for preview" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {sectors?.map(sector => (
-                        <SelectItem key={sector.id} value={sector.id}>
-                          {sector.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <Popover open={previewSectorOpen} onOpenChange={setPreviewSectorOpen}>
+                    <PopoverTrigger asChild>
+                      <Button
+                        variant="outline"
+                        role="combobox"
+                        aria-expanded={previewSectorOpen}
+                        className="w-full justify-between"
+                      >
+                        {previewId
+                          ? previewSector?.name
+                          : "Select a sector for preview"}
+                        <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0" align="start">
+                      <Command>
+                        <CommandInput placeholder="Search sectors..." />
+                        <CommandList>
+                          <CommandEmpty>No sector found.</CommandEmpty>
+                          <CommandGroup>
+                            {sectors?.map((sector) => (
+                              <CommandItem
+                                key={sector.id}
+                                value={sector.name}
+                                onSelect={() => {
+                                  setPreviewId(sector.id);
+                                  setPreviewSectorOpen(false);
+                                }}
+                              >
+                                <Check
+                                  className={cn(
+                                    "mr-2 h-4 w-4",
+                                    previewId === sector.id ? "opacity-100" : "opacity-0"
+                                  )}
+                                />
+                                {sector.name}
+                              </CommandItem>
+                            ))}
+                          </CommandGroup>
+                        </CommandList>
+                      </Command>
+                    </PopoverContent>
+                  </Popover>
                 )}
               </div>
             </div>
@@ -775,7 +844,19 @@ export default function FormulaBuilder() {
               </p>
             </div>
             <div className="space-y-2">
-              <Label htmlFor="formula">Formula Condition</Label>
+              <div className="flex items-center gap-2">
+                <Label htmlFor="formula">Formula Condition</Label>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-6 w-6 p-0"
+                  onClick={() => setHelpPanelOpen(true)}
+                  title="Open formula help"
+                >
+                  <HelpCircle className="h-4 w-4" />
+                </Button>
+              </div>
               <FormulaEditor
                 value={formula}
                 onChange={(val) => {
@@ -881,6 +962,8 @@ export default function FormulaBuilder() {
           </CardContent>
         </Card>
       )}
+
+      <FormulaHelpPanel open={helpPanelOpen} onOpenChange={setHelpPanelOpen} />
     </div>
   );
 }

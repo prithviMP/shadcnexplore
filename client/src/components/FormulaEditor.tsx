@@ -50,7 +50,12 @@ export function FormulaEditor({
         { label: "IF", value: "IF()", offset: -1 },
         { label: "AND", value: "AND()", offset: -1 },
         { label: "OR", value: "OR()", offset: -1 },
-        { label: "NOTNULL", value: "NOTNULL()", offset: -1 }, // Assuming NOTNULL() is the function or just NOTNULL
+        { label: "NOTNULL", value: "NOTNULL()", offset: -1 },
+        { label: "IFERROR", value: "IFERROR()", offset: -1 },
+        { label: "ROUNDUP", value: "ROUNDUP()", offset: -1 },
+        { label: "ROUNDDOWN", value: "ROUNDDOWN()", offset: -1 },
+        { label: "SQRT", value: "SQRT()", offset: -1 },
+        { label: "POWER", value: "POWER()", offset: -1 },
         { label: "(", value: "()", offset: -1 },
         { label: ")", value: ")" },
         { label: "+", value: "+" },
@@ -62,7 +67,7 @@ export function FormulaEditor({
         { label: ">=", value: ">=" },
         { label: "<=", value: "<=" },
         { label: "=", value: "=" },
-        { label: "<>", value: "<>" },  // Not strictly requested but useful
+        { label: "<>", value: "<>" },
     ];
 
     return (
