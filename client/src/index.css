@@ -298,3 +298,40 @@
     inset: -1px;
   }
 }
+
+/* ReactGrid Dark Mode Overrides */
+.dark .reactgrid {
+  background-color: hsl(var(--background)) !important;
+  color: hsl(var(--foreground)) !important;
+}
+
+.dark .reactgrid .rg-cell {
+  background-color: hsl(var(--background)) !important;
+  color: hsl(var(--foreground)) !important;
+  border-color: hsl(var(--border)) !important;
+}
+
+.dark .reactgrid .rg-cell.rg-cell-header {
+  background-color: hsl(var(--muted)) !important;
+  color: hsl(var(--foreground)) !important;
+  border-color: hsl(var(--border)) !important;
+}
+
+.dark .reactgrid .rg-cell.rg-cell-selected {
+  background-color: rgba(59, 130, 246, 0.2) !important;
+  border-color: #3b82f6 !important;
+}
+
+.dark .reactgrid .rg-cell.rg-cell-focus {
+  border-color: #3b82f6 !important;
+}
+
+.dark .reactgrid .rg-cell.rg-cell-sticky {
+  background-color: hsl(var(--muted)) !important;
+  color: hsl(var(--foreground)) !important;
+}
+
+.dark .reactgrid .rg-cell.rg-cell-sticky.rg-cell-header {
+  background-color: hsl(var(--muted)) !important;
+  color: hsl(var(--foreground)) !important;
+}

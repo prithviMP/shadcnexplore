@@ -273,6 +273,20 @@ export class DbStorage implements IStorage {
   }
 
   async deleteSector(id: string): Promise<void> {
+    // Check if there are companies using this sector
+    const companiesInSector = await db
+      .select({ count: sql<number>`count(*)` })
+      .from(companies)
+      .where(eq(companies.sectorId, id));
+    
+    const companyCount = Number(companiesInSector[0]?.count || 0);
+    
+    if (companyCount > 0) {
+      throw new Error(
+        `Cannot delete sector: ${companyCount} ${companyCount === 1 ? 'company is' : 'companies are'} still assigned to this sector. Please reassign or remove these companies first.`
+      );
+    }
+    
     await db.delete(sectors).where(eq(sectors.id, id));
   }
 

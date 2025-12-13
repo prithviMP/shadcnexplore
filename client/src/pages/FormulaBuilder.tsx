@@ -150,10 +150,14 @@ export default function FormulaBuilder() {
     queryKey: ["/api/v1/formula-builder/quarterly-data", previewType, previewId],
     queryFn: async () => {
       if (!previewId) throw new Error("No entity selected for preview");
+      if (!previewType) throw new Error("No preview type selected");
 
       if (previewType === "company") {
         const company = companies?.find(c => c.id === previewId);
-        if (!company) throw new Error("Company not found");
+        if (!company) {
+          // If previewId doesn't match a company, it might be a sector ID - wait for state to sync
+          throw new Error("Company not found. Please wait...");
+        }
 
         // Fetch company quarterly data
         const res = await apiRequest("GET", `/api/v1/companies/${company.ticker}/data`);
@@ -181,13 +185,33 @@ export default function FormulaBuilder() {
           }],
           raw: data.raw || []
         };
-      } else {
+      } else if (previewType === "sector") {
+        // Validate that previewId is actually a sector ID
+        const sector = sectors?.find(s => s.id === previewId);
+        if (!sector) {
+          // If previewId doesn't match a sector, it might be a company ID - wait for state to sync
+          throw new Error("Sector not found. Please wait...");
+        }
+
         // Fetch sector quarterly data
         const res = await apiRequest("GET", `/api/v1/sectors/${previewId}/quarterly-data`);
         return res.json();
+      } else {
+        throw new Error("Invalid preview type");
       }
     },
-    enabled: !!previewId
+    enabled: (() => {
+      if (!previewId || !previewType) return false;
+      if (previewType === "company") {
+        return !!companies && companies.some(c => c.id === previewId);
+      }
+      if (previewType === "sector") {
+        return !!sectors && sectors.some(s => s.id === previewId);
+      }
+      return false;
+    })(),
+    retry: 1, // Retry once in case of race condition
+    retryDelay: 100 // Small delay to allow state to sync
   });
 
   // Sort quarterly data

@@ -406,11 +406,19 @@ export default function SectorManager() {
           <AlertDialogHeader>
             <AlertDialogTitle>Delete Sector</AlertDialogTitle>
             <AlertDialogDescription>
-              Are you sure you want to delete "{deleteSector?.name}"? This action cannot be undone.
-              {deleteSector && getCompanyCount(deleteSector.id) > 0 && (
-                <span className="block mt-2 text-destructive font-medium">
-                  Warning: This sector has {getCompanyCount(deleteSector.id)} companies.
-                </span>
+              {deleteSector && getCompanyCount(deleteSector.id) > 0 ? (
+                <>
+                  <p className="mb-2">
+                    Cannot delete "{deleteSector.name}" because it has {getCompanyCount(deleteSector.id)} {getCompanyCount(deleteSector.id) === 1 ? 'company' : 'companies'} assigned to it.
+                  </p>
+                  <p className="text-destructive font-medium">
+                    Please reassign or remove all companies from this sector before deleting it.
+                  </p>
+                </>
+              ) : (
+                <>
+                  Are you sure you want to delete "{deleteSector?.name}"? This action cannot be undone.
+                </>
               )}
             </AlertDialogDescription>
           </AlertDialogHeader>
@@ -420,6 +428,7 @@ export default function SectorManager() {
               onClick={() => deleteSector && deleteMutation.mutate(deleteSector.id)}
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
               data-testid="button-confirm-delete"
+              disabled={deleteSector ? getCompanyCount(deleteSector.id) > 0 : false}
             >
               {deleteMutation.isPending ? "Deleting..." : "Delete"}
             </AlertDialogAction>
