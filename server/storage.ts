@@ -809,7 +809,9 @@ export class DbStorage implements IStorage {
       query = query.where(and(...conditions)) as any;
     }
 
-    query = query.orderBy(desc(scrapingLogs.startedAt)) as any;
+    // Order by completedAt DESC (nulls last), then startedAt DESC
+    // For most recent activity, we want completed logs first
+    query = query.orderBy(desc(scrapingLogs.completedAt), desc(scrapingLogs.startedAt)) as any;
 
     if (filters?.limit) {
       query = query.limit(filters.limit) as any;

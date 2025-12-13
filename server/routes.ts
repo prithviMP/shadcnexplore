@@ -501,6 +501,74 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Get most recent scheduler activity (for dashboard)
+  app.get("/api/v1/scheduler/last-activity", requireAuth, async (req, res) => {
+    try {
+      // Get most recent successful scraping log
+      const recentLogs = await storage.getScrapingLogs({ status: "success", limit: 1 });
+      const lastScrapeLog = recentLogs.length > 0 ? recentLogs[0] : null;
+
+      // Get most recent sector update history
+      const recentHistory = await storage.getAllSectorUpdateHistory(1);
+      const lastSectorUpdate = recentHistory.length > 0 ? recentHistory[0] : null;
+
+      // Determine which is more recent
+      let lastActivity: { type: "scrape" | "sector_update"; timestamp: Date | null; details?: any } = {
+        type: "scrape",
+        timestamp: null,
+      };
+
+      if (lastScrapeLog?.completedAt && lastSectorUpdate?.completedAt) {
+        if (new Date(lastScrapeLog.completedAt) > new Date(lastSectorUpdate.completedAt)) {
+          lastActivity = {
+            type: "scrape",
+            timestamp: lastScrapeLog.completedAt,
+            details: {
+              ticker: lastScrapeLog.ticker,
+              companiesUpdated: 1,
+            },
+          };
+        } else {
+          lastActivity = {
+            type: "sector_update",
+            timestamp: lastSectorUpdate.completedAt,
+            details: {
+              totalSectors: lastSectorUpdate.totalSectors,
+              completedSectors: lastSectorUpdate.completedSectors,
+            },
+          };
+        }
+      } else if (lastScrapeLog?.completedAt) {
+        lastActivity = {
+          type: "scrape",
+          timestamp: lastScrapeLog.completedAt,
+          details: {
+            ticker: lastScrapeLog.ticker,
+            companiesUpdated: 1,
+          },
+        };
+      } else if (lastSectorUpdate?.completedAt) {
+        lastActivity = {
+          type: "sector_update",
+          timestamp: lastSectorUpdate.completedAt,
+          details: {
+            totalSectors: lastSectorUpdate.totalSectors,
+            completedSectors: lastSectorUpdate.completedSectors,
+          },
+        };
+      }
+
+      res.json({
+        lastActivity: lastActivity.timestamp ? {
+          ...lastActivity,
+          timestamp: lastActivity.timestamp.toISOString(),
+        } : null,
+      });
+    } catch (error: any) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
   // CSV Bulk Import
   app.post("/api/v1/companies/bulk-import", requireAuth, requirePermission("companies:create"), async (req: AuthRequest, res) => {
     try {

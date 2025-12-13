@@ -68,6 +68,23 @@ export default function Dashboard() {
     refetchInterval: 30000, // Refetch every 30 seconds
   });
 
+  // Fetch last scheduler activity
+  const { data: lastActivityData } = useQuery<{
+    lastActivity: {
+      type: "scrape" | "sector_update";
+      timestamp: string;
+      details?: {
+        ticker?: string;
+        companiesUpdated?: number;
+        totalSectors?: number;
+        completedSectors?: number;
+      };
+    } | null;
+  }>({
+    queryKey: ["/api/v1/scheduler/last-activity"],
+    refetchInterval: 30000, // Refetch every 30 seconds
+  });
+
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -115,9 +132,17 @@ export default function Dashboard() {
     totalCompanies: companies?.length || 0,
     activeSignals: allSignals?.filter(s => s.signal !== "HOLD").length || 0,
     sectors: sectors?.length || 0,
-    lastUpdate: companies && companies.length > 0
-      ? formatDistanceToNow(new Date(Math.max(...companies.map(c => new Date(c.updatedAt).getTime()))), { addSuffix: true })
-      : "Never",
+    lastUpdate: (() => {
+      // Prioritize scheduler activity over company updatedAt
+      if (lastActivityData?.lastActivity?.timestamp) {
+        return formatDistanceToNow(new Date(lastActivityData.lastActivity.timestamp), { addSuffix: true });
+      }
+      // Fallback to most recent company update
+      if (companies && companies.length > 0) {
+        return formatDistanceToNow(new Date(Math.max(...companies.map(c => new Date(c.updatedAt).getTime()))), { addSuffix: true });
+      }
+      return "Never";
+    })(),
     lastSignalCalculation: signalStatus?.lastCalculationTime
       ? formatDistanceToNow(new Date(signalStatus.lastCalculationTime), { addSuffix: true })
       : "Never",
