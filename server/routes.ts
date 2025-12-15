@@ -1570,6 +1570,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Signal distribution grouped by signal value (supports custom signals)
+  app.get("/api/v1/signals/distribution", requireAuth, requirePermission("signals:read"), async (_req, res) => {
+    try {
+      const distribution = await storage.getSignalDistribution();
+      res.json({ distribution });
+    } catch (error: any) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
   // Get job status
   app.get("/api/v1/signals/job/:jobId", requireAuth, requirePermission("signals:read"), async (req, res) => {
     try {

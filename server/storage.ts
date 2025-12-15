@@ -144,6 +144,7 @@ export interface IStorage {
     lastCalculationTime: Date | null;
     signalsByType: { signal: string; count: number }[];
   }>;
+  getSignalDistribution(): Promise<{ signal: string; count: number }[]>;
 
   // Custom Table operations
   getCustomTable(id: string): Promise<CustomTable | undefined>;
@@ -538,6 +539,24 @@ export class DbStorage implements IStorage {
       lastCalculationTime,
       signalsByType,
     };
+  }
+
+  async getSignalDistribution(): Promise<{ signal: string; count: number }[]> {
+    // Group signals by their exact value, ignoring blank strings
+    const results = await db
+      .select({
+        signal: signals.signal,
+        count: sql<number>`count(*)`,
+      })
+      .from(signals)
+      .where(sql`trim(${signals.signal}) <> ''`)
+      .groupBy(signals.signal)
+      .orderBy(desc(sql<number>`count(*)`), desc(signals.signal));
+
+    return results.map((row) => ({
+      signal: row.signal,
+      count: Number(row.count),
+    }));
   }
 
   // OTP operations

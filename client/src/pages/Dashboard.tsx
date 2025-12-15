@@ -85,6 +85,18 @@ export default function Dashboard() {
     refetchInterval: 30000, // Refetch every 30 seconds
   });
 
+  // Fetch signal distribution (supports custom signals)
+  const { data: signalDistributionData } = useQuery<{
+    distribution: { signal: string; count: number }[];
+  }>({
+    queryKey: ["/api/v1/signals/distribution"],
+    queryFn: async () => {
+      const res = await apiRequest("GET", "/api/v1/signals/distribution");
+      return res.json();
+    },
+    refetchInterval: 30000,
+  });
+
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -185,29 +197,77 @@ export default function Dashboard() {
     .filter((item): item is NonNullable<typeof item> => item !== null) // Remove null entries
     .slice(0, 5) || [];
 
-  // Calculate signal distribution for charts
-  const signalDistribution = useMemo(() => {
-    if (!allSignals) return { buy: 0, sell: 0, hold: 0 };
+  // Signal distribution (grouped counts from backend, supports custom signals)
+  const rawSignalDistribution = useMemo(() => {
+    return (signalDistributionData?.distribution || [])
+      .filter((d) => d.signal && d.signal.trim() !== "")
+      .map((d) => ({ signal: d.signal, count: d.count }));
+  }, [signalDistributionData]);
 
-    return {
-      buy: allSignals.filter(s => s.signal === "BUY").length,
-      sell: allSignals.filter(s => s.signal === "SELL").length,
-      hold: allSignals.filter(s => s.signal === "HOLD").length,
-    };
-  }, [allSignals]);
+  const sortedSignalDistribution = useMemo(() => {
+    return [...rawSignalDistribution].sort((a, b) => b.count - a.count || a.signal.localeCompare(b.signal));
+  }, [rawSignalDistribution]);
 
-  // Chart data for signal distribution
-  const signalPieData = [
-    { name: "BUY", value: signalDistribution.buy, color: "hsl(142, 76%, 36%)" },
-    { name: "SELL", value: signalDistribution.sell, color: "hsl(0, 84%, 60%)" },
-    { name: "HOLD", value: signalDistribution.hold, color: "hsl(38, 92%, 50%)" },
-  ].filter(item => item.value > 0);
-
-  const signalBarData = [
-    { signal: "BUY", count: signalDistribution.buy },
-    { signal: "SELL", count: signalDistribution.sell },
-    { signal: "HOLD", count: signalDistribution.hold },
+  const signalColorPalette = [
+    "#22c55e", "#ef4444", "#f59e0b", "#3b82f6", "#8b5cf6",
+    "#ec4899", "#06b6d4", "#84cc16", "#f97316", "#a855f7",
+    "#0ea5e9", "#14b8a6", "#d946ef", "#f43f5e", "#38bdf8",
   ];
+
+  const signalColorMap = useMemo(() => {
+    const map = new Map<string, string>();
+    sortedSignalDistribution.forEach((item, index) => {
+      map.set(item.signal, signalColorPalette[index % signalColorPalette.length]);
+    });
+    return map;
+  }, [sortedSignalDistribution]);
+
+  const formatLabel = (label: string, max = 14) =>
+    label.length > max ? `${label.slice(0, max)}…` : label;
+
+  const signalPieData = sortedSignalDistribution.map((item) => ({
+    name: item.signal,
+    value: item.count,
+    color: signalColorMap.get(item.signal) || signalColorPalette[0],
+  })).filter(item => item.value > 0);
+
+  const signalBarData = sortedSignalDistribution.map((item) => ({
+    signal: item.signal,
+    count: item.count,
+    color: signalColorMap.get(item.signal) || signalColorPalette[0],
+  }));
+
+  const signalChartConfig = useMemo(() => {
+    const entries = signalPieData.map((item) => [item.name, { label: item.name, color: item.color }]);
+    return Object.fromEntries(entries);
+  }, [signalPieData]);
+
+  const resolvedSignalChartConfig = useMemo(() => {
+    if (Object.keys(signalChartConfig).length > 0) return signalChartConfig;
+    return { Signals: { label: "Signals", color: "hsl(var(--primary))" } };
+  }, [signalChartConfig]);
+
+  const signalFilterOptions = useMemo(() => {
+    const opts = new Set<string>([
+      "BUY",
+      "SELL",
+      "HOLD",
+      "Check_OPM (Sell)",
+      "No Signal",
+    ]);
+    sortedSignalDistribution.forEach((item) => opts.add(item.signal));
+    return Array.from(opts).sort((a, b) => a.localeCompare(b));
+  }, [sortedSignalDistribution]);
+
+  // Quick sanity check: distribution total should match signals length
+  useEffect(() => {
+    if (allSignals && sortedSignalDistribution.length > 0) {
+      const distTotal = sortedSignalDistribution.reduce((sum, item) => sum + item.count, 0);
+      if (distTotal !== allSignals.length) {
+        console.warn(`Signal distribution mismatch: distribution=${distTotal}, signals=${allSignals.length}`);
+      }
+    }
+  }, [allSignals, sortedSignalDistribution]);
 
   // Top sectors by company count
   const topSectorsData = useMemo(() => {
@@ -301,7 +361,7 @@ export default function Dashboard() {
 
     return companies.map(company => ({
       ...company,
-      latestSignal: signalsByCompany.get(company.id)?.signal as "BUY" | "SELL" | "HOLD" | "Check_OPM (Sell)" | "No Signal" | undefined,
+      latestSignal: signalsByCompany.get(company.id)?.signal as string | undefined,
       signalId: signalsByCompany.get(company.id)?.id,
     }));
   }, [companies, allSignals]);
@@ -656,11 +716,7 @@ export default function Dashboard() {
           <CardContent className="w-full min-w-0">
             {signalPieData.length > 0 ? (
               <ChartContainer
-                config={{
-                  BUY: { label: "BUY", color: "hsl(142, 76%, 36%)" },
-                  SELL: { label: "SELL", color: "hsl(0, 84%, 60%)" },
-                  HOLD: { label: "HOLD", color: "hsl(38, 92%, 50%)" },
-                }}
+                config={resolvedSignalChartConfig}
                 className="h-[300px] w-full min-w-0"
               >
                 <PieChart>
@@ -669,7 +725,7 @@ export default function Dashboard() {
                     cx="50%"
                     cy="50%"
                     labelLine={false}
-                    label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
+                    label={({ name, percent }) => `${formatLabel(name)} ${(percent * 100).toFixed(0)}%`}
                     outerRadius={100}
                     fill="#8884d8"
                     dataKey="value"
@@ -738,12 +794,11 @@ export default function Dashboard() {
                   {signalBarData.map((entry, index) => (
                     <Cell
                       key={`bar-cell-${index}`}
-                      fill={signalFilter === entry.signal || signalFilter === "all" 
-                        ? "hsl(var(--primary))" 
-                        : "hsl(var(--muted-foreground))"}
+                      fill={entry.color}
                       style={{ 
                         cursor: "pointer",
-                        transition: "fill 0.2s"
+                        transition: "fill 0.2s",
+                        opacity: signalFilter === entry.signal || signalFilter === "all" ? 1 : 0.4
                       }}
                     />
                   ))}
@@ -910,11 +965,11 @@ export default function Dashboard() {
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="all">All Signals</SelectItem>
-                    <SelectItem value="BUY">BUY</SelectItem>
-                    <SelectItem value="SELL">SELL</SelectItem>
-                    <SelectItem value="HOLD">HOLD</SelectItem>
-                    <SelectItem value="Check_OPM (Sell)">Check_OPM (Sell)</SelectItem>
-                    <SelectItem value="No Signal">No Signal</SelectItem>
+                    {signalFilterOptions.map((option) => (
+                      <SelectItem key={option} value={option}>
+                        {option}
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </div>
