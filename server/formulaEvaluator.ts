@@ -1,6 +1,6 @@
-import type { Company, Formula, Signal } from "@shared/schema";
+import type { Company, Formula, Signal, Sector } from "@shared/schema";
 import { db } from "./db";
-import { signals } from "@shared/schema";
+import { signals, sectors } from "@shared/schema";
 import { eq, inArray, and, or, lt, isNull, sql, desc } from "drizzle-orm";
 import { evaluateExcelFormulaForCompany } from "./excelFormulaEvaluator";
 
@@ -157,33 +157,59 @@ export class FormulaEvaluator {
     company: Company,
     formulas: Formula[]
   ): Promise<{ signal: string; formulaId: string; formulaName: string; value: string | null; usedQuarters: string[] | null } | null> {
-    const applicableFormulas = formulas
-      .filter(f => f.enabled)
-      .filter(f => {
-        if (f.scope === "global") return true;
-        // For sector/company scopes, scopeValue must be populated
-        if (f.scope === "sector" && f.scopeValue) return f.scopeValue === company.sectorId;
-        if (f.scope === "company" && f.scopeValue) return f.scopeValue === company.id;
-        return false;
-      })
-      .sort((a, b) => {
-        // First sort by scope specificity: company > sector > global
-        const scopeScore = (scope: string) => {
-          if (scope === "company") return 3;
-          if (scope === "sector") return 2;
-          return 1;
-        };
+    let applicableFormulas: Formula[] = [];
 
-        const scoreA = scopeScore(a.scope);
-        const scoreB = scopeScore(b.scope);
+    // Priority 1: Check if company has an explicitly assigned formula
+    if (company.assignedFormulaId) {
+      const assignedFormula = formulas.find(f => f.id === company.assignedFormulaId && f.enabled);
+      if (assignedFormula) {
+        applicableFormulas = [assignedFormula];
+      }
+    }
 
-        if (scoreA !== scoreB) {
-          return scoreB - scoreA; // Higher score first
+    // Priority 2: Check if company's sector has an assigned formula
+    if (applicableFormulas.length === 0 && company.sectorId) {
+      const sectorResult = await db.select().from(sectors).where(eq(sectors.id, company.sectorId)).limit(1);
+      const sector = sectorResult[0];
+      
+      if (sector?.assignedFormulaId) {
+        const sectorFormula = formulas.find(f => f.id === sector.assignedFormulaId && f.enabled);
+        if (sectorFormula) {
+          applicableFormulas = [sectorFormula];
         }
+      }
+    }
 
-        // Then sort by priority (lower number = higher priority)
-        return a.priority - b.priority;
-      });
+    // Priority 3: Fall back to existing scope-based formula selection
+    if (applicableFormulas.length === 0) {
+      applicableFormulas = formulas
+        .filter(f => f.enabled)
+        .filter(f => {
+          if (f.scope === "global") return true;
+          // For sector/company scopes, scopeValue must be populated
+          if (f.scope === "sector" && f.scopeValue) return f.scopeValue === company.sectorId;
+          if (f.scope === "company" && f.scopeValue) return f.scopeValue === company.id;
+          return false;
+        })
+        .sort((a, b) => {
+          // First sort by scope specificity: company > sector > global
+          const scopeScore = (scope: string) => {
+            if (scope === "company") return 3;
+            if (scope === "sector") return 2;
+            return 1;
+          };
+
+          const scoreA = scopeScore(a.scope);
+          const scoreB = scopeScore(b.scope);
+
+          if (scoreA !== scoreB) {
+            return scoreB - scoreA; // Higher score first
+          }
+
+          // Then sort by priority (lower number = higher priority)
+          return a.priority - b.priority;
+        });
+    }
 
     for (const formula of applicableFormulas) {
       let signalValue: string | null = null;
@@ -194,12 +220,19 @@ export class FormulaEvaluator {
         const evalResult = await evaluateExcelFormulaForCompany(company.ticker, formula.condition);
         usedQuarters = evalResult.usedQuarters;
 
+        // 1) Boolean result – use the formula's configured signal label
         if (evalResult.result === true) {
           signalValue = formula.signal;
-        } else if (typeof evalResult.result === 'string' && ['BUY', 'SELL', 'HOLD'].includes(evalResult.result)) {
-          signalValue = evalResult.result;
+        }
+        // 2) String result – accept any non-empty label except explicit "No Signal"
+        else if (typeof evalResult.result === 'string') {
+          const s = evalResult.result.trim();
+          if (s !== '' && s !== 'No Signal') {
+            signalValue = s;
+          }
         }
 
+        // 3) Numeric result – keep numeric value as score
         if (typeof evalResult.result === 'number') {
           numericValue = evalResult.result;
         }
@@ -236,11 +269,14 @@ export class FormulaEvaluator {
         //   };
         // }
 
+        // Ensure that value is numeric (as string) or null, to match DB decimal column
+        const valueString = numericValue !== null ? numericValue.toString() : null;
+
         return {
           signal: signalValue,
           formulaId: formula.id,
           formulaName: formula.name,
-          value: formula.condition,
+          value: valueString,
           usedQuarters: usedQuarters.length > 0 ? usedQuarters : null
         };
       }

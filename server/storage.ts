@@ -190,6 +190,12 @@ export interface IStorage {
   getSectorSchedulesBySector(sectorId: string): Promise<SectorSchedule[]>;
   upsertSectorSchedule(schedule: InsertSectorSchedule): Promise<SectorSchedule>;
   deleteSectorSchedule(id: string): Promise<void>;
+
+  // Formula Assignment operations
+  assignFormulaToCompany(companyId: string, formulaId: string | null): Promise<Company | undefined>;
+  assignFormulaToSector(sectorId: string, formulaId: string | null): Promise<Sector | undefined>;
+  getAssignedFormulaForCompany(companyId: string): Promise<Formula | null>;
+  getAssignedFormulaForSector(sectorId: string): Promise<Formula | null>;
 }
 
 export class DbStorage implements IStorage {
@@ -633,7 +639,7 @@ export class DbStorage implements IStorage {
   }
 
   async getQuarterlyDataBySector(sectorId: string): Promise<QuarterlyData[]> {
-    // First get all company IDs in this sector
+    // First get all company IDs and tickers in this sector
     const sectorCompanies = await db
       .select({ id: companies.id, ticker: companies.ticker })
       .from(companies)
@@ -643,13 +649,33 @@ export class DbStorage implements IStorage {
       return [];
     }
 
-    const companyIds = sectorCompanies.map(c => c.id);
+    const companyIds = sectorCompanies.map((c) => c.id);
+    const companyTickers = sectorCompanies.map((c) => c.ticker);
 
-    // Then get quarterly data for those companies
+    // Then get quarterly data for those companies.
+    // IMPORTANT:
+    // - Some legacy rows may have a companyId that points to an older company record
+    //   (possibly in a different sector) but still share the same ticker (e.g. JCHAC).
+    // - Other legacy rows may have a NULL companyId but a valid ticker.
+    //
+    // To ensure sector views always show all quarterly data for the tickers that
+    // currently belong to the sector, we:
+    //   1) Include rows whose companyId is in the sector's company IDs
+    //   2) Include rows whose ticker matches any company ticker in the sector,
+    //      regardless of whether companyId is NULL or points elsewhere.
+    //
+    // This mirrors the company detail view (which is ticker-based) and fixes
+    // cases where data like JCHAC appears on the company page but was missing
+    // from the sector quarterly tab.
     return await db
       .select()
       .from(quarterlyData)
-      .where(inArray(quarterlyData.companyId, companyIds))
+      .where(
+        or(
+          inArray(quarterlyData.companyId, companyIds),
+          inArray(quarterlyData.ticker, companyTickers)
+        )
+      )
       .orderBy(desc(quarterlyData.quarter), desc(quarterlyData.scrapeTimestamp));
   }
 
@@ -1037,6 +1063,44 @@ export class DbStorage implements IStorage {
 
   async deleteSectorSchedule(id: string): Promise<void> {
     await db.delete(sectorSchedules).where(eq(sectorSchedules.id, id));
+  }
+
+  // Formula Assignment operations
+  async assignFormulaToCompany(companyId: string, formulaId: string | null): Promise<Company | undefined> {
+    const result = await db
+      .update(companies)
+      .set({ 
+        assignedFormulaId: formulaId,
+        updatedAt: new Date() 
+      })
+      .where(eq(companies.id, companyId))
+      .returning();
+    return result[0];
+  }
+
+  async assignFormulaToSector(sectorId: string, formulaId: string | null): Promise<Sector | undefined> {
+    const result = await db
+      .update(sectors)
+      .set({ assignedFormulaId: formulaId })
+      .where(eq(sectors.id, sectorId))
+      .returning();
+    return result[0];
+  }
+
+  async getAssignedFormulaForCompany(companyId: string): Promise<Formula | null> {
+    const company = await this.getCompany(companyId);
+    if (!company?.assignedFormulaId) return null;
+    
+    const formula = await this.getFormula(company.assignedFormulaId);
+    return formula || null;
+  }
+
+  async getAssignedFormulaForSector(sectorId: string): Promise<Formula | null> {
+    const sector = await this.getSector(sectorId);
+    if (!sector?.assignedFormulaId) return null;
+    
+    const formula = await this.getFormula(sector.assignedFormulaId);
+    return formula || null;
   }
 }
 

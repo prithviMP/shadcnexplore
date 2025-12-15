@@ -60,7 +60,7 @@ export function extractQuarterlyMetrics(quarterlyData: QuarterlyData[], selected
     quarterlyData
       .filter(d => d.quarter === quarter)
       .forEach(item => {
-        const val = normalizeValue(item.metricValue);
+        const val = normalizeValue(item.metricValue, item.metricName);
         quarterMetrics.set(item.metricName, val);
         // Also add normalized keys for easier lookup (lowercase, no spaces)
         quarterMetrics.set(normalizeKey(item.metricName), val);
@@ -72,11 +72,13 @@ export function extractQuarterlyMetrics(quarterlyData: QuarterlyData[], selected
   return { dataMap, sortedQuarters: quartersToUse };
 }
 
-function normalizeValue(val: string | number | null | undefined): number | null {
+function normalizeValue(val: string | number | null | undefined, metricName?: string): number | null {
   if (val === null || val === undefined) return null;
 
   let num: number;
+  let wasPercentageString = false;
   if (typeof val === 'string') {
+    wasPercentageString = val.includes('%');
     const cleaned = val.replace('%', '').trim();
     num = parseFloat(cleaned);
   } else {
@@ -85,26 +87,25 @@ function normalizeValue(val: string | number | null | undefined): number | null 
 
   if (isNaN(num)) return null;
 
-  // Heuristic: if the original string had %, or if we know it's a percentage metric,
-  // we might want to divide by 100.
-  // For now, consistent with previous logic: assume DB stores 20 for 20%, so return 0.2
-  // BUT, we don't know if it was a % string here easily without the metric name context or checking the string again.
-  // The previous implementation did: if (typeof metric === 'string' && metric.includes('%')) ...
-  // Let's assume the caller handles the % sign stripping, but we need to know if we should divide by 100.
-  // Actually, let's just return the number. The previous logic divided by 100 blindly if it was a number?
-  // Re-reading previous code: "Normalize: assume data from DB is in percentage points (e.g., 20 for 20%). We convert to decimal (0.2)"
-  // This is risky if we have non-percentage metrics like "Sales".
-  // Let's stick to: if it's a percentage metric, it should be treated as such.
-  // However, without metric metadata, we can't be sure.
-  // Let's rely on the fact that we return the raw number, and if the user types "20%", the parser handles that as 0.2.
-  // Wait, if DB has 20 for Sales Growth, and user writes > 0.1 (10%), then 20 > 0.1 is true.
-  // If user writes > 10%, that's 0.1. 20 > 0.1 is true.
-  // If DB has 0.2 for Sales Growth, then 0.2 > 0.1 is true.
-  // The previous code ALWAYS divided by 100. Let's keep that behavior for now to avoid breaking changes, 
-  // BUT strictly speaking, we should only do it for percentage fields.
-  // Since we don't have the metric name here easily (we do in the loop), let's move this logic up or just divide by 100.
-  // Actually, let's just divide by 100 to be safe and consistent with the old evaluator.
-  return num / 100;
+  // Only divide by 100 if this is a percentage metric
+  // Check: 1) original string had %, 2) metric name contains %, or 3) metric name indicates percentage (Growth, YoY, QoQ for growth metrics)
+  const isPercentageMetric = wasPercentageString || 
+    (metricName && (
+      metricName.includes('%') || 
+      metricName.includes('Growth') ||
+      metricName.includes('YoY') ||
+      metricName.includes('QoQ') ||
+      metricName.toLowerCase().includes('opm') ||
+      metricName.toLowerCase().includes('margin')
+    ));
+
+  if (isPercentageMetric) {
+    // For percentage metrics: DB stores 20 for 20%, convert to decimal 0.2
+    return num / 100;
+  }
+
+  // For non-percentage metrics (Sales, Net Profit, EPS, etc.), return as-is
+  return num;
 }
 
 function normalizeKey(key: string): string {
@@ -165,10 +166,11 @@ export class ExcelFormulaEvaluator {
         console.warn("Formula has trailing tokens");
       }
 
-      return result;
+      // Convert null to "No Signal" to ensure we always return a meaningful result
+      return result === null || result === undefined ? "No Signal" : result;
     } catch (error: any) {
       console.error(`Error evaluating formula: ${error.message}`);
-      return null;
+      return "No Signal";
     }
   }
 
@@ -442,7 +444,9 @@ export class ExcelFormulaEvaluator {
       // Logical Functions
       case 'IF':
         if (args.length < 2) throw new Error("IF requires at least 2 arguments");
-        return this.toBoolean(args[0]) ? args[1] : (args[2] ?? false);
+        const ifResult = this.toBoolean(args[0]) ? args[1] : (args[2] ?? "No Signal");
+        // Ensure IF never returns null - convert to "No Signal"
+        return ifResult === null || ifResult === undefined ? "No Signal" : ifResult;
       case 'AND':
         return args.every(arg => this.toBoolean(arg));
       case 'OR':
@@ -775,11 +779,15 @@ export async function evaluateExcelFormulaForCompany(
 
     // Create evaluator with filtered data
     const evaluator = new ExcelFormulaEvaluator(quartersToUse, selectedQuarters);
-    const result = evaluator.evaluate(formula);
+    let result = evaluator.evaluate(formula);
+
+    // Convert null to "No Signal" to ensure we always return a meaningful result
+    if (result === null || result === undefined) {
+      result = "No Signal";
+    }
 
     let resultType = "string";
-    if (result === null) resultType = "null";
-    else if (typeof result === "boolean") resultType = "boolean";
+    if (typeof result === "boolean") resultType = "boolean";
     else if (typeof result === "number") resultType = "number";
 
     return { result, resultType, usedQuarters: evaluator.sortedQuarters.slice(0, 5) };

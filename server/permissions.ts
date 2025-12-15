@@ -20,6 +20,7 @@ export type Permission =
   | "formulas:delete"
   | "formulas:test"
   | "signals:read"
+  | "signals:create"
   // Query Builder
   | "queries:read"
   | "queries:create"
@@ -77,6 +78,7 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<string, Permission[]> = {
     "formulas:delete",
     "formulas:test",
     "signals:read",
+    "signals:create",
     "queries:read",
     "queries:create",
     "queries:update",
@@ -114,6 +116,7 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<string, Permission[]> = {
     "formulas:read",
     "formulas:test",
     "signals:read",
+    "signals:create",
     "queries:read",
     "queries:create",
     "queries:update",

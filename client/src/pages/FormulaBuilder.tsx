@@ -224,6 +224,13 @@ export default function FormulaBuilder() {
     };
   }, [quarterlyData]);
 
+  // Determine spreadsheet mode: for global, use previewType (company/sector)
+  const spreadsheetMode = useMemo<"company" | "sector" | undefined>(() => {
+    if (entityType === "global") return previewType || undefined;
+    if (entityType === "company" || entityType === "sector") return entityType;
+    return undefined;
+  }, [entityType, previewType]);
+
   // Fetch existing formula for entity
   const { data: existingFormulaData } = useQuery<{ formula: Formula | null }>({
     queryKey: ["/api/v1/formulas/entity", entityType, selectedEntityId],
@@ -972,7 +979,7 @@ export default function FormulaBuilder() {
                 onCellSelect={handleCellSelect}
                 selectedCells={selectedCells}
                 formulaResults={formulaResults}
-                mode={entityType}
+                mode={spreadsheetMode || "sector"}
               />
             )}
           </CardContent>

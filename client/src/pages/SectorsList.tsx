@@ -53,6 +53,14 @@ interface CompanySignal {
     sell: number;
     hold: number;
   };
+  effectiveFormula?: {
+    id: string;
+    name: string;
+    signal: string;
+    scope: string;
+  } | null;
+  formulaSource?: "company" | "sector" | "global";
+  assignedFormulaId?: string | null;
 }
 
 export default function SectorsList() {
@@ -155,10 +163,18 @@ export default function SectorsList() {
   });
 
   // Get active formula for sector: sector-specific > global
-  const activeSectorFormula = useMemo(() => {
-    return sectorFormulaData?.formula || globalFormula;
-  }, [sectorFormulaData, globalFormula]);
   const currentSector = sectors?.find(s => s.id === displaySectorId);
+
+  // If this sector has an explicitly assigned formula, always treat that as the active formula
+  const assignedSectorFormula = useMemo(() => {
+    if (!currentSector?.assignedFormulaId || !formulas) return null;
+    return formulas.find(f => f.id === currentSector.assignedFormulaId) || null;
+  }, [currentSector, formulas]);
+
+  const activeSectorFormula = useMemo(() => {
+    if (assignedSectorFormula) return assignedSectorFormula;
+    return sectorFormulaData?.formula || globalFormula;
+  }, [assignedSectorFormula, sectorFormulaData, globalFormula]);
 
   // Human-readable label for which formula is currently active
   const activeFormulaLabel = useMemo(() => {
@@ -207,7 +223,8 @@ export default function SectorsList() {
       // Fetch signals for all companies in parallel
       const signalPromises = companies.map(async (company) => {
         try {
-          const res = await apiRequest("GET", `/api/v1/companies/${company.ticker}/signals`);
+          // Always include companyId to avoid ambiguity when tickers are duplicated
+          const res = await apiRequest("GET", `/api/v1/companies/${company.ticker}/signals?companyId=${company.id}`);
           const data = await res.json();
 
           // Determine primary signal (BUY > SELL > HOLD priority)
@@ -225,6 +242,9 @@ export default function SectorsList() {
             companyId: data.companyId,
             signal: primarySignal,
             summary: data.summary,
+            effectiveFormula: data.effectiveFormula || null,
+            formulaSource: data.formulaSource || "global",
+            assignedFormulaId: data.assignedFormulaId || null,
           };
         } catch (error) {
           // If signal fetch fails, return null signal
@@ -233,6 +253,9 @@ export default function SectorsList() {
             companyId: company.id,
             signal: null,
             summary: { total: 0, buy: 0, sell: 0, hold: 0 },
+            effectiveFormula: null,
+            formulaSource: "global" as const,
+            assignedFormulaId: null,
           };
         }
       });
@@ -318,6 +341,63 @@ export default function SectorsList() {
     onError: (error: Error) => {
       toast({
         title: "Failed to remove mapping",
+        description: error.message,
+        variant: "destructive"
+      });
+    }
+  });
+
+  // Assign formula to company mutation
+  const assignFormulaToCompanyMutation = useMutation({
+    mutationFn: async ({ companyId, formulaId }: { companyId: string; formulaId: string | null }) => {
+      const res = await apiRequest("PUT", `/api/v1/companies/${companyId}/assign-formula`, { formulaId });
+      return res.json();
+    },
+    onSuccess: (data) => {
+      toast({
+        title: "Formula assigned & signal calculated",
+        description: `${data.message}`
+      });
+      // Force refetch signals to show updated formula and signal
+      queryClient.invalidateQueries({ queryKey: ["/api/v1/sectors", displaySectorId, "company-signals"] });
+      queryClient.refetchQueries({ queryKey: ["/api/v1/sectors", displaySectorId, "company-signals"] });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Failed to assign formula",
+        description: error.message,
+        variant: "destructive"
+      });
+    }
+  });
+
+  // Assign formula to sector mutation (applies to all companies in sector)
+  const assignFormulaToSectorMutation = useMutation({
+    mutationFn: async ({ sectorId, formulaId }: { sectorId: string; formulaId: string | null }) => {
+      const res = await apiRequest("PUT", `/api/v1/sectors/${sectorId}/assign-formula`, { formulaId });
+      return res.json();
+    },
+    onSuccess: (data) => {
+      toast({
+        title: "Sector formula assigned",
+        description: `${data.message}. ${data.companiesAffected} companies will be recalculated.`
+      });
+      // Clear cached formula results so QuarterlyDataSpreadsheet recalculates with the new formula
+      setFormulaResults({});
+
+      // Force refetch signals and sectors to show updated formula
+      queryClient.invalidateQueries({ queryKey: ["/api/v1/sectors", displaySectorId, "company-signals"] });
+      queryClient.refetchQueries({ queryKey: ["/api/v1/sectors", displaySectorId, "company-signals"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/sectors"] });
+      queryClient.refetchQueries({ queryKey: ["/api/sectors"] });
+
+      // Refresh active sector formula so auto-evaluation hook runs with updated condition
+      queryClient.invalidateQueries({ queryKey: ["/api/v1/formulas/entity", "sector", displaySectorId] });
+      queryClient.refetchQueries({ queryKey: ["/api/v1/formulas/entity", "sector", displaySectorId] });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Failed to assign sector formula",
         description: error.message,
         variant: "destructive"
       });
@@ -544,6 +624,27 @@ export default function SectorsList() {
       return matchesSearch;
     });
   }, [companies, quarterlySearchTerm]);
+
+  // Results to show in QuarterlyDataSpreadsheet's Result column:
+  // - If we have explicit formula evaluation results (formulaResults), use those
+  // - Otherwise, fall back to latest signals from companySignalsMap
+  const quarterlyFormulaResults = useMemo(() => {
+    // Prefer explicit evaluation results when present
+    if (Object.keys(formulaResults).length > 0) {
+      return formulaResults;
+    }
+
+    const results: Record<string, { result: string | number | boolean; type: string }> = {};
+    if (!filteredCompaniesForQuarterly.length || !companySignalsMap) return results;
+
+    filteredCompaniesForQuarterly.forEach((company) => {
+      const signalEntry = companySignalsMap[company.ticker];
+      const signal = signalEntry?.signal ?? "No Signal";
+      results[company.ticker] = { result: signal, type: "signal" };
+    });
+
+    return results;
+  }, [filteredCompaniesForQuarterly, companySignalsMap, formulaResults]);
 
   const bulkScrapeMutation = useMutation({
     mutationFn: async (data: { sectorId: string; conditions?: { marketCapMin?: number; marketCapMax?: number } }) => {
@@ -1541,6 +1642,7 @@ export default function SectorsList() {
                         <TableRow>
                           <TableHead className="font-semibold">Ticker</TableHead>
                           <TableHead className="font-semibold">Company Name</TableHead>
+                          <TableHead className="font-semibold">Formula</TableHead>
                           <TableHead className="font-semibold">Signal</TableHead>
                           <TableHead className="text-right font-semibold">Actions</TableHead>
                         </TableRow>
@@ -1582,6 +1684,9 @@ export default function SectorsList() {
                             );
                           };
 
+                          const formulaInfo = signalData?.effectiveFormula;
+                          const formulaSource = signalData?.formulaSource || "global";
+
                           return (
                             <TableRow
                               key={company.id}
@@ -1595,6 +1700,41 @@ export default function SectorsList() {
                                 </Link>
                               </TableCell>
                               <TableCell className="font-medium">{company.name}</TableCell>
+                              <TableCell>
+                                <Select
+                                  value={signalData?.assignedFormulaId || "default"}
+                                  onValueChange={(value) => {
+                                    const formulaId = value === "default" ? null : value;
+                                    assignFormulaToCompanyMutation.mutate({
+                                      companyId: company.id,
+                                      formulaId
+                                    });
+                                  }}
+                                >
+                                  <SelectTrigger className="w-[180px] h-8 text-xs">
+                                    <SelectValue>
+                                      <span className="flex items-center gap-1.5">
+                                        {formulaInfo?.name || "Default"}
+                                        {formulaSource !== "company" && (
+                                          <Badge variant="outline" className="text-[10px] px-1 py-0">
+                                            {formulaSource === "sector" ? "Sector" : "Global"}
+                                          </Badge>
+                                        )}
+                                      </span>
+                                    </SelectValue>
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="default">
+                                      Use Default (Global/Sector)
+                                    </SelectItem>
+                                    {formulas?.filter(f => f.enabled).map((formula) => (
+                                      <SelectItem key={formula.id} value={formula.id}>
+                                        {formula.name}
+                                      </SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                              </TableCell>
                               <TableCell>
                                 {getSignalBadge(signal ?? null)}
                               </TableCell>
@@ -1711,7 +1851,49 @@ export default function SectorsList() {
                     {sortedQuarterlyData ? `${sortedQuarterlyData.companies.length} companies, ${sortedQuarterlyData.quarters.length} quarters` : "Loading..."}
                   </CardDescription>
                 </div>
-                <div className="flex gap-2">
+                <div className="flex gap-2 items-center flex-wrap">
+                  {/* Sector Formula Assignment Dropdown */}
+                  {displaySectorId && formulas && (
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-muted-foreground">Sector Formula:</span>
+                      <Select
+                        value={sectors?.find(s => s.id === displaySectorId)?.assignedFormulaId || "default"}
+                        onValueChange={(value) => {
+                          const formulaId = value === "default" ? null : value;
+                          assignFormulaToSectorMutation.mutate({
+                            sectorId: displaySectorId,
+                            formulaId
+                          });
+                        }}
+                        disabled={assignFormulaToSectorMutation.isPending}
+                      >
+                        <SelectTrigger className="w-[200px] h-8 text-xs">
+                          <SelectValue>
+                            {(() => {
+                              const sector = sectors?.find(s => s.id === displaySectorId);
+                              const assignedFormula = sector?.assignedFormulaId 
+                                ? formulas.find(f => f.id === sector.assignedFormulaId)
+                                : null;
+                              return assignedFormula?.name || "Default (Global)";
+                            })()}
+                          </SelectValue>
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="default">
+                            Use Default (Global Formula)
+                          </SelectItem>
+                          {formulas.filter(f => f.enabled).map((formula) => (
+                            <SelectItem key={formula.id} value={formula.id}>
+                              {formula.name} ({formula.signal})
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      {assignFormulaToSectorMutation.isPending && (
+                        <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                      )}
+                    </div>
+                  )}
                   {displaySectorId && (
                     <Button
                       variant="outline"
@@ -2170,7 +2352,7 @@ export default function SectorsList() {
                       newSet.add(quarter);
                       setSelectedQuartersForFormula(newSet);
                     }}
-                    formulaResults={formulaResults}
+                    formulaResults={quarterlyFormulaResults}
                   />
 
                   <div className="text-xs text-muted-foreground mt-2">

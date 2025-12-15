@@ -422,6 +422,119 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Assign formula to sector
+  app.put("/api/v1/sectors/:id/assign-formula", requireAuth, requirePermission("sectors:update"), async (req, res) => {
+    try {
+      const schema = z.object({
+        formulaId: z.string().nullable(), // null to clear assignment (use default)
+      });
+      const { formulaId } = schema.parse(req.body);
+
+      // Validate formula exists if provided
+      if (formulaId) {
+        const formula = await storage.getFormula(formulaId);
+        if (!formula) {
+          return res.status(404).json({ error: "Formula not found" });
+        }
+      }
+
+      const sector = await storage.assignFormulaToSector(req.params.id, formulaId);
+      if (!sector) {
+        return res.status(404).json({ error: "Sector not found" });
+      }
+
+      // Get the assigned formula details
+      const assignedFormula = formulaId ? await storage.getFormula(formulaId) : null;
+
+      // Get all companies in this sector
+      const companies = await storage.getCompaniesBySector(req.params.id);
+      
+      // Immediately recalculate signals for all companies in the sector
+      const results: Array<{ ticker: string; signal: string }> = [];
+      
+      if (companies.length > 0) {
+        const { FormulaEvaluator } = await import("./formulaEvaluator");
+        const allFormulas = await storage.getAllFormulas();
+        
+        for (const company of companies) {
+          try {
+            // Generate signal using the new formula assignment
+            const result = await FormulaEvaluator.generateSignalForCompany(company, allFormulas);
+            
+            if (result) {
+              // Delete existing signals for this company
+              await storage.deleteSignalsByCompany(company.id);
+              
+              // Create new signal (value is already numeric string or null)
+              await storage.createSignal({
+                companyId: company.id,
+                formulaId: result.formulaId,
+                signal: result.signal,
+                value: result.value,
+                metadata: { 
+                  usedQuarters: result.usedQuarters,
+                  formulaName: result.formulaName,
+                  sectorAssignment: true,
+                  assignedAt: new Date().toISOString()
+                }
+              });
+              
+              results.push({ ticker: company.ticker, signal: result.signal });
+            } else {
+              // No signal generated, clear any existing signals
+              await storage.deleteSignalsByCompany(company.id);
+              results.push({ ticker: company.ticker, signal: "No Signal" });
+            }
+          } catch (calcError) {
+            console.error(`[Routes] Error calculating signal for company ${company.id}:`, calcError);
+            results.push({ ticker: company.ticker, signal: "Error" });
+          }
+        }
+      }
+
+      res.json({
+        success: true,
+        sector,
+        assignedFormula: assignedFormula || null,
+        companiesAffected: companies.length,
+        results,
+        message: formulaId 
+          ? `Formula "${assignedFormula?.name}" assigned to sector, recalculated ${companies.length} companies` 
+          : `Formula assignment cleared, recalculated ${companies.length} companies with default`
+      });
+    } catch (error: any) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
+  // Get assigned formula for a sector
+  app.get("/api/v1/sectors/:id/assigned-formula", requireAuth, requirePermission("sectors:read"), async (req, res) => {
+    try {
+      const sector = await storage.getSector(req.params.id);
+      if (!sector) {
+        return res.status(404).json({ error: "Sector not found" });
+      }
+
+      const assignedFormula = await storage.getAssignedFormulaForSector(req.params.id);
+
+      // Get the global/default formula
+      const allFormulas = await storage.getAllFormulas();
+      const globalFormula = allFormulas.find(f => f.scope === "global" && f.enabled) || null;
+
+      res.json({
+        sectorId: sector.id,
+        sectorName: sector.name,
+        assignedFormulaId: sector.assignedFormulaId,
+        assignedFormula: assignedFormula,
+        globalFormula: globalFormula,
+        effectiveFormula: assignedFormula || globalFormula,
+        source: assignedFormula ? "sector" : "global"
+      });
+    } catch (error: any) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
   // Sector Mapping routes
   app.get("/api/v1/sector-mappings/:sectorId", requireAuth, requirePermission("sectors:read"), async (req, res) => {
     try {
@@ -852,6 +965,114 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Assign formula to company
+  app.put("/api/v1/companies/:id/assign-formula", requireAuth, requirePermission("companies:update"), async (req, res) => {
+    try {
+      const schema = z.object({
+        formulaId: z.string().nullable(), // null to clear assignment (use default)
+      });
+      const { formulaId } = schema.parse(req.body);
+
+      // Validate formula exists if provided
+      if (formulaId) {
+        const formula = await storage.getFormula(formulaId);
+        if (!formula) {
+          return res.status(404).json({ error: "Formula not found" });
+        }
+      }
+
+      const company = await storage.assignFormulaToCompany(req.params.id, formulaId);
+      if (!company) {
+        return res.status(404).json({ error: "Company not found" });
+      }
+
+      // Get the assigned formula details
+      const assignedFormula = formulaId ? await storage.getFormula(formulaId) : null;
+
+      // Immediately recalculate signal for this company using the new formula
+      let newSignal = "No Signal";
+      try {
+        const { FormulaEvaluator } = await import("./formulaEvaluator");
+        const allFormulas = await storage.getAllFormulas();
+        
+        // Generate signal using the new formula assignment
+        const result = await FormulaEvaluator.generateSignalForCompany(company, allFormulas);
+        
+        if (result) {
+          // Delete existing signals for this company
+          await storage.deleteSignalsByCompany(company.id);
+          
+          // Create new signal (value is already numeric string or null from FormulaEvaluator)
+          await storage.createSignal({
+            companyId: company.id,
+            formulaId: result.formulaId,
+            signal: result.signal,
+            value: result.value,
+            metadata: { 
+              usedQuarters: result.usedQuarters,
+              formulaName: result.formulaName,
+              assignedAt: new Date().toISOString()
+            }
+          });
+          
+          newSignal = result.signal;
+        } else {
+          // No signal generated, clear any existing signals
+          await storage.deleteSignalsByCompany(company.id);
+        }
+      } catch (calcError) {
+        console.error(`[Routes] Error calculating signal for company ${company.id}:`, calcError);
+      }
+
+      res.json({
+        success: true,
+        company,
+        assignedFormula: assignedFormula || null,
+        newSignal,
+        message: formulaId 
+          ? `Formula "${assignedFormula?.name}" assigned to company. Signal: ${newSignal}` 
+          : `Formula assignment cleared, using default. Signal: ${newSignal}`
+      });
+    } catch (error: any) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
+  // Get assigned formula for a company
+  app.get("/api/v1/companies/:id/assigned-formula", requireAuth, requirePermission("companies:read"), async (req, res) => {
+    try {
+      const company = await storage.getCompany(req.params.id);
+      if (!company) {
+        return res.status(404).json({ error: "Company not found" });
+      }
+
+      const assignedFormula = await storage.getAssignedFormulaForCompany(req.params.id);
+      
+      // If no company-level assignment, check sector
+      let sectorFormula = null;
+      if (!assignedFormula && company.sectorId) {
+        sectorFormula = await storage.getAssignedFormulaForSector(company.sectorId);
+      }
+
+      // Get the global/default formula (Main Signal Formula)
+      const allFormulas = await storage.getAllFormulas();
+      const globalFormula = allFormulas.find(f => f.scope === "global" && f.enabled) || null;
+
+      res.json({
+        companyId: company.id,
+        companyName: company.name,
+        assignedFormulaId: company.assignedFormulaId,
+        assignedFormula: assignedFormula,
+        sectorFormula: sectorFormula,
+        globalFormula: globalFormula,
+        effectiveFormula: assignedFormula || sectorFormula || globalFormula,
+        source: assignedFormula ? "company" : sectorFormula ? "sector" : "global"
+      });
+    } catch (error: any) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
   // Bulk delete companies
   app.post("/api/companies/bulk-delete", requireAuth, requirePermission("companies:delete"), async (req, res) => {
     try {
@@ -888,6 +1109,94 @@ export async function registerRoutes(app: Express): Promise<Server> {
         success: true,
         count: results.length,
         companies: results
+      });
+    } catch (error: any) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
+  // Get signals for a company by ticker - includes formula assignment info
+  app.get("/api/v1/companies/:ticker/signals", requireAuth, requirePermission("signals:read"), async (req, res) => {
+    try {
+      const { ticker } = req.params;
+      const { companyId } = req.query;
+
+      // Prefer explicit companyId if provided (avoids ambiguity when multiple companies share a ticker)
+      const company = companyId
+        ? await storage.getCompany(companyId as string)
+        : await storage.getCompanyByTicker(ticker);
+      if (!company) {
+        return res.status(404).json({ error: "Company not found" });
+      }
+
+      // Get all signals for this company
+      const companySignals = await storage.getSignalsByCompany(company.id);
+
+      // Get formulas for context
+      const formulaIds = [...new Set(companySignals.map(s => s.formulaId))];
+      const formulas = await Promise.all(
+        formulaIds.map(id => storage.getFormula(id))
+      );
+      const formulaMap = new Map(
+        formulas.filter(f => f).map(f => [f!.id, f!])
+      );
+
+      // Enrich signals with formula details
+      const enrichedSignals = companySignals.map(signal => ({
+        ...signal,
+        formula: formulaMap.get(signal.formulaId)
+      }));
+
+      // Get effective formula information (company assigned > sector assigned > global)
+      let effectiveFormula = null;
+      let formulaSource = "global";
+
+      // Check company-level assignment first
+      if (company.assignedFormulaId) {
+        effectiveFormula = await storage.getFormula(company.assignedFormulaId);
+        if (effectiveFormula) {
+          formulaSource = "company";
+        }
+      }
+
+      // If no company assignment, check sector
+      if (!effectiveFormula && company.sectorId) {
+        const sector = await storage.getSector(company.sectorId);
+        if (sector?.assignedFormulaId) {
+          effectiveFormula = await storage.getFormula(sector.assignedFormulaId);
+          if (effectiveFormula) {
+            formulaSource = "sector";
+          }
+        }
+      }
+
+      // If still no assignment, get global formula
+      if (!effectiveFormula) {
+        const allFormulas = await storage.getAllFormulas();
+        effectiveFormula = allFormulas.find(f => f.scope === "global" && f.enabled && f.priority === 0) 
+          || allFormulas.find(f => f.scope === "global" && f.enabled)
+          || null;
+      }
+
+      res.json({
+        ticker,
+        companyId: company.id,
+        companyName: company.name,
+        assignedFormulaId: company.assignedFormulaId,
+        signals: enrichedSignals,
+        summary: {
+          total: companySignals.length,
+          buy: companySignals.filter(s => s.signal === "BUY").length,
+          sell: companySignals.filter(s => s.signal === "SELL").length,
+          hold: companySignals.filter(s => s.signal === "HOLD").length,
+        },
+        effectiveFormula: effectiveFormula ? {
+          id: effectiveFormula.id,
+          name: effectiveFormula.name,
+          signal: effectiveFormula.signal,
+          scope: effectiveFormula.scope
+        } : null,
+        formulaSource
       });
     } catch (error: any) {
       res.status(400).json({ error: error.message });

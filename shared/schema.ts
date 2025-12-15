@@ -46,6 +46,7 @@ export const sectors = pgTable("sectors", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   name: text("name").notNull().unique(),
   description: text("description"),
+  assignedFormulaId: varchar("assigned_formula_id"), // Reference to formulas.id - applied to all companies in sector unless overridden
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
@@ -54,6 +55,7 @@ export const companies = pgTable("companies", {
   ticker: text("ticker").notNull(),
   name: text("name").notNull(),
   sectorId: varchar("sector_id").notNull().references(() => sectors.id),
+  assignedFormulaId: varchar("assigned_formula_id"), // Reference to formulas.id - overrides sector/global formula for this company
   marketCap: decimal("market_cap", { precision: 20, scale: 2 }),
   financialData: jsonb("financial_data"),
   createdAt: timestamp("created_at").notNull().defaultNow(),

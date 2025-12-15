@@ -136,10 +136,12 @@ export default function CompanyDetail() {
     };
   }, [quarterlyData]);
 
-  // Fetch signals using new endpoint - use ticker from company or params
+  // Fetch signals using new endpoint - prefer companyId (more precise) but support ticker fallback
   const { data: signalsData, isLoading: signalsLoading } = useQuery<{
     ticker: string;
     companyId: string;
+    companyName: string;
+    assignedFormulaId: string | null;
     signals: Array<Signal & { formula?: any }>;
     summary: {
       total: number;
@@ -147,8 +149,24 @@ export default function CompanyDetail() {
       sell: number;
       hold: number;
     };
+    effectiveFormula: {
+      id: string;
+      name: string;
+      signal: string;
+      scope: string;
+    } | null;
+    formulaSource: "company" | "sector" | "global";
   }>({
-    queryKey: ["/api/v1/companies", companyTicker, "signals"],
+    queryKey: ["/api/v1/companies", company?.id || companyTicker, "signals"],
+    queryFn: async () => {
+      if (!companyTicker) throw new Error("No ticker available for signals");
+      // Prefer company.id when available to disambiguate tickers
+      const url = company?.id
+        ? `/api/v1/companies/${companyTicker}/signals?companyId=${company.id}`
+        : `/api/v1/companies/${companyTicker}/signals`;
+      const res = await apiRequest("GET", url);
+      return res.json();
+    },
     enabled: !!companyTicker
   });
 
@@ -187,10 +205,17 @@ export default function CompanyDetail() {
     return entityFormulaData?.formula || globalFormula;
   }, [entityFormulaData, globalFormula]);
 
-  // Get available metrics from quarterly data
+  // Get available metrics from quarterly data - gather ALL unique metrics across ALL quarters
   const availableMetrics = useMemo(() => {
     if (!sortedQuarterlyData || sortedQuarterlyData.quarters.length === 0) return [];
-    return Object.keys(sortedQuarterlyData.quarters[0].metrics);
+    
+    // Collect all unique metric names from all quarters
+    const metricSet = new Set<string>();
+    sortedQuarterlyData.quarters.forEach(q => {
+      Object.keys(q.metrics).forEach(metric => metricSet.add(metric));
+    });
+    
+    return Array.from(metricSet).sort();
   }, [sortedQuarterlyData]);
 
   // Fetch default metrics from settings
@@ -214,16 +239,17 @@ export default function CompanyDetail() {
     }
   }, [sortedQuarterlyData, selectedQuartersForFormula.size]);
 
-  // Filter metrics and quarters based on settings
+  // Filter metrics based on settings - match SectorsList behavior exactly
   const filteredMetrics = useMemo(() => {
     if (availableMetrics.length === 0) return [];
 
-    let targetMetrics: string[] = [];
+    // Get default metric names from settings or use fallback
+    let defaultMetricNames: string[] = [];
     if (defaultMetricsData?.visibleMetrics && defaultMetricsData.visibleMetrics.length > 0) {
-      targetMetrics = defaultMetricsData.visibleMetrics;
+      defaultMetricNames = defaultMetricsData.visibleMetrics;
     } else {
-      // Fallback
-      targetMetrics = [
+      // Fallback to hardcoded defaults if API fails
+      defaultMetricNames = [
         'Sales',
         'Sales Growth(YoY) %',
         'Sales Growth(QoQ) %',
@@ -234,8 +260,17 @@ export default function CompanyDetail() {
       ];
     }
 
-    // Filter available metrics to only those in target list
-    return availableMetrics.filter(m => targetMetrics.includes(m));
+    // Find metrics that match default names exactly (same as SectorsList)
+    const matchedMetrics = defaultMetricNames.filter(metricName =>
+      availableMetrics.includes(metricName)
+    );
+
+    // If default metrics found, use them; otherwise fall back to first 6 available metrics
+    if (matchedMetrics.length > 0) {
+      return matchedMetrics;
+    } else {
+      return availableMetrics.slice(0, 6);
+    }
   }, [availableMetrics, defaultMetricsData]);
 
   const filteredQuarters = useMemo(() => {
@@ -472,6 +507,32 @@ export default function CompanyDetail() {
         });
       }
     },
+  });
+
+  // Mutation for assigning formula to company
+  const assignFormulaMutation = useMutation({
+    mutationFn: async (formulaId: string | null) => {
+      if (!company?.id) throw new Error("Company ID not available");
+      const res = await apiRequest("PUT", `/api/v1/companies/${company.id}/assign-formula`, { formulaId });
+      return res.json();
+    },
+    onSuccess: (data) => {
+      toast({
+        title: "Formula assigned & signal calculated",
+        description: data.message
+      });
+      // Force refetch signals data to show updated formula and signal
+      queryClient.invalidateQueries({ queryKey: ["/api/v1/companies", companyTicker, "signals"] });
+      queryClient.refetchQueries({ queryKey: ["/api/v1/companies", companyTicker, "signals"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/v1/formulas/entity", "company", company?.id] });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Failed to assign formula",
+        description: error.message,
+        variant: "destructive"
+      });
+    }
   });
 
   // Mutation for validating ticker
@@ -788,7 +849,7 @@ export default function CompanyDetail() {
 
     // Check if sector changed
     if (updateSectorId !== (company.sectorId || "")) {
-      updates.sectorId = updateSectorId || null;
+      updates.sectorId = updateSectorId || undefined;
     }
 
     // If no changes, just close dialog
@@ -914,15 +975,47 @@ export default function CompanyDetail() {
               <div className="flex items-center gap-2 mt-1 flex-wrap">
                 <p className="text-sm sm:text-base text-muted-foreground truncate" data-testid="text-company-name">{company.name}</p>
                 <Badge variant="outline" data-testid="badge-sector" className="text-xs">{sectorName}</Badge>
-                {activeFormulaForPage && (
-                  <Badge variant="outline" className="text-xs">
-                    <Calculator className="h-3 w-3 mr-1" />
-                    Formula: {activeFormulaForPage.name}
-                    {activeFormulaForPage.scope === "company" && " (Company)"}
-                    {activeFormulaForPage.scope === "sector" && " (Sector)"}
-                    {activeFormulaForPage.scope === "global" && " (Global)"}
-                  </Badge>
-                )}
+                <div className="flex items-center gap-2">
+                  <Calculator className="h-3.5 w-3.5 text-muted-foreground" />
+                  <Select
+                    value={signalsData?.assignedFormulaId || "default"}
+                    onValueChange={(value) => {
+                      const formulaId = value === "default" ? null : value;
+                      assignFormulaMutation.mutate(formulaId);
+                    }}
+                    disabled={assignFormulaMutation.isPending}
+                  >
+                    <SelectTrigger className="h-7 w-auto min-w-[160px] text-xs border-dashed">
+                      <SelectValue>
+                        <span className="flex items-center gap-1.5">
+                          {signalsData?.effectiveFormula?.name || activeFormulaForPage?.name || "Default"}
+                          <Badge variant="outline" className="text-[10px] px-1 py-0 ml-1">
+                            {signalsData?.formulaSource === "company" 
+                              ? "Company" 
+                              : signalsData?.formulaSource === "sector" 
+                                ? "Sector" 
+                                : "Global"}
+                          </Badge>
+                        </span>
+                      </SelectValue>
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="default">
+                        <span className="flex items-center gap-2">
+                          Use Default (Global/Sector)
+                        </span>
+                      </SelectItem>
+                      {formulas?.filter(f => f.enabled).map((formula) => (
+                        <SelectItem key={formula.id} value={formula.id}>
+                          {formula.name} ({formula.signal})
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {assignFormulaMutation.isPending && (
+                    <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
+                  )}
+                </div>
               </div>
             </div>
             {lastScrape && (
