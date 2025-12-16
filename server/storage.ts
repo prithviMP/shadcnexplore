@@ -99,6 +99,7 @@ export interface IStorage {
   createSector(sector: InsertSector): Promise<Sector>;
   updateSector(id: string, data: Partial<InsertSector>): Promise<Sector | undefined>;
   deleteSector(id: string): Promise<void>;
+  deleteSectorWithCompanies(id: string): Promise<{ companiesDeleted: number }>;
 
   // Company operations
   getCompany(id: string): Promise<Company | undefined>;
@@ -196,6 +197,7 @@ export interface IStorage {
   assignFormulaToSector(sectorId: string, formulaId: string | null): Promise<Sector | undefined>;
   getAssignedFormulaForCompany(companyId: string): Promise<Formula | null>;
   getAssignedFormulaForSector(sectorId: string): Promise<Formula | null>;
+  resetAllFormulasToGlobal(): Promise<{ companiesAffected: number; sectorsAffected: number }>;
 }
 
 export class DbStorage implements IStorage {
@@ -295,6 +297,50 @@ export class DbStorage implements IStorage {
     }
     
     await db.delete(sectors).where(eq(sectors.id, id));
+  }
+
+  async deleteSectorWithCompanies(id: string): Promise<{ companiesDeleted: number }> {
+    // Get all companies in this sector
+    const companiesInSector = await db
+      .select({ id: companies.id })
+      .from(companies)
+      .where(eq(companies.sectorId, id));
+
+    const companyIds = companiesInSector.map(c => c.id);
+
+    // Delete sector and all its companies in a transaction
+    await db.transaction(async (tx) => {
+      if (companyIds.length > 0) {
+        // Delete signals for all companies
+        await tx.delete(signals).where(inArray(signals.companyId, companyIds));
+
+        // Delete quarterly data for all companies
+        await tx.delete(quarterlyData).where(inArray(quarterlyData.companyId, companyIds));
+
+        // Delete scraping logs for all companies (by companyId)
+        await tx.delete(scrapingLogs).where(inArray(scrapingLogs.companyId, companyIds));
+
+        // Delete custom tables for all companies
+        await tx.delete(customTables).where(inArray(customTables.companyId, companyIds));
+
+        // Delete all companies in the sector
+        await tx.delete(companies).where(inArray(companies.id, companyIds));
+      }
+
+      // Delete scraping logs that reference this sector directly (by sectorId)
+      await tx.delete(scrapingLogs).where(eq(scrapingLogs.sectorId, id));
+
+      // Delete custom tables that reference this sector
+      await tx.delete(customTables).where(eq(customTables.sectorId, id));
+
+      // Delete sector mappings
+      await tx.delete(sectorMappings).where(eq(sectorMappings.customSectorId, id));
+
+      // Finally, delete the sector itself
+      await tx.delete(sectors).where(eq(sectors.id, id));
+    });
+
+    return { companiesDeleted: companyIds.length };
   }
 
   // Company operations
@@ -1101,6 +1147,36 @@ export class DbStorage implements IStorage {
     
     const formula = await this.getFormula(sector.assignedFormulaId);
     return formula || null;
+  }
+
+  async resetAllFormulasToGlobal(): Promise<{ companiesAffected: number; sectorsAffected: number }> {
+    try {
+      // Clear all company-level formula assignments (only update rows that have a formula assigned)
+      // Using SQL template for IS NOT NULL check as a safe fallback
+      const companiesResult = await db
+        .update(companies)
+        .set({ 
+          assignedFormulaId: null,
+          updatedAt: new Date() 
+        })
+        .where(sql`${companies.assignedFormulaId} IS NOT NULL`)
+        .returning({ id: companies.id });
+
+      // Clear all sector-level formula assignments (only update rows that have a formula assigned)
+      const sectorsResult = await db
+        .update(sectors)
+        .set({ assignedFormulaId: null })
+        .where(sql`${sectors.assignedFormulaId} IS NOT NULL`)
+        .returning({ id: sectors.id });
+
+      return {
+        companiesAffected: companiesResult.length,
+        sectorsAffected: sectorsResult.length
+      };
+    } catch (error: any) {
+      console.error("Error in resetAllFormulasToGlobal:", error);
+      throw new Error(`Failed to reset formulas to global: ${error.message}`);
+    }
   }
 }
 

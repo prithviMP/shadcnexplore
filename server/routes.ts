@@ -422,6 +422,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Delete sector with all its companies
+  app.delete("/api/sectors/:id/with-companies", requireAuth, requireRole("admin"), async (req, res) => {
+    try {
+      const result = await storage.deleteSectorWithCompanies(req.params.id);
+      res.json({ 
+        success: true, 
+        companiesDeleted: result.companiesDeleted,
+        message: `Sector and ${result.companiesDeleted} ${result.companiesDeleted === 1 ? 'company' : 'companies'} deleted successfully.`
+      });
+    } catch (error: any) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
   // Assign formula to sector
   app.put("/api/v1/sectors/:id/assign-formula", requireAuth, requirePermission("sectors:update"), async (req, res) => {
     try {
@@ -1401,6 +1415,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ error: "Formula not found" });
       }
       res.json(formula);
+    } catch (error: any) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
+  // Reset all formula assignments to global (clears all sector and company-level assignments)
+  // IMPORTANT: This route must be defined BEFORE /api/formulas/:id to avoid route matching conflicts
+  app.post("/api/formulas/reset-all-to-global", requireAuth, requirePermission("formulas:update"), async (req, res) => {
+    try {
+      const result = await storage.resetAllFormulasToGlobal();
+      res.json({
+        success: true,
+        message: `Reset all formula assignments to global. ${result.companiesAffected} companies and ${result.sectorsAffected} sectors affected.`,
+        companiesAffected: result.companiesAffected,
+        sectorsAffected: result.sectorsAffected
+      });
     } catch (error: any) {
       res.status(400).json({ error: error.message });
     }

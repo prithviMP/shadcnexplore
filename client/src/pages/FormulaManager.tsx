@@ -14,7 +14,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Switch } from "@/components/ui/switch";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useToast } from "@/hooks/use-toast";
-import { Plus, Pencil, Trash2, TestTube, Loader2, Play, Search, Calculator, BarChart3 } from "lucide-react";
+import { Plus, Pencil, Trash2, TestTube, Loader2, Play, Search, Calculator, BarChart3, RotateCcw } from "lucide-react";
 import SignalBadge from "@/components/SignalBadge";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { insertFormulaSchema, type Formula, type Company, type Sector } from "@shared/schema";
@@ -277,6 +277,30 @@ export default function FormulaManager() {
     },
   });
 
+  const resetAllToGlobal = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/formulas/reset-all-to-global", {});
+      return res.json();
+    },
+    onSuccess: (data: { companiesAffected: number; sectorsAffected: number; message: string }) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/formulas"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/sectors"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/companies"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/signals"] });
+      toast({
+        title: "All formulas reset to global",
+        description: data.message,
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Failed to reset formulas",
+        description: error.message,
+        variant: "destructive"
+      });
+    },
+  });
+
   const testExcelFormula = useMutation({
     mutationFn: async ({ ticker, formula }: { ticker: string; formula: string }) => {
       const res = await apiRequest("POST", "/api/v1/formulas/test-excel", { ticker, formula });
@@ -373,6 +397,25 @@ export default function FormulaManager() {
           <p className="text-sm sm:text-base text-muted-foreground mt-1">Define and manage signal generation formulas</p>
         </div>
         <div className="flex gap-2 shrink-0">
+          <Button
+            onClick={() => {
+              if (confirm("Are you sure you want to reset all formula assignments to global?\n\nThis will:\n- Clear all sector-level formula assignments\n- Clear all company-level formula assignments\n- Make all companies and sectors use the global formula\n\nThis action cannot be undone.")) {
+                resetAllToGlobal.mutate();
+              }
+            }}
+            variant="outline"
+            size="sm"
+            className="border-orange-600 text-orange-600 hover:bg-orange-50 dark:hover:bg-orange-950/30"
+            disabled={resetAllToGlobal.isPending}
+            data-testid="button-reset-all-to-global"
+          >
+            {resetAllToGlobal.isPending ? (
+              <Loader2 className="h-4 w-4 sm:mr-2 animate-spin" />
+            ) : (
+              <RotateCcw className="h-4 w-4 sm:mr-2" />
+            )}
+            <span className="hidden sm:inline">Reset All to Global</span>
+          </Button>
           <Button
             onClick={() => calculateSignals.mutate()}
             disabled={calculateSignals.isPending}

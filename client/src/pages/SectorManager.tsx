@@ -129,6 +129,23 @@ export default function SectorManager() {
     }
   });
 
+  const deleteSectorWithCompaniesMutation = useMutation({
+    mutationFn: (id: string) => apiRequest("DELETE", `/api/sectors/${id}/with-companies`),
+    onSuccess: (data: { companiesDeleted: number; message: string }) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/sectors"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/companies"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/signals"] });
+      toast({ 
+        title: "Sector and companies deleted successfully",
+        description: data.message
+      });
+      setDeleteSector(null);
+    },
+    onError: (error: Error) => {
+      toast({ title: "Failed to delete sector and companies", description: error.message, variant: "destructive" });
+    }
+  });
+
   const getCompanyCount = (sectorId: string) => {
     return companies?.filter(c => c.sectorId === sectorId).length || 0;
   };
@@ -409,10 +426,17 @@ export default function SectorManager() {
               {deleteSector && getCompanyCount(deleteSector.id) > 0 ? (
                 <>
                   <p className="mb-2">
-                    Cannot delete "{deleteSector.name}" because it has {getCompanyCount(deleteSector.id)} {getCompanyCount(deleteSector.id) === 1 ? 'company' : 'companies'} assigned to it.
+                    "{deleteSector.name}" has {getCompanyCount(deleteSector.id)} {getCompanyCount(deleteSector.id) === 1 ? 'company' : 'companies'} assigned to it.
                   </p>
-                  <p className="text-destructive font-medium">
-                    Please reassign or remove all companies from this sector before deleting it.
+                  <p className="mb-3 text-destructive font-medium">
+                    You can either:
+                  </p>
+                  <ul className="list-disc list-inside space-y-1 mb-3 text-sm">
+                    <li>Reassign or remove all companies from this sector first, then delete it</li>
+                    <li>Delete the sector along with all its companies</li>
+                  </ul>
+                  <p className="text-xs text-muted-foreground">
+                    Warning: Deleting the sector with companies will permanently remove all companies and their associated data (signals, quarterly data, etc.). This action cannot be undone.
                   </p>
                 </>
               ) : (
@@ -422,16 +446,31 @@ export default function SectorManager() {
               )}
             </AlertDialogDescription>
           </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel data-testid="button-cancel-delete">Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={() => deleteSector && deleteMutation.mutate(deleteSector.id)}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-              data-testid="button-confirm-delete"
-              disabled={deleteSector ? getCompanyCount(deleteSector.id) > 0 : false}
-            >
-              {deleteMutation.isPending ? "Deleting..." : "Delete"}
-            </AlertDialogAction>
+          <AlertDialogFooter className="flex-col sm:flex-row gap-2">
+            <AlertDialogCancel data-testid="button-cancel-delete" className="w-full sm:w-auto">Cancel</AlertDialogCancel>
+            {deleteSector && getCompanyCount(deleteSector.id) > 0 ? (
+              <AlertDialogAction
+                onClick={() => {
+                  if (deleteSector && confirm(`Are you sure you want to delete "${deleteSector.name}" along with all ${getCompanyCount(deleteSector.id)} ${getCompanyCount(deleteSector.id) === 1 ? 'company' : 'companies'}?\n\nThis will permanently delete:\n- The sector\n- All companies in this sector\n- All signals, quarterly data, and other associated data\n\nThis action CANNOT be undone.`)) {
+                    deleteSectorWithCompaniesMutation.mutate(deleteSector.id);
+                  }
+                }}
+                className="bg-red-600 text-white hover:bg-red-700 w-full sm:w-auto"
+                data-testid="button-confirm-delete-with-companies"
+                disabled={deleteSectorWithCompaniesMutation.isPending}
+              >
+                {deleteSectorWithCompaniesMutation.isPending ? "Deleting..." : `Delete Sector and All ${getCompanyCount(deleteSector.id)} ${getCompanyCount(deleteSector.id) === 1 ? 'Company' : 'Companies'}`}
+              </AlertDialogAction>
+            ) : (
+              <AlertDialogAction
+                onClick={() => deleteSector && deleteMutation.mutate(deleteSector.id)}
+                className="bg-destructive text-destructive-foreground hover:bg-destructive/90 w-full sm:w-auto"
+                data-testid="button-confirm-delete"
+                disabled={deleteMutation.isPending}
+              >
+                {deleteMutation.isPending ? "Deleting..." : "Delete Sector"}
+              </AlertDialogAction>
+            )}
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
