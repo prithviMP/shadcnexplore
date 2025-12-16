@@ -763,12 +763,24 @@ export async function evaluateExcelFormulaForCompany(
   formula: string,
   selectedQuarters?: string[]
 ): Promise<{ result: FormulaResult; resultType: string; usedQuarters: string[] }> {
+  console.log(`[EXCEL-FORMULA] Evaluating formula for ticker: ${ticker}`);
+  console.log(`[EXCEL-FORMULA] Formula: ${formula.substring(0, 200)}${formula.length > 200 ? '...' : ''}`);
   try {
     const quarterlyData = await storage.getQuarterlyDataByTicker(ticker);
+    console.log(`[EXCEL-FORMULA] Retrieved ${quarterlyData?.length || 0} quarterly data records for ticker ${ticker}`);
 
     if (!quarterlyData || quarterlyData.length === 0) {
+      console.log(`[EXCEL-FORMULA] No quarterly data found for ticker ${ticker}, returning "No Signal"`);
       return { result: "No Signal", resultType: "string", usedQuarters: [] };
     }
+
+    // Log available quarters
+    const uniqueQuarters = Array.from(new Set(quarterlyData.map(d => d.quarter)));
+    console.log(`[EXCEL-FORMULA] Available quarters: ${uniqueQuarters.join(', ')}`);
+    
+    // Log available metrics
+    const uniqueMetrics = Array.from(new Set(quarterlyData.map(d => d.metricName)));
+    console.log(`[EXCEL-FORMULA] Available metrics: ${uniqueMetrics.slice(0, 10).join(', ')}${uniqueMetrics.length > 10 ? ` (${uniqueMetrics.length} total)` : ''}`);
 
     // Filter quarters if selectedQuarters provided
     let quartersToUse = quarterlyData;
@@ -778,11 +790,16 @@ export async function evaluateExcelFormulaForCompany(
     }
 
     // Create evaluator with filtered data
+    console.log(`[EXCEL-FORMULA] Creating evaluator with ${quartersToUse.length} quarters${selectedQuarters ? ` (filtered from ${selectedQuarters.length} selected)` : ''}`);
     const evaluator = new ExcelFormulaEvaluator(quartersToUse, selectedQuarters);
+    console.log(`[EXCEL-FORMULA] Evaluator sorted quarters (Q1=oldest, Q${evaluator.sortedQuarters.length}=newest): ${evaluator.sortedQuarters.slice(0, 5).join(', ')}${evaluator.sortedQuarters.length > 5 ? '...' : ''}`);
+    
     let result = evaluator.evaluate(formula);
+    console.log(`[EXCEL-FORMULA] Formula evaluation result: ${JSON.stringify(result)} (type: ${typeof result})`);
 
     // Convert null to "No Signal" to ensure we always return a meaningful result
     if (result === null || result === undefined) {
+      console.log(`[EXCEL-FORMULA] Result is null/undefined, converting to "No Signal"`);
       result = "No Signal";
     }
 
@@ -790,9 +807,15 @@ export async function evaluateExcelFormulaForCompany(
     if (typeof result === "boolean") resultType = "boolean";
     else if (typeof result === "number") resultType = "number";
 
-    return { result, resultType, usedQuarters: evaluator.sortedQuarters.slice(0, 5) };
+    const usedQuartersResult = evaluator.sortedQuarters.slice(0, 5);
+    console.log(`[EXCEL-FORMULA] Final result: ${JSON.stringify(result)} (${resultType}), used quarters: ${usedQuartersResult.join(', ')}`);
+    return { result, resultType, usedQuarters: usedQuartersResult };
   } catch (error) {
-    console.error(`Error evaluating Excel formula for ${ticker}:`, error);
-    return { result: null, resultType: "null", usedQuarters: [] };
+    console.error(`[EXCEL-FORMULA] ✗ Error evaluating Excel formula for ${ticker}:`, error);
+    if (error instanceof Error) {
+      console.error(`[EXCEL-FORMULA] Error message: ${error.message}`);
+      console.error(`[EXCEL-FORMULA] Error stack: ${error.stack}`);
+    }
+    return { result: "No Signal", resultType: "string", usedQuarters: [] };
   }
 }

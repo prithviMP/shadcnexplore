@@ -157,33 +157,50 @@ export class FormulaEvaluator {
     company: Company,
     formulas: Formula[]
   ): Promise<{ signal: string; formulaId: string; formulaName: string; value: string | null; usedQuarters: string[] | null } | null> {
+    console.log(`[SIGNAL] Starting signal generation for company: ${company.ticker} (${company.id})`);
+    console.log(`[SIGNAL] Total enabled formulas available: ${formulas.filter(f => f.enabled).length}`);
+    
     let applicableFormulas: Formula[] = [];
 
     // Priority 1: Check if company has an explicitly assigned formula
     if (company.assignedFormulaId) {
+      console.log(`[SIGNAL] Company has assigned formula ID: ${company.assignedFormulaId}`);
       const assignedFormula = formulas.find(f => f.id === company.assignedFormulaId && f.enabled);
       if (assignedFormula) {
+        console.log(`[SIGNAL] Found assigned formula: ${assignedFormula.name} (${assignedFormula.id})`);
         applicableFormulas = [assignedFormula];
+      } else {
+        console.log(`[SIGNAL] Assigned formula ID ${company.assignedFormulaId} not found or not enabled`);
       }
     }
 
     // Priority 2: Check if company's sector has an assigned formula
     if (applicableFormulas.length === 0 && company.sectorId) {
+      console.log(`[SIGNAL] Checking sector formula for sector ID: ${company.sectorId}`);
       const sectorResult = await db.select().from(sectors).where(eq(sectors.id, company.sectorId)).limit(1);
       const sector = sectorResult[0];
       
       if (sector?.assignedFormulaId) {
+        console.log(`[SIGNAL] Sector has assigned formula ID: ${sector.assignedFormulaId}`);
         const sectorFormula = formulas.find(f => f.id === sector.assignedFormulaId && f.enabled);
         if (sectorFormula) {
+          console.log(`[SIGNAL] Found sector formula: ${sectorFormula.name} (${sectorFormula.id})`);
           applicableFormulas = [sectorFormula];
+        } else {
+          console.log(`[SIGNAL] Sector formula ID ${sector.assignedFormulaId} not found or not enabled`);
         }
+      } else {
+        console.log(`[SIGNAL] Sector does not have an assigned formula`);
       }
     }
 
     // Priority 3: Fall back to existing scope-based formula selection
     if (applicableFormulas.length === 0) {
-      applicableFormulas = formulas
-        .filter(f => f.enabled)
+      console.log(`[SIGNAL] Falling back to scope-based formula selection`);
+      const enabledFormulas = formulas.filter(f => f.enabled);
+      console.log(`[SIGNAL] Enabled formulas: ${enabledFormulas.map(f => `${f.name} (${f.scope}${f.scopeValue ? `:${f.scopeValue}` : ''})`).join(', ')}`);
+      
+      applicableFormulas = enabledFormulas
         .filter(f => {
           if (f.scope === "global") return true;
           // For sector/company scopes, scopeValue must be populated
@@ -209,35 +226,55 @@ export class FormulaEvaluator {
           // Then sort by priority (lower number = higher priority)
           return a.priority - b.priority;
         });
+      
+      console.log(`[SIGNAL] Found ${applicableFormulas.length} applicable formulas after scope filtering: ${applicableFormulas.map(f => f.name).join(', ')}`);
+    }
+
+    if (applicableFormulas.length === 0) {
+      console.log(`[SIGNAL] No applicable formulas found for company ${company.ticker}`);
+      return null;
     }
 
     for (const formula of applicableFormulas) {
+      console.log(`[SIGNAL] Evaluating formula: ${formula.name} (${formula.id})`);
+      console.log(`[SIGNAL] Formula type: ${formula.formulaType}, Condition: ${formula.condition.substring(0, 100)}${formula.condition.length > 100 ? '...' : ''}`);
+      
       let signalValue: string | null = null;
       let numericValue: number | null = null;
       let usedQuarters: string[] = [];
 
       if (formula.formulaType === 'excel' || /[QP]\d+/.test(formula.condition)) {
+        console.log(`[SIGNAL] Using Excel formula evaluator for ticker: ${company.ticker}`);
         const evalResult = await evaluateExcelFormulaForCompany(company.ticker, formula.condition);
+        console.log(`[SIGNAL] Excel formula result: ${JSON.stringify(evalResult.result)} (type: ${evalResult.resultType})`);
+        console.log(`[SIGNAL] Used quarters: ${evalResult.usedQuarters.join(', ')}`);
         usedQuarters = evalResult.usedQuarters;
 
         // 1) Boolean result – use the formula's configured signal label
         if (evalResult.result === true) {
           signalValue = formula.signal;
+          console.log(`[SIGNAL] Boolean result is true, using formula signal: ${signalValue}`);
         }
         // 2) String result – accept any non-empty label except explicit "No Signal"
         else if (typeof evalResult.result === 'string') {
           const s = evalResult.result.trim();
+          console.log(`[SIGNAL] String result: "${s}"`);
           if (s !== '' && s !== 'No Signal') {
             signalValue = s;
+            console.log(`[SIGNAL] Using string result as signal: ${signalValue}`);
+          } else {
+            console.log(`[SIGNAL] String result is empty or "No Signal", skipping`);
           }
         }
 
         // 3) Numeric result – keep numeric value as score
         if (typeof evalResult.result === 'number') {
           numericValue = evalResult.result;
+          console.log(`[SIGNAL] Numeric result: ${numericValue}`);
         }
       } else {
         // Simple formula evaluation
+        console.log(`[SIGNAL] Using simple formula evaluator`);
         try {
           const parsed = this.parseCondition(formula.condition);
           let result = false;
@@ -247,15 +284,18 @@ export class FormulaEvaluator {
             result = parsed.conditions.some(cond => this.evaluateCondition(company, cond));
           }
 
+          console.log(`[SIGNAL] Simple formula result: ${result}`);
           if (result) {
             signalValue = formula.signal;
+            console.log(`[SIGNAL] Condition matched, using formula signal: ${signalValue}`);
           }
         } catch (e) {
-          console.error(`Error evaluating simple formula ${formula.name}:`, e);
+          console.error(`[SIGNAL] Error evaluating simple formula ${formula.name}:`, e);
         }
       }
 
       if (signalValue) {
+        console.log(`[SIGNAL] ✓ Signal generated: ${signalValue} for company ${company.ticker} using formula ${formula.name}`);
         // For Excel formulas, get the actual signal result
         // This block is now redundant as signalValue is already determined above
         // if (formula.formulaType === 'excel' || /[QP]\d+/.test(formula.condition)) {
@@ -279,13 +319,17 @@ export class FormulaEvaluator {
           value: valueString,
           usedQuarters: usedQuarters.length > 0 ? usedQuarters : null
         };
+      } else {
+        console.log(`[SIGNAL] Formula ${formula.name} did not generate a signal value`);
       }
     }
 
+    console.log(`[SIGNAL] ✗ No signal generated for company ${company.ticker} after evaluating ${applicableFormulas.length} formula(s)`);
     return null;
   }
 
   static async calculateAndStoreSignals(companyIds?: string[]): Promise<number> {
+    console.log(`[SIGNAL-CALC] Starting signal calculation${companyIds ? ` for ${companyIds.length} specific companies` : ' for all companies'}`);
     const { formulas: formulasTable, companies } = await import("@shared/schema");
 
     const allFormulas = await db
@@ -293,9 +337,12 @@ export class FormulaEvaluator {
       .from(formulasTable)
       .where(eq(formulasTable.enabled, true));
 
+    console.log(`[SIGNAL-CALC] Found ${allFormulas.length} enabled formula(s): ${allFormulas.map(f => f.name).join(', ')}`);
+
     let companiesToProcess: Company[];
 
     if (companyIds && companyIds.length > 0) {
+      console.log(`[SIGNAL-CALC] Processing specific company IDs: ${companyIds.join(', ')}`);
       companiesToProcess = await db
         .select()
         .from(companies)
@@ -305,15 +352,22 @@ export class FormulaEvaluator {
       if (companiesToProcess.length !== companyIds.length) {
         const foundIds = companiesToProcess.map(c => c.id);
         const missingIds = companyIds.filter(id => !foundIds.includes(id));
+        console.error(`[SIGNAL-CALC] Error: Companies not found: ${missingIds.join(', ')}`);
         throw new Error(`Companies not found: ${missingIds.join(', ')}`);
       }
+      console.log(`[SIGNAL-CALC] Found ${companiesToProcess.length} companies to process`);
     } else {
       companiesToProcess = await db.select().from(companies);
+      console.log(`[SIGNAL-CALC] Processing all ${companiesToProcess.length} companies`);
     }
 
     let signalsGenerated = 0;
+    let companiesProcessed = 0;
+    let companiesWithErrors = 0;
 
     for (const company of companiesToProcess) {
+      companiesProcessed++;
+      console.log(`[SIGNAL-CALC] Processing company ${companiesProcessed}/${companiesToProcess.length}: ${company.ticker} (${company.id})`);
       try {
         // Evaluate formula first (outside transaction to preserve signals on error)
         const result = await this.generateSignalForCompany(company, allFormulas);
@@ -322,19 +376,15 @@ export class FormulaEvaluator {
         await db.transaction(async (tx: any) => {
           // Delete existing signals for formulas that matched (to avoid duplicates)
           if (result) {
+            console.log(`[SIGNAL-CALC] Storing signal "${result.signal}" for company ${company.ticker} using formula ${result.formulaName}`);
             await tx.delete(signals).where(
               and(
                 eq(signals.companyId, company.id),
                 eq(signals.formulaId, result.formulaId)
               )
             );
-          } else {
-            // If no signal, delete all signals for this company (optional - comment out if you want to keep old signals)
-            // await tx.delete(signals).where(eq(signals.companyId, company.id));
-          }
 
-          // Insert new signal only if a formula matched
-          if (result) {
+            // Insert new signal only if a formula matched
             await tx.insert(signals).values({
               companyId: company.id,
               formulaId: result.formulaId,
@@ -348,15 +398,29 @@ export class FormulaEvaluator {
               updatedAt: new Date()
             });
             signalsGenerated++;
+            console.log(`[SIGNAL-CALC] ✓ Signal stored successfully. Total signals generated: ${signalsGenerated}`);
+          } else {
+            console.log(`[SIGNAL-CALC] No signal result for company ${company.ticker}, skipping storage`);
+            // If no signal, delete all signals for this company (optional - comment out if you want to keep old signals)
+            // await tx.delete(signals).where(eq(signals.companyId, company.id));
           }
         });
       } catch (error) {
         // Preserve existing signals on evaluation error
-        console.error(`Failed to evaluate signals for company ${company.id}:`, error);
+        companiesWithErrors++;
+        console.error(`[SIGNAL-CALC] ✗ Failed to evaluate signals for company ${company.ticker} (${company.id}):`, error);
+        if (error instanceof Error) {
+          console.error(`[SIGNAL-CALC] Error message: ${error.message}`);
+          console.error(`[SIGNAL-CALC] Error stack: ${error.stack}`);
+        }
         // Continue processing other companies
       }
     }
 
+    console.log(`[SIGNAL-CALC] Signal calculation completed:`);
+    console.log(`[SIGNAL-CALC]   - Companies processed: ${companiesProcessed}`);
+    console.log(`[SIGNAL-CALC]   - Signals generated: ${signalsGenerated}`);
+    console.log(`[SIGNAL-CALC]   - Companies with errors: ${companiesWithErrors}`);
     return signalsGenerated;
   }
 
