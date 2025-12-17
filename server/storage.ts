@@ -121,6 +121,8 @@ export interface IStorage {
   createFormula(formula: InsertFormula): Promise<Formula>;
   updateFormula(id: string, data: Partial<InsertFormula>): Promise<Formula | undefined>;
   deleteFormula(id: string): Promise<void>;
+  replaceMainFormula(oldFormulaId: string, newFormulaId: string): Promise<{ companiesAffected: number; sectorsAffected: number }>;
+  checkFormulaCanDelete(id: string): Promise<{ canDelete: boolean; isMainFormula: boolean; message?: string }>;
 
   // Query operations
   getQuery(id: string): Promise<Query | undefined>;
@@ -467,6 +469,84 @@ export class DbStorage implements IStorage {
 
   async deleteFormula(id: string): Promise<void> {
     await db.delete(formulas).where(eq(formulas.id, id));
+  }
+
+  async checkFormulaCanDelete(id: string): Promise<{ canDelete: boolean; isMainFormula: boolean; message?: string }> {
+    const formula = await this.getFormula(id);
+    if (!formula) {
+      return { canDelete: false, isMainFormula: false, message: "Formula not found" };
+    }
+
+    // Check if it's a global (main) formula
+    if (formula.scope === "global") {
+      return { 
+        canDelete: false, 
+        isMainFormula: true, 
+        message: "This is the main (global) formula and cannot be deleted directly. Please replace it with another formula first." 
+      };
+    }
+
+    // For non-global formulas, check if any companies or sectors are assigned to it
+    const companiesWithFormula = await db
+      .select({ id: companies.id })
+      .from(companies)
+      .where(eq(companies.assignedFormulaId, id))
+      .limit(1);
+
+    const sectorsWithFormula = await db
+      .select({ id: sectors.id })
+      .from(sectors)
+      .where(eq(sectors.assignedFormulaId, id))
+      .limit(1);
+
+    if (companiesWithFormula.length > 0 || sectorsWithFormula.length > 0) {
+      return { 
+        canDelete: true, 
+        isMainFormula: false,
+        message: "Some companies or sectors are assigned to this formula. They will lose their formula assignment when deleted."
+      };
+    }
+
+    return { canDelete: true, isMainFormula: false };
+  }
+
+  async replaceMainFormula(oldFormulaId: string, newFormulaId: string): Promise<{ companiesAffected: number; sectorsAffected: number }> {
+    // Verify old formula is global
+    const oldFormula = await this.getFormula(oldFormulaId);
+    if (!oldFormula || oldFormula.scope !== "global") {
+      throw new Error("Old formula must be a global formula");
+    }
+
+    // Verify new formula exists
+    const newFormula = await this.getFormula(newFormulaId);
+    if (!newFormula) {
+      throw new Error("New formula not found");
+    }
+
+    // Update all companies that have the old formula assigned
+    const companiesResult = await db
+      .update(companies)
+      .set({
+        assignedFormulaId: newFormulaId,
+        updatedAt: new Date()
+      })
+      .where(eq(companies.assignedFormulaId, oldFormulaId))
+      .returning({ id: companies.id });
+
+    // Update all sectors that have the old formula assigned
+    const sectorsResult = await db
+      .update(sectors)
+      .set({ assignedFormulaId: newFormulaId })
+      .where(eq(sectors.assignedFormulaId, oldFormulaId))
+      .returning({ id: sectors.id });
+
+    // Note: Companies/sectors without explicit assignments will automatically use the new global formula
+    // through the scope-based matching logic, so no additional updates needed
+
+    return {
+      companiesAffected: companiesResult.length,
+      sectorsAffected: sectorsResult.length
+    };
   }
 
   // Query operations

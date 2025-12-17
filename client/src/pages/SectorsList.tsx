@@ -227,14 +227,27 @@ export default function SectorsList() {
           const res = await apiRequest("GET", `/api/v1/companies/${company.ticker}/signals?companyId=${company.id}`);
           const data = await res.json();
 
-          // Determine primary signal (BUY > SELL > HOLD priority)
+          // Use the actual latest signal from the server (not summary-based)
+          // The server calculates signals correctly using Excel formulas, so we should use the latest signal
           let primarySignal: string | null = null;
-          if (data.summary.buy > 0) {
-            primarySignal = "BUY";
-          } else if (data.summary.sell > 0) {
-            primarySignal = "SELL";
-          } else if (data.summary.hold > 0) {
-            primarySignal = "HOLD";
+          if (data.signals && Array.isArray(data.signals) && data.signals.length > 0) {
+            // Get the latest signal (signals should be sorted by createdAt descending)
+            // But let's sort them to be sure we get the most recent one
+            const sortedSignals = [...data.signals].sort((a, b) => 
+              new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+            );
+            primarySignal = sortedSignals[0].signal || null;
+          }
+
+          // Fallback to summary-based logic only if no signals exist
+          if (!primarySignal) {
+            if (data.summary.buy > 0) {
+              primarySignal = "BUY";
+            } else if (data.summary.sell > 0) {
+              primarySignal = "SELL";
+            } else if (data.summary.hold > 0) {
+              primarySignal = "HOLD";
+            }
           }
 
           return {

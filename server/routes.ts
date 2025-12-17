@@ -486,6 +486,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 signal: result.signal,
                 value: result.value,
                 metadata: { 
+                  condition: result.condition, // Store the formula condition string
                   usedQuarters: result.usedQuarters,
                   formulaName: result.formulaName,
                   sectorAssignment: true,
@@ -1436,8 +1437,45 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Check if a formula can be deleted (checks if it's a main/global formula)
+  app.get("/api/formulas/:id/can-delete", requireAuth, requirePermission("formulas:read"), async (req, res) => {
+    try {
+      const result = await storage.checkFormulaCanDelete(req.params.id);
+      res.json(result);
+    } catch (error: any) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
+  // Replace main formula with another formula
+  app.post("/api/formulas/:id/replace", requireAuth, requirePermission("formulas:update"), async (req, res) => {
+    try {
+      const { newFormulaId } = req.body;
+      if (!newFormulaId) {
+        return res.status(400).json({ error: "newFormulaId is required" });
+      }
+      const result = await storage.replaceMainFormula(req.params.id, newFormulaId);
+      res.json({
+        success: true,
+        message: `Main formula replaced successfully. ${result.companiesAffected} companies and ${result.sectorsAffected} sectors updated.`,
+        ...result
+      });
+    } catch (error: any) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
   app.delete("/api/formulas/:id", requireAuth, requirePermission("formulas:delete"), async (req, res) => {
     try {
+      // Check if this is a main formula that needs replacement
+      const checkResult = await storage.checkFormulaCanDelete(req.params.id);
+      if (!checkResult.canDelete && checkResult.isMainFormula) {
+        return res.status(400).json({ 
+          error: checkResult.message,
+          isMainFormula: true,
+          requiresReplacement: true
+        });
+      }
       await storage.deleteFormula(req.params.id);
       res.json({ success: true });
     } catch (error: any) {

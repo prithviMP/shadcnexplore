@@ -300,10 +300,25 @@ export default function CompanyDetail() {
     return activeFormulaForPage || globalFormula;
   }, [useCustomFormula, customFormula, customFormulaSignal, selectedFormulaId, formulas, activeFormulaForPage, globalFormula]);
 
-  // Evaluate formula once for the entire table
-  // The formula uses selected quarters and can reference multiple metrics
-  // Always show signal column if we have quarterly data (even without explicit formula selection)
+  // Get latest signal early so we can use it in formulaResult
+  const latestSignal = useMemo(() => {
+    if (!signalsData?.signals || signalsData.signals.length === 0) return null;
+    const sorted = [...signalsData.signals].sort((a, b) =>
+      new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+    );
+    return sorted[0] || null;
+  }, [signalsData]);
+
+  // Use the actual signal from the server instead of trying to re-evaluate on frontend
+  // Frontend evaluator can't handle Excel formulas (Q12, Q11, etc.), so use server-calculated signal
   const formulaResult = useMemo(() => {
+    // If we have a signal from the server, use that (it's already correctly calculated)
+    if (latestSignal?.signal) {
+      return latestSignal.signal;
+    }
+
+    // Fallback: Try frontend evaluation only for simple formulas (not Excel formulas)
+    // This is a best-effort fallback, but Excel formulas should always come from the server
     if (!sortedQuarterlyData || filteredQuarters.length === 0) {
       return "HOLD";
     }
@@ -313,10 +328,17 @@ export default function CompanyDetail() {
       return "HOLD";
     }
 
+    // Check if this is an Excel formula (contains Q12, Q11, etc.)
+    // Excel formulas should always be evaluated on the server
+    if (activeFormula.formulaType === 'excel' || /[QP]\d+/.test(activeFormula.condition)) {
+      // Can't evaluate Excel formulas on frontend, default to HOLD if no server signal
+      return "HOLD";
+    }
+
     const selectedQuarterNames = filteredQuarters.map(q => q.quarter);
     const availableMetrics = sortedQuarterlyData.quarters[0] ? Object.keys(sortedQuarterlyData.quarters[0].metrics) : [];
 
-    // Evaluate the formula once using selected quarters
+    // Evaluate simple formulas on frontend as fallback
     const signal = evaluateQuarterlyFormula(
       sortedQuarterlyData,
       selectedQuarterNames,
@@ -326,10 +348,18 @@ export default function CompanyDetail() {
 
     // Default to HOLD if no signal matches
     return signal || "HOLD";
-  }, [activeFormula, sortedQuarterlyData, filteredQuarters]);
+  }, [latestSignal, activeFormula, sortedQuarterlyData, filteredQuarters]);
 
   // Always show signal column if we have quarterly data
   const showSignalColumn = sortedQuarterlyData && sortedQuarterlyData.quarters.length > 0;
+
+  // Sort signals once using useMemo - must be before any early returns
+  const sortedSignals = useMemo(() => {
+    if (!signals || signals.length === 0) return [];
+    return [...signals].sort((a, b) =>
+      new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+    );
+  }, [signals]);
 
   // Fetch scraping history
   const { data: lastScrape } = useQuery<{ ticker: string; lastScrape: string | null }>({
@@ -924,10 +954,6 @@ export default function CompanyDetail() {
   }
 
   const sectorName = sectors?.find(s => s.id === company.sectorId)?.name || "Unknown";
-  const sortedSignals = signals ? [...signals].sort((a, b) =>
-    new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-  ) : [];
-  const latestSignal = sortedSignals[0];
   const financialData = company.financialData as Record<string, number> | null;
 
   const getFinancialValue = (key: string): number | null => {

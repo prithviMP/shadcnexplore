@@ -3,6 +3,7 @@ import { db } from "./db";
 import { signals, sectors } from "@shared/schema";
 import { eq, inArray, and, or, lt, isNull, sql, desc } from "drizzle-orm";
 import { evaluateExcelFormulaForCompany } from "./excelFormulaEvaluator";
+import { storage } from "./storage";
 
 type ComparisonOperator = ">" | "<" | ">=" | "<=" | "=" | "!=";
 
@@ -156,7 +157,7 @@ export class FormulaEvaluator {
   static async generateSignalForCompany(
     company: Company,
     formulas: Formula[]
-  ): Promise<{ signal: string; formulaId: string; formulaName: string; value: string | null; usedQuarters: string[] | null } | null> {
+  ): Promise<{ signal: string; formulaId: string; formulaName: string; value: string | null; condition: string; usedQuarters: string[] | null } | null> {
     console.log(`[SIGNAL] Starting signal generation for company: ${company.ticker} (${company.id})`);
     console.log(`[SIGNAL] Total enabled formulas available: ${formulas.filter(f => f.enabled).length}`);
     
@@ -245,7 +246,22 @@ export class FormulaEvaluator {
 
       if (formula.formulaType === 'excel' || /[QP]\d+/.test(formula.condition)) {
         console.log(`[SIGNAL] Using Excel formula evaluator for ticker: ${company.ticker}`);
-        const evalResult = await evaluateExcelFormulaForCompany(company.ticker, formula.condition);
+        // Get quarterly data to determine the last 2 quarters (Q12 and Q11)
+        const quarterlyData = await storage.getQuarterlyDataByTicker(company.ticker);
+        const uniqueQuarters = Array.from(new Set(quarterlyData.map(d => d.quarter)));
+        const sortedQuarters = uniqueQuarters.sort((a, b) => {
+          const dateA = new Date(a);
+          const dateB = new Date(b);
+          if (!isNaN(dateA.getTime()) && !isNaN(dateB.getTime())) {
+            return dateB.getTime() - dateA.getTime(); // Descending (Newest first)
+          }
+          return b.localeCompare(a);
+        });
+        // Only use the last 2 quarters (newest 2)
+        const lastTwoQuarters = sortedQuarters.slice(0, 2);
+        console.log(`[SIGNAL] Using only last 2 quarters: ${lastTwoQuarters.join(', ')} (out of ${sortedQuarters.length} available)`);
+        
+        const evalResult = await evaluateExcelFormulaForCompany(company.ticker, formula.condition, lastTwoQuarters);
         console.log(`[SIGNAL] Excel formula result: ${JSON.stringify(evalResult.result)} (type: ${evalResult.resultType})`);
         console.log(`[SIGNAL] Used quarters: ${evalResult.usedQuarters.join(', ')}`);
         usedQuarters = evalResult.usedQuarters;
@@ -317,6 +333,7 @@ export class FormulaEvaluator {
           formulaId: formula.id,
           formulaName: formula.name,
           value: valueString,
+          condition: formula.condition, // Store the formula condition string
           usedQuarters: usedQuarters.length > 0 ? usedQuarters : null
         };
       } else {
@@ -391,7 +408,7 @@ export class FormulaEvaluator {
               signal: result.signal,
               value: null,
               metadata: {
-                condition: result.value,
+                condition: result.condition, // Store the formula condition string, not the numeric value
                 formulaName: result.formulaName,
                 usedQuarters: result.usedQuarters
               },

@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "@/components/ui/dialog";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Form, FormControl, FormDescription, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -68,6 +69,8 @@ export default function FormulaManager() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingFormula, setEditingFormula] = useState<Formula | null>(null);
   const [testingFormula, setTestingFormula] = useState<{ formula: Formula; ticker: string } | null>(null);
+  const [replacingFormula, setReplacingFormula] = useState<Formula | null>(null);
+  const [selectedReplacementFormulaId, setSelectedReplacementFormulaId] = useState<string>("");
   const [selectedCompanyId, setSelectedCompanyId] = useState<string>("");
   const [previewResult, setPreviewResult] = useState<any>(null);
   const [showQuarterlyData, setShowQuarterlyData] = useState(false);
@@ -245,11 +248,48 @@ export default function FormulaManager() {
     mutationFn: async (id: string) => apiRequest("DELETE", `/api/formulas/${id}`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/formulas"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/sectors"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/companies"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/signals"] });
       toast({ title: "Formula deleted successfully" });
+      setReplacingFormula(null);
+      setSelectedReplacementFormulaId("");
     },
     onError: (error: any) => {
       toast({
         title: "Failed to delete formula",
+        description: error.message,
+        variant: "destructive"
+      });
+    },
+  });
+
+  const replaceAndDeleteFormula = useMutation({
+    mutationFn: async ({ oldFormulaId, newFormulaId }: { oldFormulaId: string; newFormulaId: string }) => {
+      // First replace the formula
+      const replaceRes = await apiRequest("POST", `/api/formulas/${oldFormulaId}/replace`, { newFormulaId });
+      const replaceData = await replaceRes.json();
+      
+      // Then delete the old formula
+      await apiRequest("DELETE", `/api/formulas/${oldFormulaId}`);
+      
+      return replaceData;
+    },
+    onSuccess: (data: { companiesAffected: number; sectorsAffected: number; message: string }) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/formulas"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/sectors"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/companies"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/signals"] });
+      toast({
+        title: "Main formula replaced and deleted",
+        description: data.message,
+      });
+      setReplacingFormula(null);
+      setSelectedReplacementFormulaId("");
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Failed to replace and delete formula",
         description: error.message,
         variant: "destructive"
       });
@@ -353,10 +393,42 @@ export default function FormulaManager() {
     });
   };
 
-  const handleDelete = (id: string) => {
-    if (confirm("Are you sure you want to delete this formula?")) {
-      deleteFormula.mutate(id);
+  const handleDelete = async (formula: Formula) => {
+    // Check if this is a main (global) formula
+    if (formula.scope === "global") {
+      // Show replacement dialog for main formula
+      setReplacingFormula(formula);
+      setSelectedReplacementFormulaId("");
+      return;
     }
+
+    // For non-global formulas, show regular confirmation
+    if (confirm("Are you sure you want to delete this formula?")) {
+      deleteFormula.mutate(formula.id);
+    }
+  };
+
+  const handleConfirmReplaceAndDelete = () => {
+    if (!replacingFormula || !selectedReplacementFormulaId) {
+      toast({
+        title: "Please select a replacement formula",
+        variant: "destructive"
+      });
+      return;
+    }
+
+    if (replacingFormula.id === selectedReplacementFormulaId) {
+      toast({
+        title: "Cannot replace formula with itself",
+        variant: "destructive"
+      });
+      return;
+    }
+
+    replaceAndDeleteFormula.mutate({
+      oldFormulaId: replacingFormula.id,
+      newFormulaId: selectedReplacementFormulaId
+    });
   };
 
   const handleEdit = (formula: Formula) => {
@@ -572,8 +644,8 @@ export default function FormulaManager() {
                             size="icon"
                             variant="ghost"
                             className="h-8 w-8 text-red-600 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-950/30"
-                            onClick={() => handleDelete(formula.id)}
-                            disabled={deleteFormula.isPending}
+                            onClick={() => handleDelete(formula)}
+                            disabled={deleteFormula.isPending || replaceAndDeleteFormula.isPending}
                             data-testid={`button-delete-${formula.id}`}
                           >
                             <Trash2 className="h-4 w-4" />
@@ -588,6 +660,81 @@ export default function FormulaManager() {
           )}
         </CardContent>
       </Card>
+
+      {/* Replace Main Formula Dialog */}
+      <AlertDialog open={!!replacingFormula} onOpenChange={(open) => {
+        if (!open) {
+          setReplacingFormula(null);
+          setSelectedReplacementFormulaId("");
+        }
+      }}>
+        <AlertDialogContent className="max-w-md">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Cannot Delete Main Formula</AlertDialogTitle>
+            <AlertDialogDescription className="space-y-4">
+              <p>
+                You cannot delete the main (global) formula <strong>"{replacingFormula?.name}"</strong> as it is being used by all companies and sectors that don't have a specific formula assigned.
+              </p>
+              <p>
+                To delete this formula, you must first replace it with another formula. All companies and sectors using this main formula will automatically switch to the new formula you select.
+              </p>
+              <div className="space-y-2 pt-2">
+                <label className="text-sm font-medium">Select replacement formula:</label>
+                <Select 
+                  value={selectedReplacementFormulaId} 
+                  onValueChange={setSelectedReplacementFormulaId}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Choose a formula..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {formulas?.filter(f => f.id !== replacingFormula?.id && f.enabled).map((formula) => (
+                      <SelectItem key={formula.id} value={formula.id}>
+                        {formula.name} ({formula.scope === "global" ? "Global" : formula.scope})
+                      </SelectItem>
+                    ))}
+                    {(!formulas || formulas.filter(f => f.id !== replacingFormula?.id && f.enabled).length === 0) && (
+                      <SelectItem value="" disabled>No other formulas available</SelectItem>
+                    )}
+                  </SelectContent>
+                </Select>
+                {selectedReplacementFormulaId && (
+                  (() => {
+                    const selectedFormula = formulas?.find(f => f.id === selectedReplacementFormulaId);
+                    if (selectedFormula?.scope !== "global") {
+                      return (
+                        <p className="text-sm text-amber-600 dark:text-amber-400 mt-2">
+                          ⚠️ Warning: The selected formula is not global. Companies and sectors without explicit formula assignments may not have a formula after replacement.
+                        </p>
+                      );
+                    }
+                    return null;
+                  })()
+                )}
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={replaceAndDeleteFormula.isPending}>
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleConfirmReplaceAndDelete}
+              disabled={!selectedReplacementFormulaId || replaceAndDeleteFormula.isPending}
+              className="bg-red-600 hover:bg-red-700"
+            >
+              {replaceAndDeleteFormula.isPending ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Replacing...
+                </>
+              ) : (
+                "Replace & Delete"
+              )}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
