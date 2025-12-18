@@ -173,6 +173,14 @@ export default function CompanyDetail() {
   const signals = signalsData?.signals || [];
   const signalsSummary = signalsData?.summary;
 
+  // Sort signals - must be called before any early returns (React Rules of Hooks)
+  const sortedSignals = useMemo(() => {
+    if (!signals || signals.length === 0) return [];
+    return [...signals].sort((a, b) =>
+      new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+    );
+  }, [signals]);
+
   // Fetch formulas for analysis
   const { data: formulas } = useQuery<Formula[]>({
     queryKey: ["/api/formulas"],
@@ -946,12 +954,6 @@ export default function CompanyDetail() {
   }
 
   const sectorName = sectors?.find(s => s.id === company.sectorId)?.name || "Unknown";
-  const sortedSignals = useMemo(() => {
-    if (!signals || signals.length === 0) return [];
-    return [...signals].sort((a, b) =>
-      new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-    );
-  }, [signals]);
   const financialData = company.financialData as Record<string, number> | null;
 
   const getFinancialValue = (key: string): number | null => {
