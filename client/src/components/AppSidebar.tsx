@@ -1,4 +1,4 @@
-import { LayoutDashboard, Building2, TrendingUp, Table, Search, Users, Settings, Building, Briefcase, LogOut, Clock, Sliders } from "lucide-react";
+import { LayoutDashboard, Building2, TrendingUp, Table, Search, Users, Settings, Building, Briefcase, LogOut, Clock, Sliders, Shield } from "lucide-react";
 import {
   Sidebar,
   SidebarContent,
@@ -15,8 +15,9 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Link, useLocation } from "wouter";
 import { useAuth } from "@/contexts/AuthContext";
+import { useRolePermissions } from "@/hooks/usePermissions";
 
-type UserRole = "admin" | "analyst" | "viewer";
+type UserRole = string; // Display only; visibility is permission-based
 
 interface AppSidebarProps {
   userRole?: UserRole;
@@ -25,23 +26,38 @@ interface AppSidebarProps {
 
 export default function AppSidebar({ userRole = "admin", userName = "Admin User" }: AppSidebarProps) {
   const [location] = useLocation();
-  const { logout } = useAuth();
+  const { logout, user } = useAuth();
+  const { permissions } = useRolePermissions();
+
+  // Super admin has access to everything
+  const isSuperAdmin = user?.role === "super_admin";
+
+  const canViewSectors = isSuperAdmin || permissions.includes("sectors:read") || permissions.includes("companies:read");
+  const canManageSectors = isSuperAdmin || permissions.includes("sectors:create") || permissions.includes("sectors:update");
+  const canManageCompanies = isSuperAdmin || permissions.includes("companies:create") || permissions.includes("companies:update");
+  const canViewScheduler = isSuperAdmin || permissions.includes("scraper:view") || permissions.includes("scraper:update") || permissions.includes("scraper:read");
+  const canUseQueryBuilder = isSuperAdmin || permissions.includes("queries:read");
+  const canManageFormulas = isSuperAdmin || permissions.includes("formulas:read");
+  const canViewSettings = isSuperAdmin || permissions.includes("settings:read");
+  const canManageUsers = isSuperAdmin || permissions.includes("users:read");
+  const canManageRoles = isSuperAdmin || permissions.includes("users:manage_roles");
 
   const navItems = [
-    { title: "Dashboard", url: "/", icon: LayoutDashboard, roles: ["admin", "analyst", "viewer"] },
-    { title: "Sectors", url: "/sectors", icon: Building2, roles: ["admin", "analyst", "viewer"] },
-    { title: "Sector Manager", url: "/sector-manager", icon: Building, roles: ["admin", "analyst"] },
-    { title: "Company Manager", url: "/company-manager", icon: Briefcase, roles: ["admin", "analyst"] },
-    // { title: "Data Spreadsheet", url: "/data-spreadsheet", icon: Table, roles: ["admin", "analyst"] },
-    // { title: "Custom Tables", url: "/custom-tables", icon: Table, roles: ["admin", "analyst"] },
-  { title: "Scheduler", url: "/scheduler", icon: Clock, roles: ["admin"] },
-    { title: "Query Builder", url: "/query-builder", icon: Search, roles: ["admin", "analyst"] },
-    { title: "Formulas", url: "/formulas", icon: Settings, roles: ["admin"] },
-    { title: "Settings", url: "/settings", icon: Sliders, roles: ["admin", "analyst"] },
-    { title: "Users", url: "/users", icon: Users, roles: ["admin"] },
+    { title: "Dashboard", url: "/", icon: LayoutDashboard, visible: true },
+    { title: "Sectors", url: "/sectors", icon: Building2, visible: canViewSectors },
+    { title: "Sector Manager", url: "/sector-manager", icon: Building, visible: canManageSectors },
+    { title: "Company Manager", url: "/company-manager", icon: Briefcase, visible: canManageCompanies },
+    // { title: "Data Spreadsheet", url: "/data-spreadsheet", icon: Table, visible: canManageCompanies },
+    // { title: "Custom Tables", url: "/custom-tables", icon: Table, visible: canManageCompanies },
+    { title: "Scheduler", url: "/scheduler", icon: Clock, visible: canViewScheduler },
+    { title: "Query Builder", url: "/query-builder", icon: Search, visible: canUseQueryBuilder },
+    { title: "Formulas", url: "/formulas", icon: Settings, visible: canManageFormulas },
+    { title: "Settings", url: "/settings", icon: Sliders, visible: canViewSettings },
+    { title: "Users", url: "/users", icon: Users, visible: canManageUsers },
+    { title: "Roles", url: "/roles", icon: Shield, visible: canManageRoles },
   ];
 
-  const visibleItems = navItems.filter(item => item.roles.includes(userRole));
+  const visibleItems = navItems.filter(item => item.visible);
   const initials = userName.split(" ").map(n => n[0]).join("");
 
   return (

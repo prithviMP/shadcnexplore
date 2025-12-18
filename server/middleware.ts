@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from "express";
 import { getUserFromSession } from "./auth";
-import { hasPermission, hasAnyPermission, type Permission } from "./permissions";
+import { DEFAULT_ROLE_PERMISSIONS, type Permission } from "./permissions";
+import { storage } from "./storage";
 import type { User } from "@shared/schema";
 
 export interface AuthRequest extends Request {
@@ -31,6 +32,11 @@ export function requireRole(...roles: string[]) {
       return res.status(401).json({ error: "Unauthorized" });
     }
 
+    // Super admin bypasses role-based checks
+    if (req.user.role === "super_admin") {
+      return next();
+    }
+
     if (!roles.includes(req.user.role)) {
       return res.status(403).json({ error: "Forbidden" });
     }
@@ -39,17 +45,46 @@ export function requireRole(...roles: string[]) {
   };
 }
 
+async function hasPermissionForRole(role: string, permission: Permission): Promise<boolean> {
+  // Super admin: always allowed
+  if (role === "super_admin") {
+    return true;
+  }
+
+  // Check database-backed role permissions first
+  const dbRolePermissions = await storage.getRolePermissions(role);
+  if (dbRolePermissions && Array.isArray(dbRolePermissions.permissions)) {
+    if (dbRolePermissions.permissions.includes(permission)) {
+      return true;
+    }
+  }
+
+  // Fallback to default in-code permissions (for backward compatibility / safety)
+  const defaultPermissions = DEFAULT_ROLE_PERMISSIONS[role] || [];
+  return defaultPermissions.includes(permission);
+}
+
+async function hasAnyPermissionForRole(role: string, permissions: Permission[]): Promise<boolean> {
+  for (const permission of permissions) {
+    if (await hasPermissionForRole(role, permission)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 /**
  * Middleware to require a specific permission
  * Usage: requirePermission("formulas:create")
  */
 export function requirePermission(permission: Permission) {
-  return (req: AuthRequest, res: Response, next: NextFunction) => {
+  return async (req: AuthRequest, res: Response, next: NextFunction) => {
     if (!req.user) {
       return res.status(401).json({ error: "Unauthorized" });
     }
 
-    if (!hasPermission(req.user.role, permission)) {
+    const allowed = await hasPermissionForRole(req.user.role, permission);
+    if (!allowed) {
       return res.status(403).json({ 
         error: "Forbidden",
         message: `You don't have permission to ${permission}` 
@@ -65,12 +100,13 @@ export function requirePermission(permission: Permission) {
  * Usage: requireAnyPermission(["formulas:create", "formulas:update"])
  */
 export function requireAnyPermission(...permissions: Permission[]) {
-  return (req: AuthRequest, res: Response, next: NextFunction) => {
+  return async (req: AuthRequest, res: Response, next: NextFunction) => {
     if (!req.user) {
       return res.status(401).json({ error: "Unauthorized" });
     }
 
-    if (!hasAnyPermission(req.user.role, permissions)) {
+    const allowed = await hasAnyPermissionForRole(req.user.role, permissions);
+    if (!allowed) {
       return res.status(403).json({ 
         error: "Forbidden",
         message: "You don't have the required permissions" 

@@ -16,6 +16,7 @@ import { requireAuth, requireRole, requirePermission, requireAnyPermission, type
 import { sanitizeUser } from "./utils";
 import {
   insertUserSchema,
+  insertRoleSchema,
   insertSectorSchema,
   insertCompanySchema,
   insertFormulaSchema,
@@ -23,6 +24,7 @@ import {
   insertSignalSchema,
   insertCustomTableSchema,
   users,
+  roles,
   quarterlyData,
   type InsertSectorMapping
 } from "@shared/schema";
@@ -38,6 +40,8 @@ import { taskManager } from "./taskManager";
 import { evaluateMainSignalForCompany } from "./mainSignalEvaluator";
 import { evaluateExcelFormulaForCompany, ExcelFormulaEvaluator } from "./excelFormulaEvaluator";
 import { loadVisibleMetrics, saveVisibleMetrics, getAllMetrics, getVisibleMetrics, DEFAULT_VISIBLE_METRICS } from "./settingsManager";
+import { ALL_PERMISSIONS } from "./permissions";
+import { insertRoleSchema } from "@shared/schema";
 
 export async function registerRoutes(app: Express): Promise<Server> {
   // Authentication routes
@@ -363,6 +367,97 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       await storage.deleteUser(req.params.id);
       res.json({ success: true });
+    } catch (error: any) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
+  // Roles management routes
+  app.get("/api/roles", requireAuth, requirePermission("users:manage_roles"), async (req, res) => {
+    try {
+      const rolesList = await storage.getAllRoles();
+      const allUsers = await storage.getAllUsers();
+      
+      // Count users per role
+      const userCountsByRole: Record<string, number> = {};
+      allUsers.forEach((user) => {
+        userCountsByRole[user.role] = (userCountsByRole[user.role] || 0) + 1;
+      });
+      
+      // Add user counts to roles
+      const rolesWithCounts = rolesList.map((role) => ({
+        ...role,
+        userCount: userCountsByRole[role.name] || 0,
+      }));
+      
+      res.json(rolesWithCounts);
+    } catch (error: any) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
+  app.get("/api/roles/:id", requireAuth, requirePermission("users:manage_roles"), async (req, res) => {
+    try {
+      const role = await storage.getRole(req.params.id);
+      if (!role) {
+        return res.status(404).json({ error: "Role not found" });
+      }
+      res.json(role);
+    } catch (error: any) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/roles", requireAuth, requirePermission("users:manage_roles"), async (req, res) => {
+    try {
+      const data = insertRoleSchema.parse(req.body);
+      const role = await storage.createRole(data);
+      // Also create/update role_permissions entry
+      await storage.upsertRolePermissions(role.name, role.permissions);
+      res.json(role);
+    } catch (error: any) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
+  app.put("/api/roles/:id", requireAuth, requirePermission("users:manage_roles"), async (req, res) => {
+    try {
+      const data = insertRoleSchema.partial().parse(req.body);
+      const role = await storage.updateRole(req.params.id, data);
+      if (!role) {
+        return res.status(404).json({ error: "Role not found" });
+      }
+      // Also update role_permissions entry if permissions were updated
+      if (data.permissions !== undefined) {
+        await storage.upsertRolePermissions(role.name, role.permissions);
+      }
+      res.json(role);
+    } catch (error: any) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
+  app.delete("/api/roles/:id", requireAuth, requirePermission("users:manage_roles"), async (req, res) => {
+    try {
+      const role = await storage.getRole(req.params.id);
+      if (!role) {
+        return res.status(404).json({ error: "Role not found" });
+      }
+      // Prevent deletion of system roles
+      if (role.isSystem) {
+        return res.status(400).json({ error: "Cannot delete system roles" });
+      }
+      await storage.deleteRole(req.params.id);
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
+  // Permissions endpoint - returns all available permissions
+  app.get("/api/permissions", requireAuth, requirePermission("users:manage_roles"), async (req, res) => {
+    try {
+      res.json({ permissions: ALL_PERMISSIONS });
     } catch (error: any) {
       res.status(400).json({ error: error.message });
     }
@@ -2293,6 +2388,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
       await scrapingScheduler.reloadSchedules();
 
       res.json(setting);
+    } catch (error: any) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
+  // Test endpoint to manually trigger daily scraping
+  app.post("/api/v1/scheduler/test/daily-scraping", requireAuth, requirePermission("scraper:trigger"), async (req, res) => {
+    try {
+      const { scrapingScheduler } = await import("./scheduler");
+      await scrapingScheduler.triggerDailyScraping();
+      res.json({ success: true, message: "Daily scraping triggered successfully" });
     } catch (error: any) {
       res.status(400).json({ error: error.message });
     }

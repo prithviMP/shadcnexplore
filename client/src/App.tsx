@@ -23,12 +23,13 @@ import FormulaBuilder from "@/pages/FormulaBuilder";
 import QueryBuilder from "@/pages/QueryBuilder";
 import UserManagement from "@/pages/UserManagement";
 import Settings from "@/pages/Settings";
+import Roles from "@/pages/Roles";
 // import FinancialDataSpreadsheet from "@/pages/FinancialDataSpreadsheet";
 // import CustomTables from "@/pages/CustomTables";
 
 function AuthenticatedLayout() {
   const { user } = useAuth();
-  const userRole = (user?.role as "admin" | "analyst" | "viewer") || "viewer";
+  const userRole = (user?.role as "super_admin" | "admin" | "analyst" | "viewer") || "viewer";
   const userName = user?.name || "User";
 
   const style = {
@@ -111,6 +112,11 @@ function AuthenticatedLayout() {
                 <Route path="/users">
                   <ProtectedRoute requiredRole="admin">
                     <UserManagement />
+                  </ProtectedRoute>
+                </Route>
+                <Route path="/roles">
+                  <ProtectedRoute requiredRole="admin" requiredPermission="users:manage_roles">
+                    <Roles />
                   </ProtectedRoute>
                 </Route>
                 {/* <Route path="/data-spreadsheet">

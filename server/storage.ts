@@ -1,6 +1,7 @@
 import { db } from "./db";
 import {
   users,
+  roles,
   sectors,
   companies,
   formulas,
@@ -18,6 +19,8 @@ import {
   bulkImportItems,
   type User,
   type InsertUser,
+  type Role,
+  type InsertRole,
   type Sector,
   type InsertSector,
   type Company,
@@ -83,6 +86,13 @@ export interface IStorage {
   getRolePermissions(role: string): Promise<RolePermission | undefined>;
   getAllRolePermissions(): Promise<RolePermission[]>;
   upsertRolePermissions(role: string, permissions: any): Promise<RolePermission>;
+  
+  // Roles operations
+  getAllRoles(): Promise<Role[]>;
+  getRole(id: string): Promise<Role | undefined>;
+  createRole(role: InsertRole): Promise<Role>;
+  updateRole(id: string, data: Partial<InsertRole>): Promise<Role | undefined>;
+  deleteRole(id: string): Promise<void>;
 
   // Quarterly Data operations
   getQuarterlyDataByTicker(ticker: string): Promise<QuarterlyData[]>;
@@ -745,6 +755,34 @@ export class DbStorage implements IStorage {
         .returning();
       return result[0];
     }
+  }
+
+  // Roles operations
+  async getAllRoles(): Promise<Role[]> {
+    return await db.select().from(roles);
+  }
+
+  async getRole(id: string): Promise<Role | undefined> {
+    const result = await db.select().from(roles).where(eq(roles.id, id)).limit(1);
+    return result[0];
+  }
+
+  async createRole(roleData: InsertRole): Promise<Role> {
+    const result = await db.insert(roles).values(roleData).returning();
+    return result[0];
+  }
+
+  async updateRole(id: string, data: Partial<InsertRole>): Promise<Role | undefined> {
+    const result = await db
+      .update(roles)
+      .set(data)
+      .where(eq(roles.id, id))
+      .returning();
+    return result[0];
+  }
+
+  async deleteRole(id: string): Promise<void> {
+    await db.delete(roles).where(eq(roles.id, id));
   }
 
   // Quarterly Data operations

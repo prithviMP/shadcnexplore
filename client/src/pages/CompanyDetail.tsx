@@ -353,14 +353,6 @@ export default function CompanyDetail() {
   // Always show signal column if we have quarterly data
   const showSignalColumn = sortedQuarterlyData && sortedQuarterlyData.quarters.length > 0;
 
-  // Sort signals once using useMemo - must be before any early returns
-  const sortedSignals = useMemo(() => {
-    if (!signals || signals.length === 0) return [];
-    return [...signals].sort((a, b) =>
-      new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-    );
-  }, [signals]);
-
   // Fetch scraping history
   const { data: lastScrape } = useQuery<{ ticker: string; lastScrape: string | null }>({
     queryKey: ["/api/v1/companies", companyTicker, "last-scrape"],
@@ -954,6 +946,12 @@ export default function CompanyDetail() {
   }
 
   const sectorName = sectors?.find(s => s.id === company.sectorId)?.name || "Unknown";
+  const sortedSignals = useMemo(() => {
+    if (!signals || signals.length === 0) return [];
+    return [...signals].sort((a, b) =>
+      new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+    );
+  }, [signals]);
   const financialData = company.financialData as Record<string, number> | null;
 
   const getFinancialValue = (key: string): number | null => {

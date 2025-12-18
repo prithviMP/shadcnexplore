@@ -2,11 +2,12 @@ import { ReactNode } from "react";
 import { useLocation } from "wouter";
 import { useAuth } from "@/contexts/AuthContext";
 import LoginPage from "@/pages/LoginPage";
+import { useHasPermission } from "@/hooks/usePermissions";
 
 interface ProtectedRouteProps {
   children: ReactNode;
-  requiredRole?: "admin" | "analyst" | "viewer";
-  requiredPermission?: string;
+  requiredRole?: "super_admin" | "admin" | "analyst" | "viewer";
+  requiredPermission?: string | string[];
 }
 
 export default function ProtectedRoute({
@@ -16,9 +17,12 @@ export default function ProtectedRoute({
 }: ProtectedRouteProps) {
   const { user, loading } = useAuth();
   const [, setLocation] = useLocation();
+  const { allowed: permissionAllowed, loading: permissionLoading } = useHasPermission(
+    requiredPermission,
+  );
 
   // Show loading state
-  if (loading) {
+  if (loading || (requiredPermission && permissionLoading)) {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
@@ -37,6 +41,7 @@ export default function ProtectedRoute({
       viewer: 1,
       analyst: 2,
       admin: 3,
+      super_admin: 4,
     };
 
     const userRoleLevel = roleHierarchy[user.role] || 0;
@@ -62,10 +67,25 @@ export default function ProtectedRoute({
     }
   }
 
-  // TODO: Check permission requirement when permission system is implemented
-  // if (requiredPermission && !hasPermission(user, requiredPermission)) {
-  //   return <AccessDenied />;
-  // }
+  // Check permission requirement (if provided)
+  if (requiredPermission && !permissionAllowed) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="text-center">
+          <h1 className="text-2xl font-bold mb-2">Access Denied</h1>
+          <p className="text-muted-foreground mb-4">
+            You don't have permission to access this page.
+          </p>
+          <button
+            onClick={() => setLocation("/")}
+            className="text-primary hover:underline"
+          >
+            Go to Dashboard
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return <>{children}</>;
 }

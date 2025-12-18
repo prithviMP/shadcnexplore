@@ -39,6 +39,8 @@ class ScrapingScheduler {
    * Load schedule settings from database and schedule jobs
    */
   private async loadAndScheduleJobs() {
+    console.log("[Scheduler] Loading schedule settings from database...");
+    
     // Get or create default settings
     const dailyScrapingSetting = await storage.getSchedulerSetting("daily-scraping") || 
       await storage.upsertSchedulerSetting({
@@ -47,6 +49,8 @@ class ScrapingScheduler {
         enabled: true,
         description: "Daily scraping for all sectors"
       });
+
+    console.log(`[Scheduler] Daily scraping setting: enabled=${dailyScrapingSetting.enabled}, schedule=${dailyScrapingSetting.schedule}`);
 
     const signalIncrementalSetting = await storage.getSchedulerSetting("signal-incremental") ||
       await storage.upsertSchedulerSetting({
@@ -67,6 +71,8 @@ class ScrapingScheduler {
     // Schedule jobs based on settings
     if (dailyScrapingSetting.enabled) {
       this.scheduleDailyScraping(dailyScrapingSetting.schedule);
+    } else {
+      console.log("[Scheduler] Daily scraping is disabled, skipping scheduling");
     }
 
     if (signalIncrementalSetting.enabled) {
@@ -79,11 +85,14 @@ class ScrapingScheduler {
 
     // Load and schedule sector-specific schedules
     const sectorSchedules = await storage.getAllSectorSchedules();
+    console.log(`[Scheduler] Found ${sectorSchedules.length} sector-specific schedules`);
     for (const sectorSchedule of sectorSchedules) {
       if (sectorSchedule.enabled) {
         this.scheduleSectorScraping(sectorSchedule.sectorId, sectorSchedule.schedule);
       }
     }
+    
+    console.log(`[Scheduler] Total scheduled jobs: ${this.jobs.size}`);
   }
 
   /**
@@ -100,48 +109,160 @@ class ScrapingScheduler {
    * Schedule daily scraping for all sectors
    */
   private scheduleDailyScraping(schedule: string = this.defaultSchedule) {
+    // Stop existing job if it exists
+    const existingJob = this.jobs.get("daily-all-sectors");
+    if (existingJob) {
+      console.log("[Scheduler] Stopping existing daily-all-sectors job before rescheduling");
+      existingJob.stop();
+      this.jobs.delete("daily-all-sectors");
+    }
+
+    console.log(`[Scheduler] Scheduling daily scraping with cron: ${schedule} (timezone: Asia/Kolkata)`);
+    
     const task = cronSchedule(schedule, async () => {
-      console.log(`[Scheduler] Starting daily scraping at ${new Date().toISOString()}`);
+      console.log(`[Scheduler] ✓ Triggered: Starting daily scraping at ${new Date().toISOString()}`);
       
       try {
         // Get all sectors
         const sectors = await storage.getAllSectors();
+        console.log(`[Scheduler] Found ${sectors.length} sectors to scrape`);
         
-        for (const sector of sectors) {
-          try {
-            // Get companies in this sector
-            const companies = await storage.getCompaniesBySector(sector.id);
-            
-            if (companies.length === 0) {
-              console.log(`[Scheduler] No companies in sector ${sector.name}, skipping`);
-              continue;
-            }
-            
-            const tickers = companies.map(c => c.ticker);
-            console.log(`[Scheduler] Scraping ${tickers.length} companies in sector ${sector.name}`);
-            
-            // Scrape companies (non-blocking)
-            scraper.scrapeCompanies(tickers).catch((error) => {
-              console.error(`[Scheduler] Error scraping sector ${sector.name}:`, error);
-            });
-            
-            // Add delay between sectors to avoid rate limiting
-            await new Promise(resolve => setTimeout(resolve, 5000));
-          } catch (error: any) {
-            console.error(`[Scheduler] Error processing sector ${sector.id}:`, error);
-          }
+        if (sectors.length === 0) {
+          console.log(`[Scheduler] No sectors found, skipping scraping`);
+          return;
         }
-        
-        console.log(`[Scheduler] Daily scraping completed at ${new Date().toISOString()}`);
+
+        // Get system user ID for history tracking
+        let systemUserId: string;
+        try {
+          systemUserId = await this.getSystemUserId();
+        } catch (error: any) {
+          console.error(`[Scheduler] Failed to get system user ID: ${error.message}`);
+          return;
+        }
+
+        // Create history record
+        const history = await storage.createSectorUpdateHistory({
+          userId: systemUserId,
+          status: 'pending',
+          progress: 0,
+          totalSectors: sectors.length,
+          completedSectors: 0,
+          successfulSectors: 0,
+          failedSectors: 0,
+          sectorResults: [],
+        });
+
+        console.log(`[Scheduler] Created history record: ${history.id}`);
+
+        try {
+          // Update status to running
+          await storage.updateSectorUpdateHistory(history.id, { status: 'running' });
+
+          for (const sector of sectors) {
+            try {
+              // Get companies in this sector
+              const companies = await storage.getCompaniesBySector(sector.id);
+              
+              if (companies.length === 0) {
+                console.log(`[Scheduler] No companies in sector ${sector.name}, skipping`);
+                
+                // Update history for empty sector
+                const currentHistory = await storage.getSectorUpdateHistory(history.id);
+                if (currentHistory) {
+                  await storage.updateSectorUpdateHistory(history.id, {
+                    completedSectors: (currentHistory.completedSectors || 0) + 1,
+                    successfulSectors: (currentHistory.successfulSectors || 0) + 1,
+                    progress: Math.round(((currentHistory.completedSectors || 0) + 1) / sectors.length * 100),
+                    sectorResults: [...(currentHistory.sectorResults || []), {
+                      sectorId: sector.id,
+                      sectorName: sector.name,
+                      status: 'success' as const,
+                      companiesUpdated: 0,
+                    }],
+                  });
+                }
+                continue;
+              }
+              
+              const tickers = companies.map(c => c.ticker);
+              console.log(`[Scheduler] Scraping ${tickers.length} companies in sector ${sector.name}`);
+              
+              // Scrape companies (await to track results)
+              const results = await scraper.scrapeCompanies(tickers);
+              const successCount = results.filter(r => r.success).length;
+              
+              console.log(`[Scheduler] Sector ${sector.name}: ${successCount}/${tickers.length} companies scraped successfully`);
+
+              // Update history with sector result
+              const currentHistory = await storage.getSectorUpdateHistory(history.id);
+              if (currentHistory) {
+                await storage.updateSectorUpdateHistory(history.id, {
+                  completedSectors: (currentHistory.completedSectors || 0) + 1,
+                  successfulSectors: (currentHistory.successfulSectors || 0) + 1,
+                  progress: Math.round(((currentHistory.completedSectors || 0) + 1) / sectors.length * 100),
+                  sectorResults: [...(currentHistory.sectorResults || []), {
+                    sectorId: sector.id,
+                    sectorName: sector.name,
+                    status: 'success' as const,
+                    companiesUpdated: successCount,
+                  }],
+                });
+              }
+              
+              // Add delay between sectors to avoid rate limiting
+              await new Promise(resolve => setTimeout(resolve, 5000));
+            } catch (error: any) {
+              console.error(`[Scheduler] Error processing sector ${sector.id}:`, error);
+              
+              // Update history with error
+              const currentHistory = await storage.getSectorUpdateHistory(history.id);
+              if (currentHistory) {
+                await storage.updateSectorUpdateHistory(history.id, {
+                  completedSectors: (currentHistory.completedSectors || 0) + 1,
+                  failedSectors: (currentHistory.failedSectors || 0) + 1,
+                  progress: Math.round(((currentHistory.completedSectors || 0) + 1) / sectors.length * 100),
+                  sectorResults: [...(currentHistory.sectorResults || []), {
+                    sectorId: sector.id,
+                    sectorName: sector.name,
+                    status: 'error' as const,
+                    error: error.message,
+                  }],
+                });
+              }
+            }
+          }
+
+          // Mark as completed
+          const finalHistory = await storage.getSectorUpdateHistory(history.id);
+          if (finalHistory) {
+            await storage.updateSectorUpdateHistory(history.id, {
+              status: 'completed',
+              progress: 100,
+              completedAt: new Date(),
+            });
+          }
+          
+          console.log(`[Scheduler] ✓ Daily scraping completed at ${new Date().toISOString()}`);
+        } catch (error: any) {
+          console.error("[Scheduler] ✗ Error in daily scraping:", error);
+          
+          // Mark history as failed
+          await storage.updateSectorUpdateHistory(history.id, {
+            status: 'failed',
+            error: error.message,
+            completedAt: new Date(),
+          });
+        }
       } catch (error: any) {
-        console.error("[Scheduler] Error in daily scraping job:", error);
+        console.error("[Scheduler] ✗ Error in daily scraping job:", error);
       }
     }, {
-      scheduled: true,
       timezone: "Asia/Kolkata", // Indian timezone
     });
     
     this.jobs.set("daily-all-sectors", task);
+    console.log(`[Scheduler] ✓ Daily scraping job scheduled successfully with schedule: ${schedule}`);
   }
 
   /**
@@ -189,7 +310,6 @@ class ScrapingScheduler {
         console.error(`[Scheduler] Error in scheduled scraping for sector ${sectorId}:`, error);
       }
     }, {
-      scheduled: true,
       timezone: "Asia/Kolkata",
     });
     
@@ -232,6 +352,13 @@ class ScrapingScheduler {
    * Schedule incremental signal refresh
    */
   private scheduleSignalRefreshIncremental(schedule: string = "0 2 * * *") {
+    // Stop existing job if it exists
+    const existingJob = this.jobs.get("signal-refresh-incremental");
+    if (existingJob) {
+      existingJob.stop();
+      this.jobs.delete("signal-refresh-incremental");
+    }
+
     const incrementalTask = cronSchedule(schedule, async () => {
       console.log(`[Scheduler] Starting incremental signal refresh at ${new Date().toISOString()}`);
       
@@ -243,7 +370,6 @@ class ScrapingScheduler {
         console.error("[Scheduler] Error scheduling incremental signal refresh:", error);
       }
     }, {
-      scheduled: true,
       timezone: "Asia/Kolkata",
     });
     
@@ -255,6 +381,13 @@ class ScrapingScheduler {
    * Schedule full signal refresh
    */
   private scheduleSignalRefreshFull(schedule: string = "0 3 * * 0") {
+    // Stop existing job if it exists
+    const existingJob = this.jobs.get("signal-refresh-full");
+    if (existingJob) {
+      existingJob.stop();
+      this.jobs.delete("signal-refresh-full");
+    }
+
     const fullRefreshTask = cronSchedule(schedule, async () => {
       console.log(`[Scheduler] Starting weekly full signal refresh at ${new Date().toISOString()}`);
       
@@ -266,7 +399,6 @@ class ScrapingScheduler {
         console.error("[Scheduler] Error scheduling full signal refresh:", error);
       }
     }, {
-      scheduled: true,
       timezone: "Asia/Kolkata",
     });
     
@@ -283,6 +415,162 @@ class ScrapingScheduler {
       console.log(`[Scheduler] Stopped job: ${id}`);
     });
     this.jobs.clear();
+  }
+
+  /**
+   * Get a system user ID for scheduler operations (uses first admin user)
+   */
+  private async getSystemUserId(): Promise<string> {
+    const adminUsers = await storage.getAdminUsers();
+    if (adminUsers.length > 0) {
+      return adminUsers[0].id;
+    }
+    // Fallback: get any user
+    const allUsers = await storage.getAllUsers();
+    if (allUsers.length > 0) {
+      return allUsers[0].id;
+    }
+    throw new Error("No users found in database. Cannot create scheduler history record.");
+  }
+
+  /**
+   * Manually trigger daily scraping job (for testing)
+   */
+  async triggerDailyScraping(): Promise<void> {
+    console.log(`[Scheduler] Manual trigger: Starting daily scraping at ${new Date().toISOString()}`);
+    
+    try {
+      // Get all sectors
+      const sectors = await storage.getAllSectors();
+      console.log(`[Scheduler] Found ${sectors.length} sectors to scrape`);
+      
+      if (sectors.length === 0) {
+        console.log(`[Scheduler] No sectors found, skipping scraping`);
+        return;
+      }
+
+      // Get system user ID for history tracking
+      const systemUserId = await this.getSystemUserId();
+
+      // Create history record
+      const history = await storage.createSectorUpdateHistory({
+        userId: systemUserId,
+        status: 'pending',
+        progress: 0,
+        totalSectors: sectors.length,
+        completedSectors: 0,
+        successfulSectors: 0,
+        failedSectors: 0,
+        sectorResults: [],
+      });
+
+      console.log(`[Scheduler] Created history record: ${history.id}`);
+
+      try {
+        // Update status to running
+        await storage.updateSectorUpdateHistory(history.id, { status: 'running' });
+
+        for (const sector of sectors) {
+          try {
+            // Get companies in this sector
+            const companies = await storage.getCompaniesBySector(sector.id);
+            
+            if (companies.length === 0) {
+              console.log(`[Scheduler] No companies in sector ${sector.name}, skipping`);
+              
+              // Update history for empty sector
+              const currentHistory = await storage.getSectorUpdateHistory(history.id);
+              if (currentHistory) {
+                await storage.updateSectorUpdateHistory(history.id, {
+                  completedSectors: (currentHistory.completedSectors || 0) + 1,
+                  successfulSectors: (currentHistory.successfulSectors || 0) + 1,
+                  progress: Math.round(((currentHistory.completedSectors || 0) + 1) / sectors.length * 100),
+                  sectorResults: [...(currentHistory.sectorResults || []), {
+                    sectorId: sector.id,
+                    sectorName: sector.name,
+                    status: 'success' as const,
+                    companiesUpdated: 0,
+                  }],
+                });
+              }
+              continue;
+            }
+            
+            const tickers = companies.map(c => c.ticker);
+            console.log(`[Scheduler] Scraping ${tickers.length} companies in sector ${sector.name}`);
+            
+            // Scrape companies (await to track results)
+            const results = await scraper.scrapeCompanies(tickers);
+            const successCount = results.filter(r => r.success).length;
+            
+            console.log(`[Scheduler] Sector ${sector.name}: ${successCount}/${tickers.length} companies scraped successfully`);
+
+            // Update history with sector result
+            const currentHistory = await storage.getSectorUpdateHistory(history.id);
+            if (currentHistory) {
+              await storage.updateSectorUpdateHistory(history.id, {
+                completedSectors: (currentHistory.completedSectors || 0) + 1,
+                successfulSectors: (currentHistory.successfulSectors || 0) + 1,
+                progress: Math.round(((currentHistory.completedSectors || 0) + 1) / sectors.length * 100),
+                sectorResults: [...(currentHistory.sectorResults || []), {
+                  sectorId: sector.id,
+                  sectorName: sector.name,
+                  status: 'success' as const,
+                  companiesUpdated: successCount,
+                }],
+              });
+            }
+            
+            // Add delay between sectors to avoid rate limiting
+            await new Promise(resolve => setTimeout(resolve, 5000));
+          } catch (error: any) {
+            console.error(`[Scheduler] Error processing sector ${sector.id}:`, error);
+            
+            // Update history with error
+            const currentHistory = await storage.getSectorUpdateHistory(history.id);
+            if (currentHistory) {
+              await storage.updateSectorUpdateHistory(history.id, {
+                completedSectors: (currentHistory.completedSectors || 0) + 1,
+                failedSectors: (currentHistory.failedSectors || 0) + 1,
+                progress: Math.round(((currentHistory.completedSectors || 0) + 1) / sectors.length * 100),
+                sectorResults: [...(currentHistory.sectorResults || []), {
+                  sectorId: sector.id,
+                  sectorName: sector.name,
+                  status: 'error' as const,
+                  error: error.message,
+                }],
+              });
+            }
+          }
+        }
+
+        // Mark as completed
+        const finalHistory = await storage.getSectorUpdateHistory(history.id);
+        if (finalHistory) {
+          await storage.updateSectorUpdateHistory(history.id, {
+            status: 'completed',
+            progress: 100,
+            completedAt: new Date(),
+          });
+        }
+        
+        console.log(`[Scheduler] ✓ Daily scraping completed at ${new Date().toISOString()}`);
+      } catch (error: any) {
+        console.error("[Scheduler] ✗ Error in daily scraping:", error);
+        
+        // Mark history as failed
+        await storage.updateSectorUpdateHistory(history.id, {
+          status: 'failed',
+          error: error.message,
+          completedAt: new Date(),
+        });
+        
+        throw error;
+      }
+    } catch (error: any) {
+      console.error("[Scheduler] ✗ Error in manual daily scraping:", error);
+      throw error;
+    }
   }
 }
 

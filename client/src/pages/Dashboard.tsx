@@ -208,16 +208,48 @@ export default function Dashboard() {
     return [...rawSignalDistribution].sort((a, b) => b.count - a.count || a.signal.localeCompare(b.signal));
   }, [rawSignalDistribution]);
 
+  // Fixed colors for standard signals
+  const fixedSignalColors: Record<string, string> = {
+    "BUY": "#22c55e",      // Green (emerald-500)
+    "SELL": "#ef4444",     // Red (red-500)
+    "HOLD": "#f59e0b",     // Amber/Yellow (amber-500)
+    "Check_OPM (Sell)": "#f97316", // Orange
+    "No Signal": "#6b7280", // Gray
+  };
+
   const signalColorPalette = [
-    "#22c55e", "#ef4444", "#f59e0b", "#3b82f6", "#8b5cf6",
-    "#ec4899", "#06b6d4", "#84cc16", "#f97316", "#a855f7",
-    "#0ea5e9", "#14b8a6", "#d946ef", "#f43f5e", "#38bdf8",
+    "#3b82f6", "#8b5cf6", "#ec4899", "#06b6d4", "#84cc16",
+    "#a855f7", "#0ea5e9", "#14b8a6", "#d946ef", "#f43f5e", "#38bdf8",
   ];
 
   const signalColorMap = useMemo(() => {
     const map = new Map<string, string>();
-    sortedSignalDistribution.forEach((item, index) => {
-      map.set(item.signal, signalColorPalette[index % signalColorPalette.length]);
+    let paletteIndex = 0;
+    
+    sortedSignalDistribution.forEach((item) => {
+      const normalizedSignal = item.signal.trim();
+      const upperSignal = normalizedSignal.toUpperCase();
+      
+      // Check for fixed colors first (case-insensitive)
+      if (fixedSignalColors[normalizedSignal]) {
+        map.set(item.signal, fixedSignalColors[normalizedSignal]);
+      } else if (fixedSignalColors[upperSignal]) {
+        map.set(item.signal, fixedSignalColors[upperSignal]);
+      } else if (upperSignal === "BUY") {
+        map.set(item.signal, fixedSignalColors["BUY"]);
+      } else if (upperSignal === "SELL") {
+        map.set(item.signal, fixedSignalColors["SELL"]);
+      } else if (upperSignal === "HOLD") {
+        map.set(item.signal, fixedSignalColors["HOLD"]);
+      } else if (upperSignal.includes("SELL") && !upperSignal.includes("BUY")) {
+        map.set(item.signal, fixedSignalColors["SELL"]);
+      } else if (upperSignal.includes("BUY") && !upperSignal.includes("SELL")) {
+        map.set(item.signal, fixedSignalColors["BUY"]);
+      } else {
+        // Use palette for other signals
+        map.set(item.signal, signalColorPalette[paletteIndex % signalColorPalette.length]);
+        paletteIndex++;
+      }
     });
     return map;
   }, [sortedSignalDistribution]);

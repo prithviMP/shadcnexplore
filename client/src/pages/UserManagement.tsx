@@ -17,6 +17,12 @@ import { Plus, Pencil, Trash2, AlertCircle } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import type { User } from "@shared/schema";
 
+interface RoleSummary {
+  id: string;
+  name: string;
+  isSystem: boolean;
+}
+
 export default function UserManagement() {
   const { toast } = useToast();
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -24,16 +30,25 @@ export default function UserManagement() {
     name: "",
     email: "",
     password: "",
-    role: "viewer" as "admin" | "analyst" | "viewer"
+    role: "viewer" as string,
   });
 
   const { data: users, isLoading, error } = useQuery<User[]>({
     queryKey: ["/api/users"],
   });
 
+  const { data: rolesData } = useQuery<RoleSummary[]>({
+    queryKey: ["/api/roles"],
+  });
+
+  const availableRoles = (rolesData ?? []).map((r) => r.name);
+  const assignableRoles = (availableRoles.length > 0 ? availableRoles : ["admin", "analyst", "viewer"]).filter(
+    (role) => role !== "super_admin",
+  );
+
   const updateRoleMutation = useMutation({
     mutationFn: async ({ userId, role }: { userId: string; role: string }) => {
-      await apiRequest("PUT", `/api/users/${userId}`, { role });
+      await apiRequest("PATCH", `/api/users/${userId}/role`, { role });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/users"] });
@@ -141,6 +156,7 @@ export default function UserManagement() {
 
   const getRoleBadgeColor = (role: string) => {
     switch (role) {
+      case "super_admin": return "bg-red-100 dark:bg-red-950 text-red-700 dark:text-red-300 border-red-200 dark:border-red-800";
       case "admin": return "bg-purple-100 dark:bg-purple-950 text-purple-700 dark:text-purple-300 border-purple-200 dark:border-purple-800";
       case "analyst": return "bg-blue-100 dark:bg-blue-950 text-blue-700 dark:text-blue-300 border-blue-200 dark:border-blue-800";
       case "viewer": return "bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700";
@@ -224,7 +240,7 @@ export default function UserManagement() {
               </div>
               <div className="space-y-2">
                 <Label htmlFor="role" className="font-medium">Role</Label>
-                <Select 
+                  <Select 
                   value={newUser.role}
                   onValueChange={(value: any) => setNewUser({ ...newUser, role: value })}
                 >
@@ -232,9 +248,11 @@ export default function UserManagement() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="admin">Admin - Full Access</SelectItem>
-                    <SelectItem value="analyst">Analyst - View & Create</SelectItem>
-                    <SelectItem value="viewer">Viewer - Read Only</SelectItem>
+                    {assignableRoles.map((role) => (
+                      <SelectItem key={role} value={role}>
+                        {role}
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </div>
@@ -297,9 +315,11 @@ export default function UserManagement() {
                             </Badge>
                           </SelectTrigger>
                           <SelectContent>
-                            <SelectItem value="admin">Admin</SelectItem>
-                            <SelectItem value="analyst">Analyst</SelectItem>
-                            <SelectItem value="viewer">Viewer</SelectItem>
+                            {assignableRoles.map((role) => (
+                              <SelectItem key={role} value={role}>
+                                {role}
+                              </SelectItem>
+                            ))}
                           </SelectContent>
                         </Select>
                       </TableCell>

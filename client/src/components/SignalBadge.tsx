@@ -32,12 +32,37 @@ export default function SignalBadge({ signal, showIcon = true }: SignalBadgeProp
     }
   };
 
-  // Get variant or default to HOLD if signal not found
-  const variant = variants[signal] || variants.HOLD;
+  // Normalize signal for matching (case-insensitive, handle variations)
+  const normalizedSignal = typeof signal === 'string' ? signal.trim() : String(signal);
+  const upperSignal = normalizedSignal.toUpperCase();
+  
+  // Check for exact matches first (case-insensitive)
+  let variant;
+  const exactMatch = variants[normalizedSignal] || variants[upperSignal] || variants[normalizedSignal.toLowerCase()];
+  if (exactMatch) {
+    variant = exactMatch;
+  } 
+  // Check if signal contains "SELL" (case-insensitive) - should be red
+  else if (upperSignal.includes('SELL') && !upperSignal.includes('BUY')) {
+    variant = variants.SELL;
+  } 
+  // Check if signal contains "BUY" (and not SELL) - should be green
+  else if (upperSignal.includes('BUY') && !upperSignal.includes('SELL')) {
+    variant = variants.BUY;
+  } 
+  // Check if signal is HOLD - should be yellow/amber
+  else if (upperSignal === 'HOLD') {
+    variant = variants.HOLD;
+  } 
+  // Default to HOLD for unknown signals
+  else {
+    variant = variants.HOLD;
+  }
+
   const { className, icon: Icon } = variant;
 
   // Format signal text for display (handle special cases)
-  const displayText = signal === "Check_OPM (Sell)" ? "Check OPM" : signal;
+  const displayText = normalizedSignal === "Check_OPM (Sell)" ? "Check OPM" : normalizedSignal;
 
   return (
     <Badge variant="outline" className={`${className} rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-wide`} data-testid={`badge-signal-${signal.toLowerCase().replace(/\s+/g, '-')}`}>
