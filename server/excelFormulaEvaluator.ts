@@ -807,7 +807,11 @@ export async function evaluateExcelFormulaForCompany(
     if (typeof result === "boolean") resultType = "boolean";
     else if (typeof result === "number") resultType = "number";
 
-    const usedQuartersResult = evaluator.sortedQuarters.slice(0, 5);
+    // Return only the quarters that were actually used (selectedQuarters if provided, otherwise all sorted quarters)
+    // For Excel formulas using Q12/Q11, selectedQuarters will contain only the last 2 quarters
+    const usedQuartersResult = selectedQuarters && selectedQuarters.length > 0 
+      ? selectedQuarters 
+      : evaluator.sortedQuarters;
     console.log(`[EXCEL-FORMULA] Final result: ${JSON.stringify(result)} (${resultType}), used quarters: ${usedQuartersResult.join(', ')}`);
     return { result, resultType, usedQuarters: usedQuartersResult };
   } catch (error) {
