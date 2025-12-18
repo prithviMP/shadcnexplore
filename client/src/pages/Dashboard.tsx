@@ -214,7 +214,7 @@ export default function Dashboard() {
     "SELL": "#ef4444",     // Red (red-500)
     "HOLD": "#f59e0b",     // Amber/Yellow (amber-500)
     "Check_OPM (Sell)": "#f97316", // Orange
-    "No Signal": "#6b7280", // Gray
+    "No Signal": "#60a5fa", // Sky blue (sky-400) - visible on dark background
   };
 
   const signalColorPalette = [

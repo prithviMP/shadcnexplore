@@ -27,7 +27,7 @@ export default function SignalBadge({ signal, showIcon = true }: SignalBadgeProp
       icon: AlertTriangle
     },
     "No Signal": {
-      className: "bg-slate-500/10 text-slate-600 dark:bg-slate-500/20 dark:text-slate-400 border-slate-500/20",
+      className: "bg-sky-500/10 text-sky-600 dark:bg-sky-500/20 dark:text-sky-400 border-sky-500/20",
       icon: X
     }
   };

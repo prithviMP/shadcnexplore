@@ -1354,7 +1354,7 @@ export default function SectorsList() {
                         BUY: { label: "BUY", color: "hsl(142, 76%, 36%)" },
                         SELL: { label: "SELL", color: "hsl(0, 84%, 60%)" },
                         HOLD: { label: "HOLD", color: "hsl(38, 92%, 50%)" },
-                        "No Signal": { label: "No Signal", color: "hsl(var(--muted))" },
+                        "No Signal": { label: "No Signal", color: "hsl(199, 89%, 58%)" }, // Sky blue (sky-400) - visible on dark background
                       }}
                       className="h-[300px]"
                     >
