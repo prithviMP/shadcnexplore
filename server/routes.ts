@@ -270,12 +270,30 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.put("/api/users/:id", requireAuth, requireRole("admin"), async (req, res) => {
+  // PATCH endpoint for updating user role (for frontend compatibility)
+  app.patch("/api/users/:id/role", requireAuth, requirePermission("users:update"), async (req, res) => {
+    try {
+      const updateSchema = z.object({
+        role: z.string().min(1),
+      });
+
+      const data = updateSchema.parse(req.body);
+      const user = await storage.updateUser(req.params.id, { role: data.role });
+      if (!user) {
+        return res.status(404).json({ error: "User not found" });
+      }
+      res.json(sanitizeUser(user));
+    } catch (error: any) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
+  app.put("/api/users/:id", requireAuth, requirePermission("users:update"), async (req, res) => {
     try {
       const updateSchema = z.object({
         email: z.string().email().optional(),
         name: z.string().optional(),
-        role: z.enum(["admin", "analyst", "viewer"]).optional(),
+        role: z.string().optional(), // Allow any role string, not just enum
         password: z.string().min(6).optional(),
         enabled: z.boolean().optional()
       });

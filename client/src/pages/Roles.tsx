@@ -102,7 +102,7 @@ export default function Roles() {
   const updateRoleMutation = useMutation({
     mutationFn: async (data: RoleFormState) => {
       if (!editingRole) return;
-      await apiRequest("PUT", `/api/roles/${encodeURIComponent(editingRole.name)}`, {
+      await apiRequest("PUT", `/api/roles/${encodeURIComponent(editingRole.id)}`, {
         description: data.description.trim() || undefined,
         permissions: data.permissions,
       });

@@ -50,8 +50,10 @@ export default function UserManagement() {
     mutationFn: async ({ userId, role }: { userId: string; role: string }) => {
       await apiRequest("PATCH", `/api/users/${userId}/role`, { role });
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/users"] });
+    onSuccess: async () => {
+      // Invalidate and refetch to ensure UI updates
+      await queryClient.invalidateQueries({ queryKey: ["/api/users"] });
+      await queryClient.refetchQueries({ queryKey: ["/api/users"] });
       toast({
         title: "Success",
         description: "User role updated successfully",
