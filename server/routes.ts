@@ -1538,10 +1538,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // IMPORTANT: This route must be defined BEFORE /api/formulas/:id to avoid route matching conflicts
   app.post("/api/formulas/reset-all-to-global", requireAuth, requirePermission("formulas:update"), async (req, res) => {
     try {
-      const result = await storage.resetAllFormulasToGlobal();
+      const { formulaId } = req.body; // Optional: if provided, assign this formula to all companies/sectors
+      
+      const result = await storage.resetAllFormulasToGlobal(formulaId || null);
+      
+      const message = formulaId 
+        ? `Assigned formula to all companies and sectors. ${result.companiesAffected} companies and ${result.sectorsAffected} sectors affected.`
+        : `Reset all formula assignments to global. ${result.companiesAffected} companies and ${result.sectorsAffected} sectors affected.`;
+      
       res.json({
         success: true,
-        message: `Reset all formula assignments to global. ${result.companiesAffected} companies and ${result.sectorsAffected} sectors affected.`,
+        message,
         companiesAffected: result.companiesAffected,
         sectorsAffected: result.sectorsAffected
       });

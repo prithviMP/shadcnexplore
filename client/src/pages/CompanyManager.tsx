@@ -145,8 +145,11 @@ export default function CompanyManager() {
         const numValue = parseFloat(String(metricValue));
         if (isNaN(numValue)) return false;
 
-        if (filter.min && numValue < parseFloat(filter.min)) return false;
-        if (filter.max && numValue > parseFloat(filter.max)) return false;
+        const min = filter.min.trim() ? parseFloat(filter.min.trim()) : null;
+        const max = filter.max.trim() ? parseFloat(filter.max.trim()) : null;
+
+        if (min !== null && !isNaN(min) && numValue < min) return false;
+        if (max !== null && !isNaN(max) && numValue > max) return false;
         return true;
       });
     });

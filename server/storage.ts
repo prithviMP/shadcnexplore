@@ -209,7 +209,7 @@ export interface IStorage {
   assignFormulaToSector(sectorId: string, formulaId: string | null): Promise<Sector | undefined>;
   getAssignedFormulaForCompany(companyId: string): Promise<Formula | null>;
   getAssignedFormulaForSector(sectorId: string): Promise<Formula | null>;
-  resetAllFormulasToGlobal(): Promise<{ companiesAffected: number; sectorsAffected: number }>;
+  resetAllFormulasToGlobal(formulaId?: string | null): Promise<{ companiesAffected: number; sectorsAffected: number }>;
 }
 
 export class DbStorage implements IStorage {
@@ -1267,24 +1267,25 @@ export class DbStorage implements IStorage {
     return formula || null;
   }
 
-  async resetAllFormulasToGlobal(): Promise<{ companiesAffected: number; sectorsAffected: number }> {
+  async resetAllFormulasToGlobal(formulaId?: string | null): Promise<{ companiesAffected: number; sectorsAffected: number }> {
     try {
-      // Clear all company-level formula assignments (only update rows that have a formula assigned)
-      // Using SQL template for IS NOT NULL check as a safe fallback
+      // If formulaId is provided, assign it to all companies/sectors
+      // Otherwise, clear all assignments (set to null to use global formula)
+      const assignedFormulaId = formulaId || null;
+
+      // Update all companies (those with assignments and those without, to ensure consistency)
       const companiesResult = await db
         .update(companies)
         .set({ 
-          assignedFormulaId: null,
+          assignedFormulaId: assignedFormulaId,
           updatedAt: new Date() 
         })
-        .where(sql`${companies.assignedFormulaId} IS NOT NULL`)
         .returning({ id: companies.id });
 
-      // Clear all sector-level formula assignments (only update rows that have a formula assigned)
+      // Update all sectors (those with assignments and those without, to ensure consistency)
       const sectorsResult = await db
         .update(sectors)
-        .set({ assignedFormulaId: null })
-        .where(sql`${sectors.assignedFormulaId} IS NOT NULL`)
+        .set({ assignedFormulaId: assignedFormulaId })
         .returning({ id: sectors.id });
 
       return {

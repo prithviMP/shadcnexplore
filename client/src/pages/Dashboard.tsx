@@ -419,45 +419,61 @@ export default function Dashboard() {
     }
 
     // Market Cap filter
-    if (marketCapMin || marketCapMax) {
+    if (marketCapMin.trim() || marketCapMax.trim()) {
       filtered = filtered.filter(company => {
         const marketCap = company.marketCap ? parseFloat(String(company.marketCap)) : null;
-        if (marketCap === null) return false;
-        if (marketCapMin && marketCap < parseFloat(marketCapMin)) return false;
-        if (marketCapMax && marketCap > parseFloat(marketCapMax)) return false;
+        if (marketCap === null || isNaN(marketCap)) return false;
+        
+        const min = marketCapMin.trim() ? parseFloat(marketCapMin.trim()) : null;
+        const max = marketCapMax.trim() ? parseFloat(marketCapMax.trim()) : null;
+        
+        if (min !== null && !isNaN(min) && marketCap < min) return false;
+        if (max !== null && !isNaN(max) && marketCap > max) return false;
         return true;
       });
     }
 
     // ROE filter
-    if (roeMin || roeMax) {
+    if (roeMin.trim() || roeMax.trim()) {
       filtered = filtered.filter(company => {
         const roe = getFinancialValueNumber(company, "roe");
-        if (roe === null) return false;
-        if (roeMin && roe < parseFloat(roeMin)) return false;
-        if (roeMax && roe > parseFloat(roeMax)) return false;
+        if (roe === null || isNaN(roe)) return false;
+        
+        const min = roeMin.trim() ? parseFloat(roeMin.trim()) : null;
+        const max = roeMax.trim() ? parseFloat(roeMax.trim()) : null;
+        
+        if (min !== null && !isNaN(min) && roe < min) return false;
+        if (max !== null && !isNaN(max) && roe > max) return false;
         return true;
       });
     }
 
     // P/E filter
-    if (peMin || peMax) {
+    if (peMin.trim() || peMax.trim()) {
       filtered = filtered.filter(company => {
         const pe = getFinancialValueNumber(company, "pe");
-        if (pe === null) return false;
-        if (peMin && pe < parseFloat(peMin)) return false;
-        if (peMax && pe > parseFloat(peMax)) return false;
+        if (pe === null || isNaN(pe)) return false;
+        
+        const min = peMin.trim() ? parseFloat(peMin.trim()) : null;
+        const max = peMax.trim() ? parseFloat(peMax.trim()) : null;
+        
+        if (min !== null && !isNaN(min) && pe < min) return false;
+        if (max !== null && !isNaN(max) && pe > max) return false;
         return true;
       });
     }
 
     // Revenue filter
-    if (revenueMin || revenueMax) {
+    if (revenueMin.trim() || revenueMax.trim()) {
       filtered = filtered.filter(company => {
         const revenue = getFinancialValueNumber(company, "revenue");
-        if (revenue === null) return false;
-        if (revenueMin && revenue < parseFloat(revenueMin)) return false;
-        if (revenueMax && revenue > parseFloat(revenueMax)) return false;
+        if (revenue === null || isNaN(revenue)) return false;
+        
+        const min = revenueMin.trim() ? parseFloat(revenueMin.trim()) : null;
+        const max = revenueMax.trim() ? parseFloat(revenueMax.trim()) : null;
+        
+        if (min !== null && !isNaN(min) && revenue < min) return false;
+        if (max !== null && !isNaN(max) && revenue > max) return false;
         return true;
       });
     }
@@ -523,8 +539,11 @@ export default function Dashboard() {
         const numValue = parseFloat(String(metricValue));
         if (isNaN(numValue)) return false;
 
-        if (filter.min && numValue < parseFloat(filter.min)) return false;
-        if (filter.max && numValue > parseFloat(filter.max)) return false;
+        const min = filter.min.trim() ? parseFloat(filter.min.trim()) : null;
+        const max = filter.max.trim() ? parseFloat(filter.max.trim()) : null;
+
+        if (min !== null && !isNaN(min) && numValue < min) return false;
+        if (max !== null && !isNaN(max) && numValue > max) return false;
         return true;
       });
     });

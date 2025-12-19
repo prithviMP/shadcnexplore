@@ -74,6 +74,8 @@ export default function FormulaManager() {
   const [selectedCompanyId, setSelectedCompanyId] = useState<string>("");
   const [previewResult, setPreviewResult] = useState<any>(null);
   const [showQuarterlyData, setShowQuarterlyData] = useState(false);
+  const [resetToGlobalDialogOpen, setResetToGlobalDialogOpen] = useState(false);
+  const [selectedGlobalFormulaId, setSelectedGlobalFormulaId] = useState<string>("");
   const { toast } = useToast();
 
   const { data: formulas = [], isLoading } = useQuery<Formula[]>({
@@ -318,8 +320,8 @@ export default function FormulaManager() {
   });
 
   const resetAllToGlobal = useMutation({
-    mutationFn: async () => {
-      const res = await apiRequest("POST", "/api/formulas/reset-all-to-global", {});
+    mutationFn: async (formulaId: string | null) => {
+      const res = await apiRequest("POST", "/api/formulas/reset-all-to-global", { formulaId: formulaId || null });
       return res.json();
     },
     onSuccess: (data: { companiesAffected: number; sectorsAffected: number; message: string }) => {
@@ -327,6 +329,8 @@ export default function FormulaManager() {
       queryClient.invalidateQueries({ queryKey: ["/api/sectors"] });
       queryClient.invalidateQueries({ queryKey: ["/api/companies"] });
       queryClient.invalidateQueries({ queryKey: ["/api/signals"] });
+      setResetToGlobalDialogOpen(false);
+      setSelectedGlobalFormulaId("");
       toast({
         title: "All formulas reset to global",
         description: data.message,
@@ -470,11 +474,7 @@ export default function FormulaManager() {
         </div>
         <div className="flex gap-2 shrink-0">
           <Button
-            onClick={() => {
-              if (confirm("Are you sure you want to reset all formula assignments to global?\n\nThis will:\n- Clear all sector-level formula assignments\n- Clear all company-level formula assignments\n- Make all companies and sectors use the global formula\n\nThis action cannot be undone.")) {
-                resetAllToGlobal.mutate();
-              }
-            }}
+            onClick={() => setResetToGlobalDialogOpen(true)}
             variant="outline"
             size="sm"
             className="border-orange-600 text-orange-600 hover:bg-orange-50 dark:hover:bg-orange-950/30"
@@ -730,6 +730,89 @@ export default function FormulaManager() {
                 </>
               ) : (
                 "Replace & Delete"
+              )}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Reset All to Global Dialog */}
+      <AlertDialog open={resetToGlobalDialogOpen} onOpenChange={setResetToGlobalDialogOpen}>
+        <AlertDialogContent className="max-w-md">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Reset All to Global Formula</AlertDialogTitle>
+            <AlertDialogDescription className="space-y-4">
+              <p>
+                This will reset all formula assignments for companies and sectors. You can either:
+              </p>
+              <ul className="list-disc list-inside space-y-1 text-sm">
+                <li>Clear all assignments (use "No Formula" option) - Companies and sectors will use the default global formula based on priority</li>
+                <li>Assign a specific global formula to all companies and sectors</li>
+              </ul>
+              <div className="space-y-2 pt-2">
+                <label className="text-sm font-medium">Select global formula (or choose "No Formula" to clear assignments):</label>
+                <Select
+                  value={selectedGlobalFormulaId || "none"}
+                  onValueChange={(value) => setSelectedGlobalFormulaId(value === "none" ? "" : value)}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="No Formula (use default global)" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">No Formula (use default global)</SelectItem>
+                    {formulas?.filter(f => f.scope === "global" && f.enabled).map((formula) => (
+                      <SelectItem key={formula.id} value={formula.id}>
+                        {formula.name} (Priority: {formula.priority})
+                      </SelectItem>
+                    ))}
+                    {(!formulas || formulas.filter(f => f.scope === "global" && f.enabled).length === 0) && (
+                      <SelectItem value="no-formulas-available" disabled>No global formulas available</SelectItem>
+                    )}
+                  </SelectContent>
+                </Select>
+                {selectedGlobalFormulaId && (
+                  (() => {
+                    const selectedFormula = formulas?.find(f => f.id === selectedGlobalFormulaId);
+                    if (selectedFormula) {
+                      return (
+                        <p className="text-sm text-blue-600 dark:text-blue-400 mt-2">
+                          ✓ Will assign "{selectedFormula.name}" to all companies and sectors.
+                        </p>
+                      );
+                    }
+                    return null;
+                  })()
+                )}
+                {!selectedGlobalFormulaId && (
+                  <p className="text-sm text-amber-600 dark:text-amber-400 mt-2">
+                    ✓ Will clear all formula assignments. Companies and sectors will use the default global formula based on priority.
+                  </p>
+                )}
+              </div>
+              <div className="bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800 rounded-md p-3 mt-4">
+                <p className="text-sm text-amber-800 dark:text-amber-200 font-medium">⚠️ Warning</p>
+                <p className="text-sm text-amber-700 dark:text-amber-300 mt-1">
+                  This action will affect ALL companies and sectors. It cannot be undone.
+                </p>
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={resetAllToGlobal.isPending}>
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => resetAllToGlobal.mutate(selectedGlobalFormulaId || null)}
+              disabled={resetAllToGlobal.isPending}
+              className="bg-orange-600 hover:bg-orange-700"
+            >
+              {resetAllToGlobal.isPending ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Resetting...
+                </>
+              ) : (
+                "Confirm Reset"
               )}
             </AlertDialogAction>
           </AlertDialogFooter>
