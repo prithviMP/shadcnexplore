@@ -516,7 +516,6 @@ export default function SectorsList() {
   useEffect(() => {
     if (activeSectorFormula && !customFormula && !selectedFormulaId) {
       setCustomFormula(activeSectorFormula.condition);
-      setCustomFormulaSignal(activeSectorFormula.signal);
       setUseCustomFormula(false);
     }
   }, [activeSectorFormula, displaySectorId]);
@@ -1984,7 +1983,6 @@ export default function SectorsList() {
                             // Use active sector formula if available
                             if (activeSectorFormula && value === "sector-default") {
                               setCustomFormula(activeSectorFormula.condition);
-                              setCustomFormulaSignal(activeSectorFormula.signal);
                             } else {
                               setCustomFormula("");
                             }
