@@ -401,7 +401,7 @@ export class FormulaEvaluator {
               )
             );
 
-            // Insert new signal only if a formula matched
+          // Insert new signal only if a formula matched
             await tx.insert(signals).values({
               companyId: company.id,
               formulaId: result.formulaId,

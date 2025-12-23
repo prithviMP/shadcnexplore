@@ -419,16 +419,28 @@ export default function Dashboard() {
     }
 
     // Market Cap filter
+    // Note: marketCap is stored in rupees, but user input is in crores, so we convert input to rupees
     if (marketCapMin.trim() || marketCapMax.trim()) {
       filtered = filtered.filter(company => {
         const marketCap = company.marketCap ? parseFloat(String(company.marketCap)) : null;
-        if (marketCap === null || isNaN(marketCap)) return false;
+        if (marketCap === null || isNaN(marketCap) || !isFinite(marketCap)) return false;
         
-        const min = marketCapMin.trim() ? parseFloat(marketCapMin.trim()) : null;
-        const max = marketCapMax.trim() ? parseFloat(marketCapMax.trim()) : null;
+        const minStr = marketCapMin.trim();
+        const maxStr = marketCapMax.trim();
+        const minCrores = minStr ? parseFloat(minStr) : null;
+        const maxCrores = maxStr ? parseFloat(maxStr) : null;
         
-        if (min !== null && !isNaN(min) && marketCap < min) return false;
-        if (max !== null && !isNaN(max) && marketCap > max) return false;
+        // Validate parsed values
+        if (minCrores !== null && (isNaN(minCrores) || !isFinite(minCrores))) return false;
+        if (maxCrores !== null && (isNaN(maxCrores) || !isFinite(maxCrores))) return false;
+        
+        // Convert user input from crores to rupees (multiply by 10000000)
+        const min = minCrores !== null ? minCrores * 10000000 : null;
+        const max = maxCrores !== null ? maxCrores * 10000000 : null;
+        
+        // Apply filters: exclude if value is below min or above max
+        if (min !== null && marketCap < min) return false;
+        if (max !== null && marketCap > max) return false;
         return true;
       });
     }
@@ -437,13 +449,20 @@ export default function Dashboard() {
     if (roeMin.trim() || roeMax.trim()) {
       filtered = filtered.filter(company => {
         const roe = getFinancialValueNumber(company, "roe");
-        if (roe === null || isNaN(roe)) return false;
+        if (roe === null || isNaN(roe) || !isFinite(roe)) return false;
         
-        const min = roeMin.trim() ? parseFloat(roeMin.trim()) : null;
-        const max = roeMax.trim() ? parseFloat(roeMax.trim()) : null;
+        const minStr = roeMin.trim();
+        const maxStr = roeMax.trim();
+        const min = minStr ? parseFloat(minStr) : null;
+        const max = maxStr ? parseFloat(maxStr) : null;
         
-        if (min !== null && !isNaN(min) && roe < min) return false;
-        if (max !== null && !isNaN(max) && roe > max) return false;
+        // Validate parsed values
+        if (min !== null && (isNaN(min) || !isFinite(min))) return false;
+        if (max !== null && (isNaN(max) || !isFinite(max))) return false;
+        
+        // Apply filters: exclude if value is below min or above max
+        if (min !== null && roe < min) return false;
+        if (max !== null && roe > max) return false;
         return true;
       });
     }
@@ -452,28 +471,47 @@ export default function Dashboard() {
     if (peMin.trim() || peMax.trim()) {
       filtered = filtered.filter(company => {
         const pe = getFinancialValueNumber(company, "pe");
-        if (pe === null || isNaN(pe)) return false;
+        if (pe === null || isNaN(pe) || !isFinite(pe)) return false;
         
-        const min = peMin.trim() ? parseFloat(peMin.trim()) : null;
-        const max = peMax.trim() ? parseFloat(peMax.trim()) : null;
+        const minStr = peMin.trim();
+        const maxStr = peMax.trim();
+        const min = minStr ? parseFloat(minStr) : null;
+        const max = maxStr ? parseFloat(maxStr) : null;
         
-        if (min !== null && !isNaN(min) && pe < min) return false;
-        if (max !== null && !isNaN(max) && pe > max) return false;
+        // Validate parsed values
+        if (min !== null && (isNaN(min) || !isFinite(min))) return false;
+        if (max !== null && (isNaN(max) || !isFinite(max))) return false;
+        
+        // Apply filters: exclude if value is below min or above max
+        if (min !== null && pe < min) return false;
+        if (max !== null && pe > max) return false;
         return true;
       });
     }
 
     // Revenue filter
+    // Note: revenue is stored in rupees, but user input is in crores, so we convert input to rupees
     if (revenueMin.trim() || revenueMax.trim()) {
       filtered = filtered.filter(company => {
         const revenue = getFinancialValueNumber(company, "revenue");
-        if (revenue === null || isNaN(revenue)) return false;
+        if (revenue === null || isNaN(revenue) || !isFinite(revenue)) return false;
         
-        const min = revenueMin.trim() ? parseFloat(revenueMin.trim()) : null;
-        const max = revenueMax.trim() ? parseFloat(revenueMax.trim()) : null;
+        const minStr = revenueMin.trim();
+        const maxStr = revenueMax.trim();
+        const minCrores = minStr ? parseFloat(minStr) : null;
+        const maxCrores = maxStr ? parseFloat(maxStr) : null;
         
-        if (min !== null && !isNaN(min) && revenue < min) return false;
-        if (max !== null && !isNaN(max) && revenue > max) return false;
+        // Validate parsed values
+        if (minCrores !== null && (isNaN(minCrores) || !isFinite(minCrores))) return false;
+        if (maxCrores !== null && (isNaN(maxCrores) || !isFinite(maxCrores))) return false;
+        
+        // Convert user input from crores to rupees (multiply by 10000000)
+        const min = minCrores !== null ? minCrores * 10000000 : null;
+        const max = maxCrores !== null ? maxCrores * 10000000 : null;
+        
+        // Apply filters: exclude if value is below min or above max
+        if (min !== null && revenue < min) return false;
+        if (max !== null && revenue > max) return false;
         return true;
       });
     }
@@ -537,13 +575,20 @@ export default function Dashboard() {
         if (metricValue === null || metricValue === undefined) return false;
 
         const numValue = parseFloat(String(metricValue));
-        if (isNaN(numValue)) return false;
+        if (isNaN(numValue) || !isFinite(numValue)) return false;
 
-        const min = filter.min.trim() ? parseFloat(filter.min.trim()) : null;
-        const max = filter.max.trim() ? parseFloat(filter.max.trim()) : null;
+        const minStr = filter.min.trim();
+        const maxStr = filter.max.trim();
+        const min = minStr ? parseFloat(minStr) : null;
+        const max = maxStr ? parseFloat(maxStr) : null;
 
-        if (min !== null && !isNaN(min) && numValue < min) return false;
-        if (max !== null && !isNaN(max) && numValue > max) return false;
+        // Validate parsed values
+        if (min !== null && (isNaN(min) || !isFinite(min))) return false;
+        if (max !== null && (isNaN(max) || !isFinite(max))) return false;
+
+        // Apply filters: exclude if value is below min or above max
+        if (min !== null && numValue < min) return false;
+        if (max !== null && numValue > max) return false;
         return true;
       });
     });

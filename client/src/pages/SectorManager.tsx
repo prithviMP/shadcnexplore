@@ -462,14 +462,14 @@ export default function SectorManager() {
                 {deleteSectorWithCompaniesMutation.isPending ? "Deleting..." : `Delete Sector and All ${getCompanyCount(deleteSector.id)} ${getCompanyCount(deleteSector.id) === 1 ? 'Company' : 'Companies'}`}
               </AlertDialogAction>
             ) : (
-              <AlertDialogAction
-                onClick={() => deleteSector && deleteMutation.mutate(deleteSector.id)}
+            <AlertDialogAction
+              onClick={() => deleteSector && deleteMutation.mutate(deleteSector.id)}
                 className="bg-destructive text-destructive-foreground hover:bg-destructive/90 w-full sm:w-auto"
-                data-testid="button-confirm-delete"
+              data-testid="button-confirm-delete"
                 disabled={deleteMutation.isPending}
-              >
+            >
                 {deleteMutation.isPending ? "Deleting..." : "Delete Sector"}
-              </AlertDialogAction>
+            </AlertDialogAction>
             )}
           </AlertDialogFooter>
         </AlertDialogContent>

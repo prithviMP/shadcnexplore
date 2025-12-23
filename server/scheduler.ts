@@ -158,14 +158,14 @@ class ScrapingScheduler {
         try {
           // Update status to running
           await storage.updateSectorUpdateHistory(history.id, { status: 'running' });
-
-          for (const sector of sectors) {
-            try {
-              // Get companies in this sector
-              const companies = await storage.getCompaniesBySector(sector.id);
-              
-              if (companies.length === 0) {
-                console.log(`[Scheduler] No companies in sector ${sector.name}, skipping`);
+        
+        for (const sector of sectors) {
+          try {
+            // Get companies in this sector
+            const companies = await storage.getCompaniesBySector(sector.id);
+            
+            if (companies.length === 0) {
+              console.log(`[Scheduler] No companies in sector ${sector.name}, skipping`);
                 
                 // Update history for empty sector
                 const currentHistory = await storage.getSectorUpdateHistory(history.id);
@@ -182,12 +182,12 @@ class ScrapingScheduler {
                     }],
                   });
                 }
-                continue;
-              }
-              
-              const tickers = companies.map(c => c.ticker);
-              console.log(`[Scheduler] Scraping ${tickers.length} companies in sector ${sector.name}`);
-              
+              continue;
+            }
+            
+            const tickers = companies.map(c => c.ticker);
+            console.log(`[Scheduler] Scraping ${tickers.length} companies in sector ${sector.name}`);
+            
               // Scrape companies (await to track results)
               const results = await scraper.scrapeCompanies(tickers);
               const successCount = results.filter(r => r.success).length;
@@ -209,11 +209,11 @@ class ScrapingScheduler {
                   }],
                 });
               }
-              
-              // Add delay between sectors to avoid rate limiting
-              await new Promise(resolve => setTimeout(resolve, 5000));
-            } catch (error: any) {
-              console.error(`[Scheduler] Error processing sector ${sector.id}:`, error);
+            
+            // Add delay between sectors to avoid rate limiting
+            await new Promise(resolve => setTimeout(resolve, 5000));
+          } catch (error: any) {
+            console.error(`[Scheduler] Error processing sector ${sector.id}:`, error);
               
               // Update history with error
               const currentHistory = await storage.getSectorUpdateHistory(history.id);

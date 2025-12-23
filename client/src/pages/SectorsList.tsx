@@ -241,12 +241,12 @@ export default function SectorsList() {
 
           // Fallback to summary-based logic only if no signals exist
           if (!primarySignal) {
-            if (data.summary.buy > 0) {
-              primarySignal = "BUY";
-            } else if (data.summary.sell > 0) {
-              primarySignal = "SELL";
-            } else if (data.summary.hold > 0) {
-              primarySignal = "HOLD";
+          if (data.summary.buy > 0) {
+            primarySignal = "BUY";
+          } else if (data.summary.sell > 0) {
+            primarySignal = "SELL";
+          } else if (data.summary.hold > 0) {
+            primarySignal = "HOLD";
             }
           }
 

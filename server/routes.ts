@@ -821,8 +821,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
           sector: z.string().optional(), // Support sector name
         })),
         autoScrape: z.boolean().optional(),
+        dataType: z.enum(['consolidated', 'standalone', 'both']).optional().default('consolidated'), // Data type preference for scraping
       });
-      const { companies: companiesData, autoScrape } = schema.parse(req.body);
+      const body = schema.parse(req.body);
+      const { companies: companiesData, autoScrape } = body;
 
       const results = {
         success: 0,
@@ -917,11 +919,34 @@ export async function registerRoutes(app: Express): Promise<Server> {
           }
 
           // Create company
-          await storage.createCompany({
+          const company = await storage.createCompany({
             ticker: companyData.ticker.toUpperCase(),
             name: companyName,
             sectorId: sectorId,
           });
+
+          // Auto-scrape data if requested
+          if (autoScrape) {
+            try {
+              const scrapeResult = await scraper.scrapeCompany(
+                company.ticker,
+                company.id,
+                undefined, // sectorOverride - use company's sector
+                undefined, // userId
+                body.dataType || 'consolidated'
+              );
+              
+              if (!scrapeResult.success) {
+                console.warn(`[Routes] Auto-scrape failed for ${company.ticker}: ${scrapeResult.error}`);
+                // Don't fail company creation if scraping fails
+              } else {
+                console.log(`[Routes] Auto-scraped ${scrapeResult.quartersScraped} quarters and ${scrapeResult.metricsScraped} metrics for ${company.ticker}`);
+              }
+            } catch (scrapeError: any) {
+              console.error(`[Routes] Error during auto-scrape for ${company.ticker}:`, scrapeError);
+              // Don't fail company creation if scraping errors
+            }
+          }
 
           results.success++;
           results.importedTickers.push(companyData.ticker.toUpperCase());
@@ -992,6 +1017,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         financialData: z.any().optional(),
         autoDetect: z.boolean().optional().default(false),
         detectedSector: z.string().optional(), // Sector name from auto-detection (for reference only)
+        dataType: z.enum(['consolidated', 'standalone', 'both']).optional().default('consolidated'), // Data type preference
+        autoScrape: z.boolean().optional().default(true), // Whether to automatically scrape data after creation
       });
 
       const body = schema.parse(req.body);
@@ -1009,15 +1036,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
       let detectedSectorName = body.detectedSector;
 
       if (body.autoDetect && body.ticker) {
+        console.log(`[Routes] Auto-detecting company metadata for ticker: ${body.ticker}`);
         const metadata = await scraper.fetchCompanyMetadata(body.ticker);
+        console.log(`[Routes] Metadata fetch result:`, {
+          exists: metadata.exists,
+          companyName: metadata.companyName,
+          detectedSector: metadata.detectedSector,
+        });
 
         if (!metadata.exists) {
+          console.warn(`[Routes] Company not found for ticker: ${body.ticker}`);
           return res.status(404).json({ error: `Company with ticker ${body.ticker} not found on Screener.in` });
         }
 
-        // Use detected name if not provided
-        if (!companyName) {
+        // Use detected name if not provided (and it's valid)
+        if (!companyName && metadata.companyName && metadata.companyName !== 'Unknown Company' && metadata.companyName.trim() !== '') {
           companyName = metadata.companyName;
+          console.log(`[Routes] Using detected company name: ${companyName}`);
+        } else if (companyName) {
+          console.log(`[Routes] Using provided company name: ${companyName}`);
+        } else {
+          console.warn(`[Routes] No valid company name found. Provided: "${body.name}", Detected: "${metadata.companyName}"`);
         }
 
         // Note: We don't use detected sector anymore - user must provide sectorId
@@ -1028,13 +1067,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       // Validate required fields
-      if (!companyName) {
+      if (!companyName || companyName.trim() === '' || companyName === 'Unknown Company') {
         return res.status(400).json({
           error: "Company name is required. Use autoDetect=true or provide it manually."
         });
       }
 
-      // Validate sectorId exists
+      // Validate sectorId is provided and exists
+      if (!sectorId) {
+        return res.status(400).json({ error: "Sector is required. Please select a sector when creating a company." });
+      }
+
       const sector = await storage.getSector(sectorId);
       if (!sector) {
         return res.status(400).json({ error: `Invalid sector ID: ${sectorId}` });
@@ -1055,6 +1098,30 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
 
       const company = await storage.createCompany(data);
+
+      // Auto-scrape data if requested
+      if (body.autoScrape) {
+        try {
+          const scrapeResult = await scraper.scrapeCompany(
+            company.ticker,
+            company.id,
+            company.sectorId,
+            req.user?.id,
+            body.dataType || 'consolidated'
+          );
+          
+          if (!scrapeResult.success) {
+            console.warn(`[Routes] Auto-scrape failed for ${company.ticker}: ${scrapeResult.error}`);
+            // Don't fail company creation if scraping fails
+          } else {
+            console.log(`[Routes] Auto-scraped ${scrapeResult.quartersScraped} quarters and ${scrapeResult.metricsScraped} metrics for ${company.ticker}`);
+          }
+        } catch (scrapeError: any) {
+          console.error(`[Routes] Error during auto-scrape for ${company.ticker}:`, scrapeError);
+          // Don't fail company creation if scraping errors
+        }
+      }
+
       res.json(company);
     } catch (error: any) {
       res.status(400).json({ error: error.message });
@@ -3300,10 +3367,16 @@ async function processBulkImportJob(jobId: string): Promise<void> {
 
       // Step 4: Scrape company data
       try {
+        // Get dataType from job settings or default to 'consolidated'
+        const job = await storage.getBulkImportJob(jobId);
+        const dataType = (job?.metadata as any)?.dataType || 'consolidated';
+        
         const scrapeResult = await scraper.scrapeCompany(
           company.ticker,
           company.id,
-          sector.id // Use sector.id as sectorOverride to preserve the sector
+          sector.id, // Use sector.id as sectorOverride to preserve the sector
+          undefined, // userId
+          dataType as 'consolidated' | 'standalone' | 'both'
         );
 
         if (scrapeResult.success) {

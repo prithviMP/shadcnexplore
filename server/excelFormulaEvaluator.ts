@@ -101,7 +101,7 @@ function normalizeValue(val: string | number | null | undefined, metricName?: st
 
   if (isPercentageMetric) {
     // For percentage metrics: DB stores 20 for 20%, convert to decimal 0.2
-    return num / 100;
+  return num / 100;
   }
 
   // For non-percentage metrics (Sales, Net Profit, EPS, etc.), return as-is

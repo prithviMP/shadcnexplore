@@ -143,13 +143,20 @@ export default function CompanyManager() {
         if (metricValue === null || metricValue === undefined) return false;
 
         const numValue = parseFloat(String(metricValue));
-        if (isNaN(numValue)) return false;
+        if (isNaN(numValue) || !isFinite(numValue)) return false;
 
-        const min = filter.min.trim() ? parseFloat(filter.min.trim()) : null;
-        const max = filter.max.trim() ? parseFloat(filter.max.trim()) : null;
+        const minStr = filter.min.trim();
+        const maxStr = filter.max.trim();
+        const min = minStr ? parseFloat(minStr) : null;
+        const max = maxStr ? parseFloat(maxStr) : null;
 
-        if (min !== null && !isNaN(min) && numValue < min) return false;
-        if (max !== null && !isNaN(max) && numValue > max) return false;
+        // Validate parsed values
+        if (min !== null && (isNaN(min) || !isFinite(min))) return false;
+        if (max !== null && (isNaN(max) || !isFinite(max))) return false;
+
+        // Apply filters: exclude if value is below min or above max
+        if (min !== null && numValue < min) return false;
+        if (max !== null && numValue > max) return false;
         return true;
       });
     });

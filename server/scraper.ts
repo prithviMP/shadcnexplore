@@ -215,6 +215,40 @@ class ScreenerScraper {
   }
 
   /**
+   * Merge quarterly data from consolidated and standalone sources
+   * Consolidated data takes precedence (overwrites standalone for same quarter+metric)
+   * Standalone data fills in gaps (quarters/metrics not in consolidated)
+   */
+  private mergeQuarterlyData(
+    consolidated: InsertQuarterlyData[],
+    standalone: InsertQuarterlyData[]
+  ): InsertQuarterlyData[] {
+    // Create a map for consolidated data: key = quarter+metricName+scrapeTimestamp
+    const consolidatedMap = new Map<string, InsertQuarterlyData>();
+    consolidated.forEach(item => {
+      const key = `${item.quarter}|${item.metricName}|${item.scrapeTimestamp?.getTime() || 'null'}`;
+      consolidatedMap.set(key, item);
+    });
+
+    // Add standalone data, but don't overwrite consolidated
+    const merged: InsertQuarterlyData[] = [...consolidated];
+    const seenKeys = new Set(consolidatedMap.keys());
+
+    standalone.forEach(item => {
+      const key = `${item.quarter}|${item.metricName}|${item.scrapeTimestamp?.getTime() || 'null'}`;
+      if (!seenKeys.has(key)) {
+        merged.push(item);
+        seenKeys.add(key);
+      } else {
+        // Log if we're skipping standalone data that's already in consolidated
+        console.log(`[SCRAPER] Skipping standalone duplicate: ${item.quarter} - ${item.metricName} (already in consolidated)`);
+      }
+    });
+
+    return merged;
+  }
+
+  /**
    * Fetch company metadata (name and sector) without full scraping
    */
   async fetchCompanyMetadata(ticker: string): Promise<{ ticker: string; companyName: string; detectedSector: string; exists: boolean }> {
@@ -266,8 +300,9 @@ class ScreenerScraper {
 
   /**
    * Scrape quarterly data for a single company
+   * @param dataType - 'consolidated' (default), 'standalone', or 'both' to merge data from both sources
    */
-  async scrapeCompany(ticker: string, companyId?: string, sectorOverride?: string, userId?: string): Promise<ScrapeResult> {
+  async scrapeCompany(ticker: string, companyId?: string, sectorOverride?: string, userId?: string, dataType: 'consolidated' | 'standalone' | 'both' = 'consolidated'): Promise<ScrapeResult> {
     // Primary URL: consolidated quarterly data (preferred)
     let url = `https://www.screener.in/company/${ticker}/consolidated/#quarters`;
     const fallbackUrl = `https://www.screener.in/company/${ticker}/#quarters`;
@@ -469,55 +504,110 @@ class ScreenerScraper {
         console.log(`[SCRAPER] Key metrics details:`, keyMetrics);
       }
 
-      // Find quarterly data table
-      console.log(`[SCRAPER] Extracting quarterly data from primary page (consolidated)...`);
-      const extractStartTime = Date.now();
-      let quarterlyData = this.extractQuarterlyData($, ticker, finalCompanyId || undefined);
-      let extractDuration = Date.now() - extractStartTime;
-      console.log(`[SCRAPER] Extracted ${quarterlyData.length} quarterly data rows from primary page in ${extractDuration}ms`);
-      if (quarterlyData.length > 0) {
-        quarterlyDataSource = 'primary';
+      // Extract quarterly data based on dataType preference
+      let consolidatedData: InsertQuarterlyData[] = [];
+      let standaloneData: InsertQuarterlyData[] = [];
+      let quarterlyData: InsertQuarterlyData[] = [];
+
+      // Try consolidated data if requested
+      if (dataType === 'consolidated' || dataType === 'both') {
+        console.log(`[SCRAPER] Extracting quarterly data from primary page (consolidated)...`);
+        const extractStartTime = Date.now();
+        consolidatedData = this.extractQuarterlyData($, ticker, finalCompanyId || undefined);
+        const extractDuration = Date.now() - extractStartTime;
+        console.log(`[SCRAPER] Extracted ${consolidatedData.length} quarterly data rows from consolidated page in ${extractDuration}ms`);
+        if (consolidatedData.length > 0) {
+          quarterlyDataSource = 'primary';
+          if (dataType === 'consolidated') {
+            quarterlyData = consolidatedData;
+          }
+        }
       }
 
-      // Fallback: if no quarterly data found on consolidated page, try the non-consolidated quarters URL
-      if (quarterlyData.length === 0) {
+      // Try standalone data if requested (and consolidated didn't work or both is requested)
+      if ((dataType === 'standalone' || dataType === 'both') && (quarterlyData.length === 0 || dataType === 'both')) {
         try {
-          console.warn(`[SCRAPER] No quarterly data found on consolidated page for ${ticker}. Trying fallback URL...`);
+          if (dataType === 'both' && consolidatedData.length > 0) {
+            console.log(`[SCRAPER] Fetching standalone data to merge with consolidated data...`);
+          } else {
+            console.log(`[SCRAPER] Trying standalone URL...`);
+          }
           const fallbackDelayMs = Math.random() * 2000 + 1000;
-          console.log(`[SCRAPER] Waiting ${Math.round(fallbackDelayMs)}ms before fetching fallback page to avoid rate limiting...`);
+          console.log(`[SCRAPER] Waiting ${Math.round(fallbackDelayMs)}ms before fetching standalone page to avoid rate limiting...`);
           await this.delay(fallbackDelayMs);
 
-          url = fallbackUrl;
-          console.log(`[SCRAPER] Fetching fallback company page URL: ${url}`);
+          const standaloneUrl = fallbackUrl;
+          console.log(`[SCRAPER] Fetching standalone company page URL: ${standaloneUrl}`);
           const fallbackFetchStart = Date.now();
-          const fallbackResponse = await this.fetchWithRetry(url);
+          const fallbackResponse = await this.fetchWithRetry(standaloneUrl);
           const fallbackFetchDuration = Date.now() - fallbackFetchStart;
-          console.log(`[SCRAPER] Fallback HTTP Response: ${fallbackResponse.status} ${fallbackResponse.statusText} (took ${fallbackFetchDuration}ms)`);
+          console.log(`[SCRAPER] Standalone HTTP Response: ${fallbackResponse.status} ${fallbackResponse.statusText} (took ${fallbackFetchDuration}ms)`);
 
           if (fallbackResponse.ok) {
             const fallbackHtmlStart = Date.now();
             const fallbackHtml = await fallbackResponse.text();
             const fallbackHtmlDuration = Date.now() - fallbackHtmlStart;
-            console.log(`[SCRAPER] Received fallback HTML (${fallbackHtml.length} bytes) in ${fallbackHtmlDuration}ms`);
+            console.log(`[SCRAPER] Received standalone HTML (${fallbackHtml.length} bytes) in ${fallbackHtmlDuration}ms`);
 
             const fallbackParseStart = Date.now();
             const fallback$ = load(fallbackHtml);
             const fallbackParseDuration = Date.now() - fallbackParseStart;
-            console.log(`[SCRAPER] Parsed fallback HTML with Cheerio in ${fallbackParseDuration}ms`);
+            console.log(`[SCRAPER] Parsed standalone HTML with Cheerio in ${fallbackParseDuration}ms`);
 
-            console.log(`[SCRAPER] Extracting quarterly data from fallback page (standalone #quarters)...`);
+            console.log(`[SCRAPER] Extracting quarterly data from standalone page...`);
             const fallbackExtractStart = Date.now();
-            quarterlyData = this.extractQuarterlyData(fallback$, ticker, finalCompanyId || undefined);
-            extractDuration = Date.now() - fallbackExtractStart;
-            console.log(`[SCRAPER] Extracted ${quarterlyData.length} quarterly data rows from fallback page in ${extractDuration}ms`);
-            if (quarterlyData.length > 0) {
-              quarterlyDataSource = 'fallback';
+            standaloneData = this.extractQuarterlyData(fallback$, ticker, finalCompanyId || undefined);
+            const standaloneExtractDuration = Date.now() - fallbackExtractStart;
+            console.log(`[SCRAPER] Extracted ${standaloneData.length} quarterly data rows from standalone page in ${standaloneExtractDuration}ms`);
+            
+            if (standaloneData.length > 0) {
+              if (dataType === 'both' && consolidatedData.length > 0) {
+                // Merge data: consolidated takes precedence, standalone fills gaps
+                console.log(`[SCRAPER] Merging consolidated and standalone data...`);
+                quarterlyData = this.mergeQuarterlyData(consolidatedData, standaloneData);
+                quarterlyDataSource = 'primary'; // Mark as primary since we have consolidated
+                console.log(`[SCRAPER] Merged data: ${quarterlyData.length} total rows (${consolidatedData.length} consolidated + ${standaloneData.length} standalone, with deduplication)`);
+              } else {
+                quarterlyData = standaloneData;
+                quarterlyDataSource = 'fallback';
+              }
             }
           } else {
-            console.warn(`[SCRAPER] Fallback URL returned non-OK status: ${fallbackResponse.status} ${fallbackResponse.statusText}`);
+            console.warn(`[SCRAPER] Standalone URL returned non-OK status: ${fallbackResponse.status} ${fallbackResponse.statusText}`);
           }
         } catch (fallbackError) {
-          console.error(`[SCRAPER] Error while trying fallback URL for ${ticker}:`, fallbackError);
+          console.error(`[SCRAPER] Error while trying standalone URL for ${ticker}:`, fallbackError);
+          // If both mode and we have consolidated data, use it
+          if (dataType === 'both' && consolidatedData.length > 0) {
+            quarterlyData = consolidatedData;
+            quarterlyDataSource = 'primary';
+            console.log(`[SCRAPER] Using consolidated data only (standalone fetch failed)`);
+          }
+        }
+      }
+
+      // If we still don't have data and only tried one type, try the other as fallback
+      if (quarterlyData.length === 0 && dataType !== 'both') {
+        console.log(`[SCRAPER] No data found with ${dataType} type, trying fallback...`);
+        // Fallback logic: if consolidated failed, try standalone; if standalone failed, try consolidated
+        try {
+          const fallbackUrlToUse = dataType === 'consolidated' ? fallbackUrl : url;
+          const fallbackType = dataType === 'consolidated' ? 'standalone' : 'consolidated';
+          console.log(`[SCRAPER] Trying ${fallbackType} as fallback...`);
+          const fallbackDelayMs = Math.random() * 2000 + 1000;
+          await this.delay(fallbackDelayMs);
+          const fallbackResponse = await this.fetchWithRetry(fallbackUrlToUse);
+          if (fallbackResponse.ok) {
+            const fallbackHtml = await fallbackResponse.text();
+            const fallback$ = load(fallbackHtml);
+            quarterlyData = this.extractQuarterlyData(fallback$, ticker, finalCompanyId || undefined);
+            if (quarterlyData.length > 0) {
+              quarterlyDataSource = fallbackType === 'standalone' ? 'fallback' : 'primary';
+              console.log(`[SCRAPER] Successfully fetched ${quarterlyData.length} rows from ${fallbackType} fallback`);
+            }
+          }
+        } catch (fallbackError) {
+          console.error(`[SCRAPER] Fallback also failed:`, fallbackError);
         }
       }
 
@@ -719,33 +809,64 @@ class ScreenerScraper {
   private extractCompanyName($: ReturnType<typeof load>): string {
     try {
       console.log(`[SCRAPER] [extractCompanyName] Starting company name extraction...`);
-      // Try multiple selectors for company name
-      const selectors = ['h1', '.company-name', '[data-testid="company-name"]', 'title'];
+      
+      // Try to find the company name in the main heading
+      // Look for h1 tag first (most reliable)
+      const h1Element = $('h1').first();
+      if (h1Element.length > 0) {
+        let h1Text = h1Element.text().trim();
+        if (h1Text) {
+          console.log(`[SCRAPER] [extractCompanyName] Found h1 text: ${h1Text.substring(0, 100)}`);
+          
+          // Clean up the name - remove common suffixes/prefixes
+          if (h1Text.toLowerCase().includes('share price')) {
+            h1Text = h1Text.split('share price')[0].trim();
+          }
+          if (h1Text.includes('|')) {
+            h1Text = h1Text.split('|')[0].trim();
+          }
+          
+          // Validate it's a reasonable company name (not too short, not a generic term)
+          const invalidPatterns = ['home', 'screens', 'tools', 'login', 'screener', 'about'];
+          const isInvalid = invalidPatterns.some(pattern => h1Text.toLowerCase() === pattern);
+          
+          if (h1Text.length > 2 && !isInvalid) {
+            console.log(`[SCRAPER] [extractCompanyName] Extracted company name from h1: ${h1Text}`);
+            return h1Text;
+          }
+        }
+      }
 
+      // Try other selectors
+      const selectors = ['.company-name', '[data-testid="company-name"]'];
       for (const selector of selectors) {
         const element = $(selector).first();
         if (element.length > 0) {
           let text = element.text().trim();
-          if (text) {
+          if (text && text.length > 2) {
             console.log(`[SCRAPER] [extractCompanyName] Found text in selector "${selector}": ${text.substring(0, 100)}`);
-            // Clean up the name
-            if (text.toLowerCase().includes('share price')) {
-              text = text.split('share price')[0].trim();
-            }
-            if (text.toLowerCase().includes('ltd') || text.toLowerCase().includes('limited')) {
-              console.log(`[SCRAPER] [extractCompanyName] Extracted company name: ${text}`);
-              return text;
-            }
+            return text;
           }
         }
       }
 
       // Fallback: extract from title tag
       const title = $('title').text().trim();
-      if (title && title.toLowerCase().includes('ltd')) {
-        const extracted = title.split(' - ')[0].trim();
-        console.log(`[SCRAPER] [extractCompanyName] Extracted company name from title: ${extracted}`);
-        return extracted;
+      if (title) {
+        // Title format is usually "Company Name | About Company | ..." or "Company Name share price | ..."
+        let extracted = title.split('|')[0].trim();
+        if (extracted.toLowerCase().includes('share price')) {
+          extracted = extracted.split('share price')[0].trim();
+        }
+        
+        // Validate it's not just "Screener" or other generic terms
+        const invalidPatterns = ['screener', 'home', 'screens', 'tools', 'login'];
+        const isInvalid = invalidPatterns.some(pattern => extracted.toLowerCase() === pattern);
+        
+        if (extracted.length > 2 && !isInvalid) {
+          console.log(`[SCRAPER] [extractCompanyName] Extracted company name from title: ${extracted}`);
+          return extracted;
+        }
       }
 
       console.warn(`[SCRAPER] [extractCompanyName] Could not extract company name, using fallback`);
