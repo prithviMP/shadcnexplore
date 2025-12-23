@@ -13,7 +13,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
-import { ArrowLeft, Calculator, Save, Play, Loader2, AlertCircle, Check, ChevronsUpDown, HelpCircle } from "lucide-react";
+import { ArrowLeft, Calculator, Save, Play, Loader2, AlertCircle, Check, ChevronsUpDown, HelpCircle, Pencil } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Link, useLocation } from "wouter";
 import type { Company, Sector, Formula } from "@shared/schema";
@@ -54,6 +54,7 @@ export default function FormulaBuilder() {
   const [formulaResults, setFormulaResults] = useState<Record<string, { result: string | number | boolean; type: string }>>({});
   const [isEvaluating, setIsEvaluating] = useState(false);
   const [hasAutoEvaluated, setHasAutoEvaluated] = useState(false);
+  const [isUpdating, setIsUpdating] = useState(false);
 
   // Preview state (separate from selected entity for Global formulas)
   const [previewType, setPreviewType] = useState<"company" | "sector">("company");
@@ -93,6 +94,7 @@ export default function FormulaBuilder() {
     const id = params.get("id");
     const formulaId = params.get("formulaId");
 
+    // Set entity type first (defaults to "company" if not specified)
     if (type === "company" || type === "sector" || type === "global") {
       setEntityType(type as "global" | "company" | "sector");
     }
@@ -101,6 +103,7 @@ export default function FormulaBuilder() {
     }
     if (formulaId) {
       // Load the formula when formulaId is provided
+      // The formula's scope will be used to set entityType in the selectedFormulaId effect
       setSelectedFormulaId(formulaId);
     }
   }, []);
@@ -248,7 +251,7 @@ export default function FormulaBuilder() {
       const res = await apiRequest("GET", `/api/v1/formulas/entity/${entityType}/${selectedEntityId}`);
       return res.json();
     },
-    enabled: entityType === "global" || !!selectedEntityId
+    enabled: (entityType === "global" || !!selectedEntityId) && !selectedFormulaId
   });
 
   // Fetch global formula as fallback
@@ -266,6 +269,10 @@ export default function FormulaBuilder() {
 
   // Initialize formula from existing or global
   useEffect(() => {
+    // Skip if we're loading/editing a specific formula via selectedFormulaId
+    // Keep this guard to prevent overwriting user edits when editing an existing formula
+    if (selectedFormulaId) return;
+    
     if (!useExistingFormula && existingFormulaData?.formula) {
       setFormula(existingFormulaData.formula.condition);
       setFormulaName(existingFormulaData.formula.name);
@@ -279,13 +286,26 @@ export default function FormulaBuilder() {
       setPriority(globalFormula.priority);
       setHasAutoEvaluated(false); // Reset to allow auto-evaluation
     }
-  }, [existingFormulaData, globalFormula, selectedEntityId, useExistingFormula, entityType]); // Reset when entity changes
+  }, [existingFormulaData, globalFormula, selectedEntityId, useExistingFormula, entityType, selectedFormulaId]); // Reset when entity changes
 
-  // Handle selected formula change
+  // Handle selected formula change - load formula and set entity type based on scope
   useEffect(() => {
     if (selectedFormulaId && formulas) {
       const selectedFormula = formulas.find(f => f.id === selectedFormulaId);
       if (selectedFormula) {
+        // Set entity type based on formula's scope
+        if (selectedFormula.scope === "global") {
+          setEntityType("global");
+          setSelectedEntityId(null);
+        } else if (selectedFormula.scope === "company" && selectedFormula.scopeValue) {
+          setEntityType("company");
+          setSelectedEntityId(selectedFormula.scopeValue);
+        } else if (selectedFormula.scope === "sector" && selectedFormula.scopeValue) {
+          setEntityType("sector");
+          setSelectedEntityId(selectedFormula.scopeValue);
+        }
+        
+        // Load formula data - this will trigger FormulaEditor to update via value prop
         setFormula(selectedFormula.condition);
         setFormulaName(selectedFormula.name);
         setFormulaSignal(selectedFormula.signal);
@@ -378,7 +398,7 @@ export default function FormulaBuilder() {
 
       setFormula(newText);
       setUseExistingFormula(false);
-      setSelectedFormulaId("");
+      // Don't clear selectedFormulaId when inserting from spreadsheet - keep it for updating
 
       // Restore focus and cursor position after update
       setTimeout(() => {
@@ -393,7 +413,7 @@ export default function FormulaBuilder() {
       // Fallback
       setFormula(prev => prev + (prev ? " " : "") + reference);
       setUseExistingFormula(false);
-      setSelectedFormulaId("");
+      // Don't clear selectedFormulaId when inserting from spreadsheet - keep it for updating
     }
 
     // Add quarter to selected set
@@ -513,7 +533,56 @@ export default function FormulaBuilder() {
     }
   });
 
-  // Handle save formula
+  // Handle update formula (for existing formulas)
+  const handleUpdateFormula = async () => {
+    if (!formula || !formulaName) {
+      toast({
+        title: "Missing information",
+        description: "Please enter a formula name and formula condition",
+        variant: "destructive"
+      });
+      return;
+    }
+
+    if (!selectedFormulaId) {
+      toast({
+        title: "No formula selected",
+        description: "Please select a formula to update",
+        variant: "destructive"
+      });
+      return;
+    }
+
+    setIsUpdating(true);
+    try {
+      await apiRequest("PUT", `/api/formulas/${selectedFormulaId}`, {
+        name: formulaName,
+        condition: formula,
+        signal: formulaSignal,
+        scope: entityType,
+        scopeValue: entityType === "global" ? null : selectedEntityId,
+        priority: priority
+      });
+      toast({
+        title: "Formula updated",
+        description: `Formula has been updated${entityType === "global" ? " as global" : ` for this ${entityType}`}`
+      });
+      queryClient.invalidateQueries({ queryKey: ["/api/formulas"] });
+      if (entityType !== "global") {
+        queryClient.invalidateQueries({ queryKey: ["/api/v1/formulas/entity", entityType, selectedEntityId] });
+      }
+    } catch (error: any) {
+      toast({
+        title: "Failed to update formula",
+        description: error.message,
+        variant: "destructive"
+      });
+    } finally {
+      setIsUpdating(false);
+    }
+  };
+
+  // Handle save formula (for new formulas)
   const handleSaveFormula = () => {
     if (!formula || !formulaName) {
       toast({
@@ -533,43 +602,15 @@ export default function FormulaBuilder() {
       return;
     }
 
-    // If using existing formula, update it; otherwise create new
-    if (selectedFormulaId && useExistingFormula) {
-      // Update existing formula
-      apiRequest("PUT", `/api/formulas/${selectedFormulaId}`, {
-        name: formulaName,
-        condition: formula,
-        signal: formulaSignal,
-        scope: entityType,
-        scopeValue: entityType === "global" ? null : selectedEntityId,
-        priority: priority
-      }).then(() => {
-        toast({
-          title: "Formula updated",
-          description: `Formula has been updated${entityType === "global" ? " as global" : ` for this ${entityType}`}`
-        });
-        queryClient.invalidateQueries({ queryKey: ["/api/formulas"] });
-        if (entityType !== "global") {
-          queryClient.invalidateQueries({ queryKey: ["/api/v1/formulas/entity", entityType, selectedEntityId] });
-        }
-      }).catch((error: Error) => {
-        toast({
-          title: "Failed to update formula",
-          description: error.message,
-          variant: "destructive"
-        });
-      });
-    } else {
-      // Create new formula
-      saveFormulaMutation.mutate({
-        name: formulaName,
-        condition: formula,
-        signal: formulaSignal,
-        scope: entityType,
-        scopeValue: entityType === "global" ? null : selectedEntityId,
-        priority: priority
-      });
-    }
+    // Create new formula
+    saveFormulaMutation.mutate({
+      name: formulaName,
+      condition: formula,
+      signal: formulaSignal,
+      scope: entityType,
+      scopeValue: entityType === "global" ? null : selectedEntityId,
+      priority: priority
+    });
   };
 
   return (
@@ -651,7 +692,7 @@ export default function FormulaBuilder() {
           {entityType === "global" && (
             <div className="p-3 bg-muted rounded-md space-y-4">
               <p className="text-sm">
-                <span className="font-medium">Global Formula:</span> This formula will apply to all companies and sectors. Use priority to override other formulas.
+                <span className="font-medium">Global Formula:</span> This formula will apply to all companies and sectors.
               </p>
 
               <div className="space-y-2 pt-2 border-t border-muted-foreground/20">
@@ -848,31 +889,11 @@ export default function FormulaBuilder() {
                 value={formulaName}
                 onChange={(e) => {
                   setFormulaName(e.target.value);
-                  setUseExistingFormula(false); // User is editing, so it's a new formula
-                  setSelectedFormulaId(""); // Clear selection when editing
+                  // Don't clear selectedFormulaId when editing name - we want to update the existing formula
+                  setUseExistingFormula(false);
                 }}
                 placeholder="e.g., Custom Formula for IT Sector"
               />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="priority">Priority</Label>
-              <Input
-                id="priority"
-                type="number"
-                min="0"
-                max="999"
-                value={priority}
-                onChange={(e) => {
-                  const val = parseInt(e.target.value) || 999;
-                  setPriority(val);
-                  setUseExistingFormula(false);
-                  setSelectedFormulaId("");
-                }}
-                placeholder="999"
-              />
-              <p className="text-xs text-muted-foreground">
-                Lower number = higher priority. Global formulas with lower priority will override sector/company formulas.
-              </p>
             </div>
             <div className="space-y-2">
               <div className="flex items-center gap-2">
@@ -892,8 +913,9 @@ export default function FormulaBuilder() {
                 value={formula}
                 onChange={(val) => {
                   setFormula(val);
-                  setUseExistingFormula(false); // User is editing, so it's a new formula
-                  setSelectedFormulaId(""); // Clear selection when editing
+                  // Don't clear selectedFormulaId when editing - we want to update the existing formula
+                  // Only set useExistingFormula to false to indicate formula content has changed
+                  setUseExistingFormula(false);
                 }}
                 textareaRef={formulaInputRef}
                 placeholder='e.g., IF(AND(SalesGrowth[Q1]>0, EPS[Q1]>10), "BUY", "HOLD")'
@@ -929,19 +951,35 @@ export default function FormulaBuilder() {
                     </>
                   )}
                 </Button>
-                <Button onClick={handleSaveFormula} disabled={saveFormulaMutation.isPending || !formula || !formulaName}>
-                  {saveFormulaMutation.isPending ? (
-                    <>
-                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                      Saving...
-                    </>
-                  ) : (
-                    <>
-                      <Save className="h-4 w-4 mr-2" />
-                      Save Formula
-                    </>
-                  )}
-                </Button>
+                {selectedFormulaId ? (
+                  <Button onClick={handleUpdateFormula} disabled={isUpdating || !formula || !formulaName} variant="default">
+                    {isUpdating ? (
+                      <>
+                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                        Updating...
+                      </>
+                    ) : (
+                      <>
+                        <Pencil className="h-4 w-4 mr-2" />
+                        Update Formula
+                      </>
+                    )}
+                  </Button>
+                ) : (
+                  <Button onClick={handleSaveFormula} disabled={saveFormulaMutation.isPending || !formula || !formulaName}>
+                    {saveFormulaMutation.isPending ? (
+                      <>
+                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                        Saving...
+                      </>
+                    ) : (
+                      <>
+                        <Save className="h-4 w-4 mr-2" />
+                        Save Formula
+                      </>
+                    )}
+                  </Button>
+                )}
               </div>
             </div>
           </CardContent>

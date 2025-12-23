@@ -141,11 +141,13 @@ export class ExcelFormulaEvaluator {
   public sortedQuarters: string[]; // Q1 is index 0
   private tokens: Token[] = [];
   private currentTokenIndex = 0;
+  private verboseLogging: boolean;
 
-  constructor(quarterlyData: QuarterlyData[], selectedQuarters?: string[]) {
+  constructor(quarterlyData: QuarterlyData[], selectedQuarters?: string[], verboseLogging: boolean = false) {
     const extracted = extractQuarterlyMetrics(quarterlyData, selectedQuarters);
     this.dataMap = extracted.dataMap;
     this.sortedQuarters = extracted.sortedQuarters;
+    this.verboseLogging = verboseLogging || process.env.EXCEL_FORMULA_VERBOSE_LOGGING === 'true';
   }
 
   /**
@@ -725,25 +727,45 @@ export class ExcelFormulaEvaluator {
     const arrayIndex = this.sortedQuarters.length - quarterIndex;
 
     if (arrayIndex < 0 || arrayIndex >= this.sortedQuarters.length) {
+      if (this.verboseLogging) {
+        console.log(`[EXCEL-FORMULA] ⚠️  ${metricName}[Q${quarterIndex}]: arrayIndex ${arrayIndex} out of range (0-${this.sortedQuarters.length - 1}), returning null`);
+      }
       return null;
     }
 
     const quarterName = this.sortedQuarters[arrayIndex];
     const quarterMetrics = this.dataMap.get(quarterName);
 
-    if (!quarterMetrics) return null;
+    if (!quarterMetrics) {
+      if (this.verboseLogging) {
+        console.log(`[EXCEL-FORMULA] ⚠️  ${metricName}[Q${quarterIndex}]: No metrics found for quarter ${quarterName}, returning null`);
+      }
+      return null;
+    }
 
     // Try exact match
     if (quarterMetrics.has(metricName)) {
-      return quarterMetrics.get(metricName) ?? null;
+      const value = quarterMetrics.get(metricName) ?? null;
+      if (this.verboseLogging) {
+        console.log(`[EXCEL-FORMULA] ✓ ${metricName}[Q${quarterIndex}] (${quarterName}): ${value}`);
+      }
+      return value;
     }
 
     // Try normalized match
     const normalized = normalizeKey(metricName);
     if (quarterMetrics.has(normalized)) {
-      return quarterMetrics.get(normalized) ?? null;
+      const value = quarterMetrics.get(normalized) ?? null;
+      if (this.verboseLogging) {
+        console.log(`[EXCEL-FORMULA] ✓ ${metricName}[Q${quarterIndex}] (${quarterName}, normalized): ${value}`);
+      }
+      return value;
     }
 
+    if (this.verboseLogging) {
+      console.log(`[EXCEL-FORMULA] ⚠️  ${metricName}[Q${quarterIndex}] (${quarterName}): Metric not found (tried "${metricName}" and "${normalized}"), returning null`);
+      console.log(`[EXCEL-FORMULA] Available metrics in ${quarterName}: ${Array.from(quarterMetrics.keys()).slice(0, 10).join(', ')}${quarterMetrics.size > 10 ? ` (${quarterMetrics.size} total)` : ''}`);
+    }
     return null;
   }
 
@@ -761,8 +783,11 @@ export class ExcelFormulaEvaluator {
 export async function evaluateExcelFormulaForCompany(
   ticker: string,
   formula: string,
-  selectedQuarters?: string[]
+  selectedQuarters?: string[],
+  verboseLogging: boolean = false
 ): Promise<{ result: FormulaResult; resultType: string; usedQuarters: string[] }> {
+  const isVerbose = verboseLogging || process.env.EXCEL_FORMULA_VERBOSE_LOGGING === 'true';
+  
   console.log(`[EXCEL-FORMULA] Evaluating formula for ticker: ${ticker}`);
   console.log(`[EXCEL-FORMULA] Formula: ${formula.substring(0, 200)}${formula.length > 200 ? '...' : ''}`);
   try {
@@ -791,8 +816,12 @@ export async function evaluateExcelFormulaForCompany(
 
     // Create evaluator with filtered data
     console.log(`[EXCEL-FORMULA] Creating evaluator with ${quartersToUse.length} quarters${selectedQuarters ? ` (filtered from ${selectedQuarters.length} selected)` : ''}`);
-    const evaluator = new ExcelFormulaEvaluator(quartersToUse, selectedQuarters);
+    const evaluator = new ExcelFormulaEvaluator(quartersToUse, selectedQuarters, isVerbose);
     console.log(`[EXCEL-FORMULA] Evaluator sorted quarters (Q1=oldest, Q${evaluator.sortedQuarters.length}=newest): ${evaluator.sortedQuarters.slice(0, 5).join(', ')}${evaluator.sortedQuarters.length > 5 ? '...' : ''}`);
+    console.log(`[EXCEL-FORMULA] Quarter mapping: Q${evaluator.sortedQuarters.length} = ${evaluator.sortedQuarters[0]} (newest), Q1 = ${evaluator.sortedQuarters[evaluator.sortedQuarters.length - 1]} (oldest)`);
+    if (isVerbose) {
+      console.log(`[EXCEL-FORMULA] Starting formula evaluation with verbose logging...`);
+    }
     
     let result = evaluator.evaluate(formula);
     console.log(`[EXCEL-FORMULA] Formula evaluation result: ${JSON.stringify(result)} (type: ${typeof result})`);

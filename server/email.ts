@@ -267,6 +267,80 @@ This is an automated notification from FinAnalytics.
 }
 
 /**
+ * Send OTP code via email for login
+ */
+export async function sendOtpEmail(userEmail: string, code: string): Promise<void> {
+  const html = `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <style>
+        body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+        .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+        .header { background-color: #059669; color: white; padding: 20px; text-align: center; border-radius: 5px 5px 0 0; }
+        .content { background-color: #f9fafb; padding: 30px; border-radius: 0 0 5px 5px; }
+        .otp-code { background-color: white; padding: 30px; text-align: center; border-radius: 5px; margin: 20px 0; border: 2px dashed #059669; }
+        .code { font-size: 32px; font-weight: bold; letter-spacing: 8px; color: #059669; font-family: 'Courier New', monospace; }
+        .warning { background-color: #fef3c7; padding: 15px; border-radius: 5px; margin: 20px 0; border-left: 4px solid #f59e0b; }
+        .footer { text-align: center; margin-top: 30px; color: #666; font-size: 12px; }
+      </style>
+    </head>
+    <body>
+      <div class="container">
+        <div class="header">
+          <h1>Your Login Verification Code</h1>
+        </div>
+        <div class="content">
+          <p>Hello,</p>
+          <p>You requested a login verification code for your FinAnalytics account. Please use the code below to complete your login:</p>
+          
+          <div class="otp-code">
+            <div class="code">${code}</div>
+          </div>
+
+          <div class="warning">
+            <strong>⚠️ Security Notice:</strong>
+            <ul style="margin: 10px 0; padding-left: 20px;">
+              <li>This code will expire in 10 minutes</li>
+              <li>Never share this code with anyone</li>
+              <li>If you didn't request this code, please ignore this email</li>
+            </ul>
+          </div>
+
+          <p>If you didn't request this code, you can safely ignore this email.</p>
+
+          <div class="footer">
+            <p>This is an automated email from FinAnalytics. Please do not reply to this email.</p>
+          </div>
+        </div>
+      </div>
+    </body>
+    </html>
+  `;
+
+  const text = `
+Your Login Verification Code
+
+Hello,
+
+You requested a login verification code for your FinAnalytics account. Please use the code below to complete your login:
+
+${code}
+
+⚠️ Security Notice:
+- This code will expire in 10 minutes
+- Never share this code with anyone
+- If you didn't request this code, please ignore this email
+
+If you didn't request this code, you can safely ignore this email.
+
+This is an automated email from FinAnalytics. Please do not reply to this email.
+  `;
+
+  await sendEmail(userEmail, "Your FinAnalytics Login Verification Code", html, text);
+}
+
+/**
  * Send notification email to admin when all sectors update is completed
  */
 export async function sendSectorUpdateCompleteEmail(

@@ -61,9 +61,9 @@ export function generateOtpCode(): string {
 }
 
 /**
- * Create and send OTP code via SMS
+ * Create and send OTP code via Email
  */
-export async function createAndSendOtp(phone: string): Promise<string> {
+export async function createAndSendOtp(email: string): Promise<string> {
   // Generate 6-digit code
   const code = generateOtpCode();
   
@@ -73,14 +73,15 @@ export async function createAndSendOtp(phone: string): Promise<string> {
 
   // Store OTP code
   await storage.createOtpCode({
-    phone,
+    email,
     code,
     expiresAt,
     used: false,
   });
 
-  // Send SMS
-  await sendOtpSms(phone, code);
+  // Send Email
+  const { sendOtpEmail } = await import("./email");
+  await sendOtpEmail(email, code);
 
   return code;
 }
@@ -88,8 +89,8 @@ export async function createAndSendOtp(phone: string): Promise<string> {
 /**
  * Verify OTP code
  */
-export async function verifyOtpCode(phone: string, code: string): Promise<boolean> {
-  const otpRecord = await storage.getOtpCode(phone, code);
+export async function verifyOtpCode(email: string, code: string): Promise<boolean> {
+  const otpRecord = await storage.getOtpCode(email, code);
   
   if (!otpRecord) {
     return false;

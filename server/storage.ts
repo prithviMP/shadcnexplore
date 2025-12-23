@@ -78,7 +78,7 @@ export interface IStorage {
 
   // OTP operations
   createOtpCode(otp: InsertOtpCode): Promise<OtpCode>;
-  getOtpCode(phone: string, code: string): Promise<OtpCode | undefined>;
+  getOtpCode(email: string, code: string): Promise<OtpCode | undefined>;
   markOtpCodeAsUsed(id: string): Promise<void>;
   deleteExpiredOtpCodes(): Promise<void>;
 
@@ -644,10 +644,18 @@ export class DbStorage implements IStorage {
   }> {
     const { companies: companiesTable } = await import("@shared/schema");
     
-    // Get total signals count
+    // Get total signals count - only count latest signal per company (one signal per company)
+    // Use subquery to find latest signal per company based on updatedAt
     const totalSignalsResult = await db
-      .select({ count: sql<number>`count(*)` })
-      .from(signals);
+      .select({ count: sql<number>`count(distinct ${signals.companyId})` })
+      .from(signals)
+      .where(
+        sql`${signals.updatedAt} = (
+          SELECT MAX(updated_at) 
+          FROM ${signals} s2 
+          WHERE s2.company_id = ${signals.companyId}
+        )`
+      );
     const totalSignals = Number(totalSignalsResult[0]?.count || 0);
 
     // Get stale signals count
@@ -661,19 +669,33 @@ export class DbStorage implements IStorage {
       ? new Date(lastCalcResult[0].maxUpdatedAt) 
       : null;
 
-    // Get signals by type
-    const signalsByTypeResult = await db
+    // Get signals by type - only count latest signal per company
+    // First get all latest signals, then group by signal type in application code
+    const allLatestSignals = await db
       .select({
+        companyId: signals.companyId,
         signal: signals.signal,
-        count: sql<number>`count(*)`,
+        updatedAt: signals.updatedAt,
       })
       .from(signals)
-      .groupBy(signals.signal);
+      .where(
+        sql`${signals.updatedAt} = (
+          SELECT MAX(updated_at) 
+          FROM ${signals} s2 
+          WHERE s2.company_id = ${signals.companyId}
+        )`
+      );
     
-    const signalsByType = signalsByTypeResult.map(row => ({
-      signal: row.signal,
-      count: Number(row.count),
-    }));
+    // Group by signal type in JavaScript
+    const signalsByTypeMap = new Map<string, number>();
+    allLatestSignals.forEach(s => {
+      const currentCount = signalsByTypeMap.get(s.signal) || 0;
+      signalsByTypeMap.set(s.signal, currentCount + 1);
+    });
+    
+    const signalsByType = Array.from(signalsByTypeMap.entries())
+      .map(([signal, count]) => ({ signal, count }))
+      .sort((a, b) => b.count - a.count || b.signal.localeCompare(a.signal));
 
     return {
       totalSignals,
@@ -685,20 +707,30 @@ export class DbStorage implements IStorage {
 
   async getSignalDistribution(): Promise<{ signal: string; count: number }[]> {
     // Group signals by their exact value, ignoring blank strings
-    const results = await db
+    // Only count latest signal per company (one signal per company)
+    const allLatestSignals = await db
       .select({
         signal: signals.signal,
-        count: sql<number>`count(*)`,
       })
       .from(signals)
-      .where(sql`trim(${signals.signal}) <> ''`)
-      .groupBy(signals.signal)
-      .orderBy(desc(sql<number>`count(*)`), desc(signals.signal));
-
-    return results.map((row) => ({
-      signal: row.signal,
-      count: Number(row.count),
-    }));
+      .where(
+        sql`trim(${signals.signal}) <> '' AND ${signals.updatedAt} = (
+          SELECT MAX(updated_at) 
+          FROM ${signals} s2 
+          WHERE s2.company_id = ${signals.companyId}
+        )`
+      );
+    
+    // Group by signal type in JavaScript
+    const distributionMap = new Map<string, number>();
+    allLatestSignals.forEach(s => {
+      const currentCount = distributionMap.get(s.signal) || 0;
+      distributionMap.set(s.signal, currentCount + 1);
+    });
+    
+    return Array.from(distributionMap.entries())
+      .map(([signal, count]) => ({ signal, count }))
+      .sort((a, b) => b.count - a.count || b.signal.localeCompare(a.signal));
   }
 
   // OTP operations
@@ -707,11 +739,11 @@ export class DbStorage implements IStorage {
     return result[0];
   }
 
-  async getOtpCode(phone: string, code: string): Promise<OtpCode | undefined> {
+  async getOtpCode(email: string, code: string): Promise<OtpCode | undefined> {
     const result = await db
       .select()
       .from(otpCodes)
-      .where(and(eq(otpCodes.phone, phone), eq(otpCodes.code, code), eq(otpCodes.used, false)))
+      .where(and(eq(otpCodes.email, email), eq(otpCodes.code, code), eq(otpCodes.used, false)))
       .limit(1);
     return result[0];
   }

@@ -15,12 +15,11 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Switch } from "@/components/ui/switch";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useToast } from "@/hooks/use-toast";
-import { Plus, Pencil, Trash2, TestTube, Loader2, Play, Search, Calculator, BarChart3, RotateCcw } from "lucide-react";
+import { Plus, Pencil, Trash2, Loader2, Play, RotateCcw } from "lucide-react";
 import SignalBadge from "@/components/SignalBadge";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { insertFormulaSchema, type Formula, type Company, type Sector } from "@shared/schema";
 import { z } from "zod";
-import { sortQuarters, formatQuarterWithLabel } from "@/utils/quarterUtils";
 
 const formulaFormSchema = insertFormulaSchema.extend({
   scopeValue: z.string().optional().nullable(),
@@ -68,12 +67,8 @@ const formatValue = (value: number | string | null, metric: string): string => {
 export default function FormulaManager() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingFormula, setEditingFormula] = useState<Formula | null>(null);
-  const [testingFormula, setTestingFormula] = useState<{ formula: Formula; ticker: string } | null>(null);
   const [replacingFormula, setReplacingFormula] = useState<Formula | null>(null);
   const [selectedReplacementFormulaId, setSelectedReplacementFormulaId] = useState<string>("");
-  const [selectedCompanyId, setSelectedCompanyId] = useState<string>("");
-  const [previewResult, setPreviewResult] = useState<any>(null);
-  const [showQuarterlyData, setShowQuarterlyData] = useState(false);
   const [resetToGlobalDialogOpen, setResetToGlobalDialogOpen] = useState(false);
   const [selectedGlobalFormulaId, setSelectedGlobalFormulaId] = useState<string>("");
   const { toast } = useToast();
@@ -126,66 +121,6 @@ export default function FormulaManager() {
     return scope;
   };
 
-  // Get the selected company's ticker
-  const selectedCompany = useMemo(() => {
-    return companies.find(c => c.id === selectedCompanyId);
-  }, [companies, selectedCompanyId]);
-
-  const testTicker = selectedCompany?.ticker || "";
-
-  // Fetch quarterly data for selected company
-  const { data: quarterlyData, isLoading: quarterlyLoading } = useQuery<{
-    ticker: string;
-    quarters: Array<{
-      quarter: string;
-      metrics: Record<string, number | string>;
-    }>;
-  }>({
-    queryKey: ["/api/v1/companies", testTicker, "data"],
-    queryFn: async () => {
-      if (!testTicker) return { ticker: "", quarters: [] };
-      const res = await apiRequest("GET", `/api/v1/companies/${testTicker}/data`);
-      return res.json();
-    },
-    enabled: !!testTicker && dialogOpen,
-  });
-
-  // Sort quarterly data (most recent last)
-  const sortedQuarterlyData = useMemo(() => {
-    if (!quarterlyData?.quarters) return null;
-    const sortedQuarters = sortQuarters(quarterlyData.quarters.map(q => q.quarter));
-    const quartersMap = new Map(quarterlyData.quarters.map(q => [q.quarter, q]));
-    return {
-      ...quarterlyData,
-      quarters: sortedQuarters.map(q => quartersMap.get(q)!).filter(Boolean),
-    };
-  }, [quarterlyData]);
-
-  // Get available metrics
-  const availableMetrics = useMemo(() => {
-    if (!sortedQuarterlyData?.quarters?.length) return [];
-    return Object.keys(sortedQuarterlyData.quarters[0].metrics);
-  }, [sortedQuarterlyData]);
-
-  // Default 6 metrics to display
-  const displayMetrics = useMemo(() => {
-    const defaultMetricNames = [
-      'Sales',
-      'Sales Growth(YoY) %',
-      'Sales Growth(QoQ) %',
-      'EPS in Rs',
-      'EPS Growth(YoY) %',
-      'EPS Growth(QoQ) %',
-    ];
-    const matched = defaultMetricNames.filter(m => availableMetrics.includes(m));
-    return matched.length > 0 ? matched : availableMetrics.slice(0, 6);
-  }, [availableMetrics]);
-
-  // Get last 12 quarters
-  const displayQuarters = useMemo(() => {
-    if (!sortedQuarterlyData?.quarters) return [];
-    return sortedQuarterlyData.quarters.slice(-12);
-  }, [sortedQuarterlyData]);
 
   const form = useForm<FormulaFormData>({
     resolver: zodResolver(formulaFormSchema),
@@ -299,16 +234,41 @@ export default function FormulaManager() {
   });
 
   const calculateSignals = useMutation({
-    mutationFn: async () => {
-      const res = await apiRequest("POST", "/api/signals/calculate", {});
+    mutationFn: async (incremental?: boolean) => {
+      // First, ensure we have the latest formulas from the server
+      await queryClient.invalidateQueries({ queryKey: ["/api/formulas"] });
+      await queryClient.refetchQueries({ queryKey: ["/api/formulas"] });
+      
+      // Then calculate signals using all enabled formulas - use same logic as Dashboard refresh
+      const res = await apiRequest("POST", "/api/signals/calculate", {
+        incremental: incremental ?? false,
+        async: true,
+        batchSize: 50,
+      });
       return res.json();
     },
-    onSuccess: (data: { signalsGenerated: number }) => {
-      queryClient.invalidateQueries({ queryKey: ["/api/signals"] });
-      toast({
-        title: "Signals calculated successfully",
-        description: `Generated ${data.signalsGenerated} signal${data.signalsGenerated !== 1 ? 's' : ''}`
-      });
+    onSuccess: (data: { jobId?: string; signalsGenerated?: number }) => {
+      // Use same logic as Dashboard refresh - show job queued message
+      if (data.jobId) {
+        toast({
+          title: "Signal calculation started",
+          description: `Job ${data.jobId} has been queued. Signals will be updated in the background.`,
+        });
+        // Refetch signal status after a short delay
+        setTimeout(() => {
+          queryClient.invalidateQueries({ queryKey: ["/api/v1/signals/status"] });
+        }, 2000);
+      } else {
+        // Fallback for synchronous response (shouldn't happen with async: true)
+        toast({
+          title: "Signals calculated successfully",
+          description: `Generated ${data.signalsGenerated || 0} signal${(data.signalsGenerated || 0) !== 1 ? 's' : ''} using all enabled formulas`
+        });
+        // Invalidate all signal-related queries to refresh the UI
+        queryClient.invalidateQueries({ queryKey: ["/api/signals"] });
+        queryClient.invalidateQueries({ queryKey: ["/api/v1/companies"] });
+        queryClient.invalidateQueries({ queryKey: ["/api/companies"] });
+      }
     },
     onError: (error: any) => {
       toast({
@@ -345,50 +305,6 @@ export default function FormulaManager() {
     },
   });
 
-  const testExcelFormula = useMutation({
-    mutationFn: async ({ ticker, formula }: { ticker: string; formula: string }) => {
-      const res = await apiRequest("POST", "/api/v1/formulas/test-excel", { ticker, formula });
-      return res.json();
-    },
-    onSuccess: (data) => {
-      toast({
-        title: "Formula Test Result",
-        description: `Result: ${data.result} (${data.resultType})`,
-      });
-    },
-    onError: (error: any) => {
-      toast({
-        title: "Test Failed",
-        description: error.message,
-        variant: "destructive",
-      });
-    },
-  });
-
-  const evaluatePreview = useMutation({
-    mutationFn: async ({ ticker, formula }: { ticker: string; formula: string }) => {
-      const res = await apiRequest("POST", "/api/v1/formulas/test-excel", { ticker, formula });
-      return res.json();
-    },
-    onSuccess: (data) => {
-      setPreviewResult(data);
-    },
-    onError: () => {
-      setPreviewResult(null);
-    },
-  });
-
-  const watchedCondition = form.watch("condition");
-
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      if (testTicker && watchedCondition && dialogOpen) {
-        evaluatePreview.mutate({ ticker: testTicker, formula: watchedCondition });
-      }
-    }, 800); // Debounce 800ms
-
-    return () => clearTimeout(timer);
-  }, [testTicker, watchedCondition, dialogOpen]);
 
   const handleToggle = (formula: Formula) => {
     updateFormula.mutate({
@@ -442,8 +358,8 @@ export default function FormulaManager() {
     } else if (formula.scope === "sector" && formula.scopeValue) {
       window.location.href = `/formula-builder?type=sector&id=${formula.scopeValue}&formulaId=${formula.id}`;
     } else {
-      // For global formulas, just navigate to formula builder
-      window.location.href = `/formula-builder?formulaId=${formula.id}`;
+      // For global formulas, include type=global in the URL
+      window.location.href = `/formula-builder?type=global&formulaId=${formula.id}`;
     }
   };
 
@@ -489,7 +405,7 @@ export default function FormulaManager() {
             <span className="hidden sm:inline">Reset All to Global</span>
           </Button>
           <Button
-            onClick={() => calculateSignals.mutate()}
+            onClick={() => calculateSignals.mutate(false)}
             disabled={calculateSignals.isPending}
             variant="outline"
             size="sm"
@@ -540,7 +456,6 @@ export default function FormulaManager() {
                     <TableHead className="font-semibold">Scope</TableHead>
                     <TableHead className="font-semibold">Condition</TableHead>
                     <TableHead className="font-semibold">Signal</TableHead>
-                    <TableHead className="text-center font-semibold">Priority</TableHead>
                     <TableHead className="text-center font-semibold">Enabled</TableHead>
                     <TableHead className="text-right font-semibold">Actions</TableHead>
                   </TableRow>
@@ -558,7 +473,6 @@ export default function FormulaManager() {
                       <TableCell>
                         <SignalBadge signal={formula.signal as "BUY" | "SELL" | "HOLD"} showIcon={false} />
                       </TableCell>
-                      <TableCell className="text-center font-mono font-semibold">{formula.priority}</TableCell>
                       <TableCell className="text-center">
                         <Switch
                           checked={formula.enabled}
@@ -569,74 +483,6 @@ export default function FormulaManager() {
                       </TableCell>
                       <TableCell className="text-right">
                         <div className="flex justify-end gap-2">
-                          <Dialog>
-                            <DialogTrigger asChild>
-                              <Button
-                                size="icon"
-                                variant="ghost"
-                                className="h-8 w-8"
-                                data-testid={`button-test-${formula.id}`}
-                                onClick={() => setTestingFormula({ formula, ticker: "" })}
-                              >
-                                <TestTube className="h-4 w-4" />
-                              </Button>
-                            </DialogTrigger>
-                            <DialogContent>
-                              <DialogHeader>
-                                <DialogTitle>Test Excel Formula</DialogTitle>
-                                <DialogDescription>
-                                  Enter a ticker to test this formula
-                                </DialogDescription>
-                              </DialogHeader>
-                              <div className="space-y-4 py-4">
-                                <div>
-                                  <label className="text-sm font-medium mb-2 block">Ticker</label>
-                                  <Input
-                                    value={testingFormula?.ticker || ""}
-                                    onChange={(e) => setTestingFormula(prev => prev ? { ...prev, ticker: e.target.value } : null)}
-                                    placeholder="e.g., RELIANCE"
-                                  />
-                                </div>
-                                <div>
-                                  <label className="text-sm font-medium mb-2 block">Formula</label>
-                                  <Textarea
-                                    value={formula.condition}
-                                    readOnly
-                                    className="font-mono text-xs min-h-32"
-                                  />
-                                </div>
-                                <Button
-                                  onClick={() => {
-                                    if (testingFormula?.ticker) {
-                                      testExcelFormula.mutate({
-                                        ticker: testingFormula.ticker,
-                                        formula: formula.condition,
-                                      });
-                                    }
-                                  }}
-                                  disabled={!testingFormula?.ticker || testExcelFormula.isPending}
-                                >
-                                  {testExcelFormula.isPending ? (
-                                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                                  ) : (
-                                    <Search className="h-4 w-4 mr-2" />
-                                  )}
-                                  Test Formula
-                                </Button>
-                                {testExcelFormula.data && (
-                                  <div className="p-4 bg-slate-50 dark:bg-slate-800 rounded">
-                                    <div className="text-sm font-medium mb-2">Result:</div>
-                                    <div className="font-mono text-sm">
-                                      {JSON.stringify(testExcelFormula.data.result, null, 2)}
-                                    </div>
-                                    <div className="text-xs text-muted-foreground mt-2">
-                                      Type: {testExcelFormula.data.resultType}
-                                    </div>
-                                  </div>
-                                )}
-                              </div>
-                            </DialogContent>
-                          </Dialog>
                           <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => handleEdit(formula)} data-testid={`button-edit-${formula.id}`}>
                             <Pencil className="h-4 w-4" />
                           </Button>

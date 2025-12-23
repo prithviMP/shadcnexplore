@@ -247,16 +247,35 @@ export default function CompanyDetail() {
     }
   }, [sortedQuarterlyData, selectedQuartersForFormula.size]);
 
+  // Helper function to check if a company is in a banking sector
+  const isBankingCompany = useMemo(() => {
+    if (!company?.sectorId || !sectors) return false;
+    const sector = sectors.find(s => s.id === company.sectorId);
+    if (!sector) return false;
+    const sectorName = sector.name.toLowerCase();
+    return sectorName.includes('bank') || sectorName.includes('banking') || sectorName.includes('financial');
+  }, [company?.sectorId, sectors]);
+
   // Filter metrics based on settings - match SectorsList behavior exactly
   const filteredMetrics = useMemo(() => {
     if (availableMetrics.length === 0) return [];
 
     // Get default metric names from settings or use fallback
     let defaultMetricNames: string[] = [];
-    if (defaultMetricsData?.visibleMetrics && defaultMetricsData.visibleMetrics.length > 0) {
+    
+    // For banking companies, use banking-specific metrics
+    if (isBankingCompany) {
+      defaultMetricNames = [
+        'Financing Profit',
+        'Financing Margin %',
+        'EPS in Rs',
+        'EPS Growth(YoY) %',
+        'EPS Growth(QoQ) %',
+      ];
+    } else if (defaultMetricsData?.visibleMetrics && defaultMetricsData.visibleMetrics.length > 0) {
       defaultMetricNames = defaultMetricsData.visibleMetrics;
     } else {
-      // Fallback to hardcoded defaults if API fails
+      // Fallback to hardcoded defaults if API fails (for non-banking companies)
       defaultMetricNames = [
         'Sales',
         'Sales Growth(YoY) %',
@@ -279,7 +298,7 @@ export default function CompanyDetail() {
     } else {
       return availableMetrics.slice(0, 6);
     }
-  }, [availableMetrics, defaultMetricsData]);
+  }, [availableMetrics, defaultMetricsData, isBankingCompany]);
 
   const filteredQuarters = useMemo(() => {
     if (!sortedQuarterlyData) return [];

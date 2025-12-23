@@ -195,40 +195,23 @@ export class FormulaEvaluator {
       }
     }
 
-    // Priority 3: Fall back to existing scope-based formula selection
+    // Priority 3: Fall back to global formulas (use the one with lowest priority number, i.e., highest priority)
     if (applicableFormulas.length === 0) {
-      console.log(`[SIGNAL] Falling back to scope-based formula selection`);
+      console.log(`[SIGNAL] No company/sector assignment found, using global formulas`);
       const enabledFormulas = formulas.filter(f => f.enabled);
-      console.log(`[SIGNAL] Enabled formulas: ${enabledFormulas.map(f => `${f.name} (${f.scope}${f.scopeValue ? `:${f.scopeValue}` : ''})`).join(', ')}`);
+      console.log(`[SIGNAL] Enabled formulas: ${enabledFormulas.map(f => `${f.name} (${f.scope}${f.scopeValue ? `:${f.scopeValue}` : ''}, priority:${f.priority})`).join(', ')}`);
       
-      applicableFormulas = enabledFormulas
-        .filter(f => {
-          if (f.scope === "global") return true;
-          // For sector/company scopes, scopeValue must be populated
-          if (f.scope === "sector" && f.scopeValue) return f.scopeValue === company.sectorId;
-          if (f.scope === "company" && f.scopeValue) return f.scopeValue === company.id;
-          return false;
-        })
-        .sort((a, b) => {
-          // First sort by scope specificity: company > sector > global
-          const scopeScore = (scope: string) => {
-            if (scope === "company") return 3;
-            if (scope === "sector") return 2;
-            return 1;
-          };
-
-          const scoreA = scopeScore(a.scope);
-          const scoreB = scopeScore(b.scope);
-
-          if (scoreA !== scoreB) {
-            return scoreB - scoreA; // Higher score first
-          }
-
-          // Then sort by priority (lower number = higher priority)
-          return a.priority - b.priority;
-        });
+      // Get global formulas only, sorted by priority (lower number = higher priority)
+      const globalFormulas = enabledFormulas
+        .filter(f => f.scope === "global")
+        .sort((a, b) => a.priority - b.priority); // Lower priority number = higher priority
       
-      console.log(`[SIGNAL] Found ${applicableFormulas.length} applicable formulas after scope filtering: ${applicableFormulas.map(f => f.name).join(', ')}`);
+      if (globalFormulas.length > 0) {
+        applicableFormulas = [globalFormulas[0]]; // Use the highest priority global formula (lowest priority number)
+        console.log(`[SIGNAL] Selected global formula: "${applicableFormulas[0].name}" (priority: ${applicableFormulas[0].priority})`);
+      } else {
+        console.log(`[SIGNAL] No enabled global formulas found`);
+      }
     }
 
     if (applicableFormulas.length === 0) {
@@ -236,6 +219,7 @@ export class FormulaEvaluator {
       return null;
     }
 
+    // Evaluate the formula (there should only be one now, but we loop for consistency with the original logic)
     for (const formula of applicableFormulas) {
       console.log(`[SIGNAL] Evaluating formula: ${formula.name} (${formula.id})`);
       console.log(`[SIGNAL] Formula type: ${formula.formulaType}, Condition: ${formula.condition.substring(0, 100)}${formula.condition.length > 100 ? '...' : ''}`);
@@ -246,7 +230,7 @@ export class FormulaEvaluator {
 
       if (formula.formulaType === 'excel' || /[QP]\d+/.test(formula.condition)) {
         console.log(`[SIGNAL] Using Excel formula evaluator for ticker: ${company.ticker}`);
-        // Get quarterly data to determine the last 2 quarters (Q12 and Q11)
+        // Get quarterly data
         const quarterlyData = await storage.getQuarterlyDataByTicker(company.ticker);
         const uniqueQuarters = Array.from(new Set(quarterlyData.map(d => d.quarter)));
         const sortedQuarters = uniqueQuarters.sort((a, b) => {
@@ -257,11 +241,19 @@ export class FormulaEvaluator {
           }
           return b.localeCompare(a);
         });
-        // Only use the last 2 quarters (newest 2)
-        const lastTwoQuarters = sortedQuarters.slice(0, 2);
-        console.log(`[SIGNAL] Using only last 2 quarters: ${lastTwoQuarters.join(', ')} (out of ${sortedQuarters.length} available)`);
         
-        const evalResult = await evaluateExcelFormulaForCompany(company.ticker, formula.condition, lastTwoQuarters);
+        // Use the same logic as the spreadsheet: always use last 12 quarters (or all if less than 12)
+        // Q12 refers to the 12th quarter position (the newest/latest quarter when you have 12+ quarters)
+        // This ensures Q12 always maps to the latest quarter data, matching spreadsheet behavior
+        // Quarters are sorted newest first, so slice(0, 12) gives the newest 12 quarters
+        const quartersToUse = sortedQuarters.length > 12 
+          ? sortedQuarters.slice(0, 12)  // Use newest 12 quarters (so Q12 = index 0 = newest)
+          : sortedQuarters;               // Use all available quarters if less than 12
+        console.log(`[SIGNAL] Using ${quartersToUse.length} quarters (newest first, matching spreadsheet logic)`);
+        console.log(`[SIGNAL] Quarters: ${quartersToUse.slice(0, 3).join(', ')}${quartersToUse.length > 3 ? '...' : ''} (out of ${sortedQuarters.length} total available)`);
+        console.log(`[SIGNAL] Note: Q12 maps to newest quarter (index 0), Q1 maps to oldest of these ${quartersToUse.length} quarters`);
+        
+        const evalResult = await evaluateExcelFormulaForCompany(company.ticker, formula.condition, quartersToUse);
         console.log(`[SIGNAL] Excel formula result: ${JSON.stringify(evalResult.result)} (type: ${evalResult.resultType})`);
         console.log(`[SIGNAL] Used quarters: ${evalResult.usedQuarters.join(', ')}`);
         usedQuarters = evalResult.usedQuarters;
@@ -381,25 +373,35 @@ export class FormulaEvaluator {
     let signalsGenerated = 0;
     let companiesProcessed = 0;
     let companiesWithErrors = 0;
+    let companiesWithNoFormula = 0;
+    let companiesWithNoSignalResult = 0;
+
+    // Log first company's detailed evaluation for debugging (only for first company to avoid spam)
+    let firstCompanyLogged = false;
 
     for (const company of companiesToProcess) {
       companiesProcessed++;
-      console.log(`[SIGNAL-CALC] Processing company ${companiesProcessed}/${companiesToProcess.length}: ${company.ticker} (${company.id})`);
+      const isFirstCompany = !firstCompanyLogged;
+      if (isFirstCompany) {
+        console.log(`[SIGNAL-CALC] Processing company ${companiesProcessed}/${companiesToProcess.length}: ${company.ticker} (${company.id}) - DETAILED LOGS FOR FIRST COMPANY`);
+        firstCompanyLogged = true;
+      } else if (companiesProcessed % 50 === 0) {
+        console.log(`[SIGNAL-CALC] Processing company ${companiesProcessed}/${companiesToProcess.length}: ${company.ticker} (${company.id})`);
+      }
       try {
         // Evaluate formula first (outside transaction to preserve signals on error)
         const result = await this.generateSignalForCompany(company, allFormulas);
 
         // Only reconcile if evaluation succeeded
         await db.transaction(async (tx: any) => {
-          // Delete existing signals for formulas that matched (to avoid duplicates)
+          // Always delete ALL existing signals for this company first (one signal per company)
+          // This ensures we don't accumulate signals from old formulas
+          await tx.delete(signals).where(eq(signals.companyId, company.id));
+          
           if (result) {
-            console.log(`[SIGNAL-CALC] Storing signal "${result.signal}" for company ${company.ticker} using formula ${result.formulaName}`);
-            await tx.delete(signals).where(
-              and(
-                eq(signals.companyId, company.id),
-                eq(signals.formulaId, result.formulaId)
-              )
-            );
+            if (isFirstCompany) {
+              console.log(`[SIGNAL-CALC] ✓ First company generated signal "${result.signal}" using formula ${result.formulaName}`);
+            }
 
           // Insert new signal only if a formula matched
             await tx.insert(signals).values({
@@ -415,11 +417,15 @@ export class FormulaEvaluator {
               updatedAt: new Date()
             });
             signalsGenerated++;
-            console.log(`[SIGNAL-CALC] ✓ Signal stored successfully. Total signals generated: ${signalsGenerated}`);
+            if (signalsGenerated <= 5) {
+              console.log(`[SIGNAL-CALC] ✓ Signal stored for ${company.ticker}: "${result.signal}" using formula "${result.formulaName}"`);
+            }
           } else {
-            console.log(`[SIGNAL-CALC] No signal result for company ${company.ticker}, skipping storage`);
-            // If no signal, delete all signals for this company (optional - comment out if you want to keep old signals)
-            // await tx.delete(signals).where(eq(signals.companyId, company.id));
+            companiesWithNoSignalResult++;
+            if (isFirstCompany) {
+              console.log(`[SIGNAL-CALC] ⚠ First company ${company.ticker} had no signal result - check formula evaluation logs above`);
+            }
+            // Signal already deleted above, so company will have no signals (which is correct for "No Signal")
           }
         });
       } catch (error) {
@@ -428,16 +434,31 @@ export class FormulaEvaluator {
         console.error(`[SIGNAL-CALC] ✗ Failed to evaluate signals for company ${company.ticker} (${company.id}):`, error);
         if (error instanceof Error) {
           console.error(`[SIGNAL-CALC] Error message: ${error.message}`);
-          console.error(`[SIGNAL-CALC] Error stack: ${error.stack}`);
+          if (isFirstCompany) {
+            console.error(`[SIGNAL-CALC] Error stack: ${error.stack}`);
+          }
         }
         // Continue processing other companies
       }
     }
 
-    console.log(`[SIGNAL-CALC] Signal calculation completed:`);
-    console.log(`[SIGNAL-CALC]   - Companies processed: ${companiesProcessed}`);
-    console.log(`[SIGNAL-CALC]   - Signals generated: ${signalsGenerated}`);
-    console.log(`[SIGNAL-CALC]   - Companies with errors: ${companiesWithErrors}`);
+    console.log(`\n[SIGNAL-CALC] ========== Signal calculation summary ==========`);
+    console.log(`[SIGNAL-CALC] Enabled formulas found: ${allFormulas.length} (${allFormulas.map(f => f.name).join(', ')})`);
+    console.log(`[SIGNAL-CALC] Companies processed: ${companiesProcessed}`);
+    console.log(`[SIGNAL-CALC] Signals generated: ${signalsGenerated}`);
+    console.log(`[SIGNAL-CALC] Companies with no signal result: ${companiesWithNoSignalResult}`);
+    console.log(`[SIGNAL-CALC] Companies with errors: ${companiesWithErrors}`);
+    
+    if (allFormulas.length === 0) {
+      console.log(`[SIGNAL-CALC] ⚠ WARNING: No enabled formulas found! Please enable at least one formula.`);
+    } else if (signalsGenerated === 0 && companiesWithNoSignalResult === companiesProcessed) {
+      console.log(`[SIGNAL-CALC] ⚠ WARNING: All companies processed but no signals generated. Check:`);
+      console.log(`[SIGNAL-CALC]   1. Do formulas have the correct scope (global, sector, or company)?`);
+      console.log(`[SIGNAL-CALC]   2. Do companies have assigned formulas or sectors?`);
+      console.log(`[SIGNAL-CALC]   3. Are formulas evaluating correctly? Check first company logs above.`);
+    }
+    console.log(`[SIGNAL-CALC] ==================================================\n`);
+    
     return signalsGenerated;
   }
 

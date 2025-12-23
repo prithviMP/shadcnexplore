@@ -8,9 +8,19 @@
  */
 
 import { Pool } from 'pg';
-import dotenv from 'dotenv';
+import "dotenv/config";
 
-dotenv.config();
+// Validate DATABASE_URL before proceeding
+if (!process.env.DATABASE_URL) {
+  console.error('❌ Error: DATABASE_URL environment variable is not set');
+  console.error('   Please set DATABASE_URL in your .env file or environment variables');
+  process.exit(1);
+}
+
+if (typeof process.env.DATABASE_URL !== 'string') {
+  console.error('❌ Error: DATABASE_URL must be a string');
+  process.exit(1);
+}
 
 async function migrate() {
   const pool = new Pool({

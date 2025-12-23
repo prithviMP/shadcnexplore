@@ -12,7 +12,7 @@ import { TrendingUp, AlertCircle, Loader2 } from "lucide-react";
 export default function LoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [mobile, setMobile] = useState("");
+  const [otpEmail, setOtpEmail] = useState("");
   const [otp, setOtp] = useState("");
   const [otpSent, setOtpSent] = useState(false);
   const [error, setError] = useState("");
@@ -51,11 +51,11 @@ export default function LoginPage() {
     setLoading(true);
 
     try {
-      await requestOTP(mobile);
-    setOtpSent(true);
+      await requestOTP(otpEmail);
+      setOtpSent(true);
       toast({
         title: "OTP sent",
-        description: "Please check your phone for the verification code.",
+        description: "Please check your email for the verification code.",
       });
     } catch (err: any) {
       setError(err.message || "Failed to send OTP. Please try again.");
@@ -75,7 +75,7 @@ export default function LoginPage() {
     setLoading(true);
 
     try {
-      await loginWithOTP(mobile, otp);
+      await loginWithOTP(otpEmail, otp);
       toast({
         title: "Welcome!",
         description: "You have been successfully logged in.",
@@ -123,7 +123,7 @@ export default function LoginPage() {
             <Tabs defaultValue="email" className="w-full">
               <TabsList className="grid w-full grid-cols-2 mb-6">
                 <TabsTrigger value="email" data-testid="tab-email-login">Email</TabsTrigger>
-                <TabsTrigger value="otp" data-testid="tab-otp-login">Mobile OTP</TabsTrigger>
+                <TabsTrigger value="otp" data-testid="tab-otp-login">Email OTP</TabsTrigger>
               </TabsList>
               <TabsContent value="email" className="space-y-4">
                 {!isSignup ? (
@@ -278,18 +278,19 @@ export default function LoginPage() {
                 {!otpSent ? (
                   <form onSubmit={handleRequestOtp} className="space-y-4">
                     <div className="space-y-2">
-                      <Label htmlFor="mobile" className="text-sm font-medium">Mobile Number</Label>
+                      <Label htmlFor="otp-email" className="text-sm font-medium">Email Address</Label>
                       <Input
-                        id="mobile"
-                        type="tel"
-                        placeholder="+1 (555) 123-4567"
-                        value={mobile}
-                        onChange={(e) => setMobile(e.target.value)}
+                        id="otp-email"
+                        type="email"
+                        placeholder="you@company.com"
+                        value={otpEmail}
+                        onChange={(e) => setOtpEmail(e.target.value)}
                         className="h-11"
-                        data-testid="input-mobile"
+                        data-testid="input-otp-email"
+                        required
                       />
                       <p className="text-xs text-muted-foreground">
-                        We'll send a 6-digit verification code
+                        We'll send a 6-digit verification code to your email
                       </p>
                     </div>
                     <Button 
@@ -323,7 +324,7 @@ export default function LoginPage() {
                         data-testid="input-otp"
                       />
                       <p className="text-xs text-muted-foreground text-center">
-                        Code sent to {mobile}
+                        Code sent to {otpEmail}
                       </p>
                     </div>
                     <Button 

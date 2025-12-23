@@ -172,22 +172,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Mobile OTP login endpoints
+  // Email OTP login endpoints
   app.post("/api/auth/login/otp/request", async (req, res) => {
     try {
-      const { phone } = req.body;
+      const { email } = req.body;
 
-      if (!phone) {
-        return res.status(400).json({ error: "Phone number is required" });
+      if (!email) {
+        return res.status(400).json({ error: "Email address is required" });
       }
 
-      // Check if user exists with this phone number
-      // Note: You may need to add phone field to users table or use a separate mapping
-      // For now, we'll allow OTP to be sent to any phone number
-      // In production, you should verify the phone belongs to a registered user
+      // Verify the email belongs to a registered user
+      const user = await storage.getUserByEmail(email);
+      if (!user) {
+        return res.status(404).json({ error: "User not found. Please register first." });
+      }
 
-      await createAndSendOtp(phone);
-      res.json({ success: true, message: "OTP sent successfully" });
+      // Check if user is enabled
+      if (user.enabled === false) {
+        return res.status(403).json({ error: "Account is disabled. Please contact an administrator." });
+      }
+
+      await createAndSendOtp(email);
+      res.json({ success: true, message: "OTP sent successfully to your email" });
     } catch (error: any) {
       res.status(400).json({ error: error.message });
     }
@@ -195,20 +201,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post("/api/auth/login/otp/verify", async (req, res) => {
     try {
-      const { phone, otp } = req.body;
+      const { email, otp } = req.body;
 
-      if (!phone || !otp) {
-        return res.status(400).json({ error: "Phone and OTP are required" });
+      if (!email || !otp) {
+        return res.status(400).json({ error: "Email and OTP are required" });
       }
 
-      const isValid = await verifyOtpCode(phone, otp);
+      const isValid = await verifyOtpCode(email, otp);
 
       if (!isValid) {
         return res.status(401).json({ error: "Invalid or expired OTP" });
       }
 
-      // Find user by phone number
-      const user = await storage.getUserByPhone(phone);
+      // Find user by email
+      const user = await storage.getUserByEmail(email);
 
       if (!user) {
         return res.status(404).json({ error: "User not found. Please register first." });
@@ -1204,8 +1210,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
             signal: result.signal,
             value: result.value,
             metadata: { 
+              condition: result.condition, // Store the formula condition string
               usedQuarters: result.usedQuarters,
               formulaName: result.formulaName,
+              companyAssignment: true,
               assignedAt: new Date().toISOString()
             }
           });

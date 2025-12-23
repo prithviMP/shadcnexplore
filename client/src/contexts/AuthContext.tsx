@@ -7,8 +7,8 @@ interface AuthContextType {
   user: User | null;
   loading: boolean;
   login: (email: string, password: string) => Promise<void>;
-  loginWithOTP: (phone: string, otp: string) => Promise<void>;
-  requestOTP: (phone: string) => Promise<void>;
+  loginWithOTP: (email: string, otp: string) => Promise<void>;
+  requestOTP: (email: string) => Promise<void>;
   logout: () => Promise<void>;
   refreshUser: () => Promise<void>;
 }
@@ -95,18 +95,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }
 
-  async function requestOTP(phone: string) {
+  async function requestOTP(email: string) {
     try {
-      await apiRequest("POST", "/api/auth/login/otp/request", { phone });
+      await apiRequest("POST", "/api/auth/login/otp/request", { email });
     } catch (error: any) {
       throw new Error(error.message || "Failed to send OTP");
     }
   }
 
-  async function loginWithOTP(phone: string, otp: string) {
+  async function loginWithOTP(email: string, otp: string) {
     try {
       const response = await apiRequest("POST", "/api/auth/login/otp/verify", {
-        phone,
+        email,
         otp,
       });
 

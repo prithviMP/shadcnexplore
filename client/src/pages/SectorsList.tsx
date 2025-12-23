@@ -521,17 +521,35 @@ export default function SectorsList() {
     }
   }, [activeSectorFormula, displaySectorId]);
 
+  // Check if current sector is a banking sector
+  const isBankingSector = useMemo(() => {
+    if (!displaySectorId || !sectors) return false;
+    const sector = sectors.find(s => s.id === displaySectorId);
+    if (!sector) return false;
+    const sectorName = sector.name.toLowerCase();
+    return sectorName.includes('bank') || sectorName.includes('banking') || sectorName.includes('financial');
+  }, [displaySectorId, sectors]);
+
   // Initialize selected metrics and quarters when data loads
   useEffect(() => {
     if (sortedQuarterlyData && selectedMetricsForTable.length === 0) {
       // Use default metrics from API if available
       let defaultMetricNames: string[] = [];
 
-      if (defaultMetricsData?.visibleMetrics && defaultMetricsData.visibleMetrics.length > 0) {
+      // For banking sectors, use banking-specific metrics
+      if (isBankingSector) {
+        defaultMetricNames = [
+          'Financing Profit',
+          'Financing Margin %',
+          'EPS in Rs',
+          'EPS Growth(YoY) %',
+          'EPS Growth(QoQ) %',
+        ];
+      } else if (defaultMetricsData?.visibleMetrics && defaultMetricsData.visibleMetrics.length > 0) {
         // Use metrics from settings API
         defaultMetricNames = defaultMetricsData.visibleMetrics;
       } else {
-        // Fallback to hardcoded defaults if API fails
+        // Fallback to hardcoded defaults if API fails (for non-banking sectors)
         defaultMetricNames = [
           'Sales',
           'Sales Growth(YoY) %',
@@ -563,7 +581,7 @@ export default function SectorsList() {
         setSelectedQuartersForTable(quartersToShow);
       }
     }
-  }, [sortedQuarterlyData, selectedMetricsForTable.length, selectedQuartersForTable.length, defaultMetricsData]);
+  }, [sortedQuarterlyData, selectedMetricsForTable.length, selectedQuartersForTable.length, defaultMetricsData, isBankingSector]);
 
   // Auto-select last 12 quarters for formula evaluation when data loads
   useEffect(() => {
