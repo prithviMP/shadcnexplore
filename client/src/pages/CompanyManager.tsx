@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useCallback } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -40,6 +40,17 @@ type CompanyFormData = z.infer<typeof companyFormSchema>;
 
 export default function CompanyManager() {
   const { toast } = useToast();
+  
+  // Helper function to get financial value as number - defined early using useCallback to avoid initialization issues
+  const getFinancialValueNumber = useCallback((company: Company, key: string): number | null => {
+    if (!company.financialData) return null;
+    const data = company.financialData as any;
+    const value = data[key];
+    if (value === undefined || value === null) return null;
+    const numValue = parseFloat(value);
+    return isNaN(numValue) ? null : numValue;
+  }, []);
+  
   const [createOpen, setCreateOpen] = useState(false);
   const [bulkOpen, setBulkOpen] = useState(false);
   const [editCompany, setEditCompany] = useState<Company | null>(null);
@@ -712,15 +723,6 @@ export default function CompanyManager() {
 
   const getSectorName = (sectorId: string) => {
     return sectors?.find(s => s.id === sectorId)?.name || "Unknown";
-  };
-
-  const getFinancialValueNumber = (company: Company, key: string): number | null => {
-    if (!company.financialData) return null;
-    const data = company.financialData as any;
-    const value = data[key];
-    if (value === undefined || value === null) return null;
-    const numValue = parseFloat(value);
-    return isNaN(numValue) ? null : numValue;
   };
 
   const getFinancialValue = (company: Company, key: string): string => {

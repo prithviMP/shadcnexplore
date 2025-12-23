@@ -1193,18 +1193,74 @@ export default function CompanyDetail() {
                     )}
                     {!!latestSignal.metadata && typeof latestSignal.metadata === 'object' && (
                       <div className="space-y-2">
-                        {/* Display Used Quarters if available */}
+                        {/* Display Used Quarters if available - filter to only show quarters actually used in formula */}
                         {'usedQuarters' in latestSignal.metadata && Array.isArray((latestSignal.metadata as any).usedQuarters) && (
                           <div className="p-3 bg-blue-50 dark:bg-blue-900/20 rounded-md border border-blue-100 dark:border-blue-800">
                             <p className="text-xs font-semibold text-blue-700 dark:text-blue-300 mb-1">
                               Based on Quarterly Data:
                             </p>
                             <div className="flex flex-wrap gap-1">
-                              {((latestSignal.metadata as any).usedQuarters as string[]).map((q, i) => (
-                                <Badge key={i} variant="secondary" className="text-xs bg-blue-100 text-blue-800 dark:bg-blue-800 dark:text-blue-100 hover:bg-blue-200">
-                                  {q}
-                                </Badge>
-                              ))}
+                              {(() => {
+                                const allUsedQuarters = (latestSignal.metadata as any).usedQuarters as string[];
+                                const formulaCondition = ('condition' in latestSignal.metadata) ? String((latestSignal.metadata as any).condition) : '';
+                                
+                                // Extract quarter indices (Q11, Q12, etc.) from formula condition
+                                const quarterIndices = new Set<number>();
+                                const matches = formulaCondition.match(/\[Q(\d+)\]/gi);
+                                if (matches) {
+                                  matches.forEach(match => {
+                                    const indexMatch = match.match(/\d+/);
+                                    if (indexMatch) {
+                                      const quarterIndex = parseInt(indexMatch[0], 10);
+                                      quarterIndices.add(quarterIndex);
+                                    }
+                                  });
+                                }
+                                
+                                // If no quarter indices found in formula, show all quarters (fallback)
+                                if (quarterIndices.size === 0) {
+                                  return allUsedQuarters.map((q, i) => (
+                                    <Badge key={i} variant="secondary" className="text-xs bg-blue-100 text-blue-800 dark:bg-blue-800 dark:text-blue-100 hover:bg-blue-200">
+                                      {q}
+                                    </Badge>
+                                  ));
+                                }
+                                
+                                // usedQuarters is sorted newest first (Q12 = index 0, Q11 = index 1, Q1 = index 11)
+                                // So to get Q12, we use index 0; to get Q11, we use index 1, etc.
+                                // General: Qn is at array index (totalQuarters - n)
+                                const filteredQuarters = Array.from(quarterIndices)
+                                  .map(qIndex => {
+                                    // Q12 (when totalQuarters=12) -> index 12-12 = 0 (newest)
+                                    // Q11 (when totalQuarters=12) -> index 12-11 = 1 (second newest)
+                                    // Q1 (when totalQuarters=12) -> index 12-1 = 11 (oldest)
+                                    const arrayIndex = allUsedQuarters.length - qIndex;
+                                    if (arrayIndex >= 0 && arrayIndex < allUsedQuarters.length) {
+                                      return allUsedQuarters[arrayIndex];
+                                    }
+                                    return null;
+                                  })
+                                  .filter(Boolean) as string[];
+                                
+                                // Sort filtered quarters to maintain newest-first order for display
+                                const displayQuarters = filteredQuarters.length > 0 
+                                  ? filteredQuarters.sort((a, b) => {
+                                      // Sort by date (newest first) to match the original order
+                                      const dateA = new Date(a);
+                                      const dateB = new Date(b);
+                                      if (!isNaN(dateA.getTime()) && !isNaN(dateB.getTime())) {
+                                        return dateB.getTime() - dateA.getTime();
+                                      }
+                                      return b.localeCompare(a);
+                                    })
+                                  : allUsedQuarters; // Fallback to all if extraction failed
+                                
+                                return displayQuarters.map((q, i) => (
+                                  <Badge key={i} variant="secondary" className="text-xs bg-blue-100 text-blue-800 dark:bg-blue-800 dark:text-blue-100 hover:bg-blue-200">
+                                    {q}
+                                  </Badge>
+                                ));
+                              })()}
                             </div>
                           </div>
                         )}

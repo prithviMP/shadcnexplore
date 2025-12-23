@@ -258,10 +258,15 @@ export class FormulaEvaluator {
         console.log(`[SIGNAL] Used quarters: ${evalResult.usedQuarters.join(', ')}`);
         usedQuarters = evalResult.usedQuarters;
 
-        // 1) Boolean result – use the formula's configured signal label
+        // 1) Boolean result – should not happen for Excel formulas (they return signal strings)
+        // If it does happen and formula.signal is empty, skip (formulas return signals dynamically)
         if (evalResult.result === true) {
-          signalValue = formula.signal;
-          console.log(`[SIGNAL] Boolean result is true, using formula signal: ${signalValue}`);
+          if (formula.signal && formula.signal.trim() !== "") {
+            signalValue = formula.signal;
+            console.log(`[SIGNAL] Boolean result is true, using formula signal: ${signalValue}`);
+          } else {
+            console.log(`[SIGNAL] Boolean result is true but formula.signal is empty - skipping (formulas return signals dynamically)`);
+          }
         }
         // 2) String result – accept any non-empty label except explicit "No Signal"
         else if (typeof evalResult.result === 'string') {
@@ -294,8 +299,14 @@ export class FormulaEvaluator {
 
           console.log(`[SIGNAL] Simple formula result: ${result}`);
           if (result) {
-            signalValue = formula.signal;
-            console.log(`[SIGNAL] Condition matched, using formula signal: ${signalValue}`);
+            // Simple formulas should ideally return signal strings, but for backward compatibility
+            // we check if formula.signal is set. If empty, skip (formulas return signals dynamically)
+            if (formula.signal && formula.signal.trim() !== "") {
+              signalValue = formula.signal;
+              console.log(`[SIGNAL] Condition matched, using formula signal: ${signalValue}`);
+            } else {
+              console.log(`[SIGNAL] Condition matched but formula.signal is empty - skipping (formulas return signals dynamically)`);
+            }
           }
         } catch (e) {
           console.error(`[SIGNAL] Error evaluating simple formula ${formula.name}:`, e);

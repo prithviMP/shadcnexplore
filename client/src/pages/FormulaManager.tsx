@@ -16,7 +16,6 @@ import { Switch } from "@/components/ui/switch";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useToast } from "@/hooks/use-toast";
 import { Plus, Pencil, Trash2, Loader2, Play, RotateCcw } from "lucide-react";
-import SignalBadge from "@/components/SignalBadge";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { insertFormulaSchema, type Formula, type Company, type Sector } from "@shared/schema";
 import { z } from "zod";
@@ -129,7 +128,7 @@ export default function FormulaManager() {
       scope: "global",
       scopeValue: null,
       condition: "",
-      signal: "BUY",
+      signal: "", // Formulas return signals dynamically, so signal field is not used
       priority: 999,
       enabled: true,
     },
@@ -455,7 +454,6 @@ export default function FormulaManager() {
                     <TableHead className="font-semibold">Name</TableHead>
                     <TableHead className="font-semibold">Scope</TableHead>
                     <TableHead className="font-semibold">Condition</TableHead>
-                    <TableHead className="font-semibold">Signal</TableHead>
                     <TableHead className="text-center font-semibold">Enabled</TableHead>
                     <TableHead className="text-right font-semibold">Actions</TableHead>
                   </TableRow>
@@ -470,9 +468,6 @@ export default function FormulaManager() {
                         </Badge>
                       </TableCell>
                       <TableCell className="font-mono text-xs max-w-xs truncate">{formula.condition}</TableCell>
-                      <TableCell>
-                        <SignalBadge signal={formula.signal as "BUY" | "SELL" | "HOLD"} showIcon={false} />
-                      </TableCell>
                       <TableCell className="text-center">
                         <Switch
                           checked={formula.enabled}

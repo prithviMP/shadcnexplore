@@ -43,7 +43,8 @@ export default function FormulaBuilder() {
   const [selectedEntityId, setSelectedEntityId] = useState<string | null>(null);
   const [formula, setFormula] = useState<string>("");
   const [formulaName, setFormulaName] = useState<string>("");
-  const [formulaSignal, setFormulaSignal] = useState<string>("BUY");
+  // Signal field kept for backward compatibility with DB schema, but not used in UI
+  const [formulaSignal] = useState<string>("");
   const [priority, setPriority] = useState<number>(999);
   const [selectedFormulaId, setSelectedFormulaId] = useState<string>("");
   const [useExistingFormula, setUseExistingFormula] = useState<boolean>(false);
@@ -276,13 +277,11 @@ export default function FormulaBuilder() {
     if (!useExistingFormula && existingFormulaData?.formula) {
       setFormula(existingFormulaData.formula.condition);
       setFormulaName(existingFormulaData.formula.name);
-      setFormulaSignal(existingFormulaData.formula.signal);
       setPriority(existingFormulaData.formula.priority);
       setHasAutoEvaluated(false); // Reset to allow auto-evaluation
     } else if (!useExistingFormula && globalFormula && entityType === "global") {
       setFormula(globalFormula.condition);
       setFormulaName(globalFormula.name || "");
-      setFormulaSignal(globalFormula.signal);
       setPriority(globalFormula.priority);
       setHasAutoEvaluated(false); // Reset to allow auto-evaluation
     }
@@ -308,7 +307,6 @@ export default function FormulaBuilder() {
         // Load formula data - this will trigger FormulaEditor to update via value prop
         setFormula(selectedFormula.condition);
         setFormulaName(selectedFormula.name);
-        setFormulaSignal(selectedFormula.signal);
         setPriority(selectedFormula.priority);
         setUseExistingFormula(true);
         setHasAutoEvaluated(false);
@@ -558,7 +556,7 @@ export default function FormulaBuilder() {
       await apiRequest("PUT", `/api/formulas/${selectedFormulaId}`, {
         name: formulaName,
         condition: formula,
-        signal: formulaSignal,
+        signal: "", // Formulas return signals dynamically, so signal field is not used
         scope: entityType,
         scopeValue: entityType === "global" ? null : selectedEntityId,
         priority: priority
@@ -606,7 +604,7 @@ export default function FormulaBuilder() {
     saveFormulaMutation.mutate({
       name: formulaName,
       condition: formula,
-      signal: formulaSignal,
+      signal: "", // Formulas return signals dynamically, so signal field is not used
       scope: entityType,
       scopeValue: entityType === "global" ? null : selectedEntityId,
       priority: priority
@@ -861,7 +859,6 @@ export default function FormulaBuilder() {
                     // Clear formula to allow creating new
                     setFormula("");
                     setFormulaName("");
-                    setFormulaSignal("BUY");
                   } else {
                     setSelectedFormulaId(value);
                   }
@@ -874,7 +871,7 @@ export default function FormulaBuilder() {
                   <SelectItem value="new">Create New Formula</SelectItem>
                   {formulas?.filter(f => f.enabled).map((formula) => (
                     <SelectItem key={formula.id} value={formula.id}>
-                      {formula.name} ({formula.signal}) - {formula.scope}
+                      {formula.name} - {formula.scope}
                       {formula.scopeValue && `: ${formula.scopeValue}`}
                     </SelectItem>
                   ))}
@@ -922,22 +919,7 @@ export default function FormulaBuilder() {
                 height="min-h-32"
               />
             </div>
-            <div className="flex items-center gap-4">
-              <div className="space-y-2">
-                <Label htmlFor="signal">Expected Signal</Label>
-                <Select value={formulaSignal} onValueChange={setFormulaSignal}>
-                  <SelectTrigger id="signal" className="w-[180px]">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="BUY">BUY</SelectItem>
-                    <SelectItem value="SELL">SELL</SelectItem>
-                    <SelectItem value="HOLD">HOLD</SelectItem>
-                    <SelectItem value="Check_OPM (Sell)">Check_OPM (Sell)</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="flex gap-2 pt-6">
+            <div className="flex gap-2 pt-6">
                 <Button onClick={handleTestFormula} disabled={isEvaluating || !formula}>
                   {isEvaluating ? (
                     <>
@@ -980,7 +962,6 @@ export default function FormulaBuilder() {
                     )}
                   </Button>
                 )}
-              </div>
             </div>
           </CardContent>
         </Card>

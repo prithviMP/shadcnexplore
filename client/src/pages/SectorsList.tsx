@@ -91,7 +91,7 @@ export default function SectorsList() {
   const [customFormula, setCustomFormula] = useState<string>("");
   const [selectedFormulaId, setSelectedFormulaId] = useState<string>("");
   const [useCustomFormula, setUseCustomFormula] = useState(false);
-  const [customFormulaSignal, setCustomFormulaSignal] = useState<string>("BUY");
+  // Signal field removed - formulas return signals dynamically
   const [formulaResults, setFormulaResults] = useState<Record<string, { result: string | number | boolean, type: string }>>({});
   const [isEvaluating, setIsEvaluating] = useState(false);
 
@@ -2117,7 +2117,7 @@ export default function SectorsList() {
                               scope: "sector",
                               scopeValue: displaySectorId,
                               condition: formulaToSave,
-                              signal: customFormulaSignal,
+                              signal: "", // Formulas return signals dynamically, so signal field is not used
                               priority: 2, // Default priority for sector formulas
                               enabled: true
                             });
@@ -2155,20 +2155,6 @@ export default function SectorsList() {
                           placeholder='IF(AND(Q14>0, P14>0, Q12>=20%, Q15>=20%, ...), "BUY", ...)'
                           height="min-h-24"
                         />
-                        <div className="flex items-center gap-2">
-                          <Label htmlFor="signal-type" className="text-xs">Expected Signal:</Label>
-                          <Select value={customFormulaSignal} onValueChange={setCustomFormulaSignal}>
-                            <SelectTrigger className="w-[180px] h-8 text-xs">
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="BUY">BUY</SelectItem>
-                              <SelectItem value="SELL">SELL</SelectItem>
-                              <SelectItem value="HOLD">HOLD</SelectItem>
-                              <SelectItem value="Check_OPM (Sell)">Check_OPM (Sell)</SelectItem>
-                            </SelectContent>
-                          </Select>
-                        </div>
                       </div>
                     ) : (
                       <div className="p-3 bg-slate-100 dark:bg-slate-800 rounded text-sm font-mono text-muted-foreground">
