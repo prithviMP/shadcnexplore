@@ -240,14 +240,16 @@ export default function SectorsList() {
           }
 
           // Fallback to summary-based logic only if no signals exist
+          // Note: We don't use HOLD as a fallback - signals should only come from formulas
+          // If summary has hold signals, it means formulas are returning "HOLD", which should be reviewed
           if (!primarySignal) {
-          if (data.summary.buy > 0) {
-            primarySignal = "BUY";
-          } else if (data.summary.sell > 0) {
-            primarySignal = "SELL";
-          } else if (data.summary.hold > 0) {
-            primarySignal = "HOLD";
+            if (data.summary.buy > 0) {
+              primarySignal = "BUY";
+            } else if (data.summary.sell > 0) {
+              primarySignal = "SELL";
             }
+            // Don't default to HOLD - if hold exists in summary, it means a formula returned it
+            // The user should review formulas that return "HOLD"
           }
 
           return {
@@ -507,6 +509,8 @@ export default function SectorsList() {
   const { data: defaultMetricsData } = useQuery<{
     metrics: Record<string, boolean>;
     visibleMetrics: string[];
+    bankingMetrics?: Record<string, boolean>;
+    visibleBankingMetrics?: string[];
   }>({
     queryKey: ["/api/settings/default-metrics"],
     retry: 1, // Retry once if it fails
@@ -532,45 +536,20 @@ export default function SectorsList() {
   // Initialize selected metrics and quarters when data loads
   useEffect(() => {
     if (sortedQuarterlyData && selectedMetricsForTable.length === 0) {
-      // Use default metrics from API if available
-      let defaultMetricNames: string[] = [];
-
-      // For banking sectors, use banking-specific metrics
+      // Use banking metrics for banking sectors, default metrics for others
       if (isBankingSector) {
-        defaultMetricNames = [
-          'Financing Profit',
-          'Financing Margin %',
-          'EPS in Rs',
-          'EPS Growth(YoY) %',
-          'EPS Growth(QoQ) %',
-        ];
-      } else if (defaultMetricsData?.visibleMetrics && defaultMetricsData.visibleMetrics.length > 0) {
-        // Use metrics from settings API
-        defaultMetricNames = defaultMetricsData.visibleMetrics;
+        if (defaultMetricsData?.visibleBankingMetrics && defaultMetricsData.visibleBankingMetrics.length > 0) {
+          // Use banking metrics from database settings
+          setSelectedMetricsForTable(defaultMetricsData.visibleBankingMetrics);
+        }
       } else {
-        // Fallback to hardcoded defaults if API fails (for non-banking sectors)
-        defaultMetricNames = [
-          'Sales',
-          'Sales Growth(YoY) %',
-          'Sales Growth(QoQ) %',
-          'OPM %',
-          'EPS in Rs',
-          'EPS Growth(YoY) %',
-          'EPS Growth(QoQ) %',
-        ];
+        if (defaultMetricsData?.visibleMetrics && defaultMetricsData.visibleMetrics.length > 0) {
+          // Use default metrics from database settings
+          setSelectedMetricsForTable(defaultMetricsData.visibleMetrics);
+        }
       }
-
-      // Find metrics that match default names exactly
-      const matchedMetrics = defaultMetricNames.filter(metricName =>
-        sortedQuarterlyData.metrics.includes(metricName)
-      );
-
-      if (matchedMetrics.length > 0) {
-        setSelectedMetricsForTable(matchedMetrics);
-      } else if (sortedQuarterlyData.metrics.length > 0) {
-        // If default metrics not found, use first 6 metrics
-        setSelectedMetricsForTable(sortedQuarterlyData.metrics.slice(0, 6));
-      }
+      // If defaultMetricsData hasn't loaded yet, wait for it rather than using fallbacks
+      // This ensures consistency with what's saved in the database
 
       // Default to show last 12 quarters (or all if less than 12)
       if (selectedQuartersForTable.length === 0 && sortedQuarterlyData.quarters.length > 0) {

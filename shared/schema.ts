@@ -361,3 +361,22 @@ export const insertSectorScheduleSchema = createInsertSchema(sectorSchedules).om
 
 export type SectorSchedule = typeof sectorSchedules.$inferSelect;
 export type InsertSectorSchedule = z.infer<typeof insertSectorScheduleSchema>;
+
+// Application Settings - stores application-wide settings like default metrics
+export const appSettings = pgTable("app_settings", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  key: text("key").notNull().unique(), // e.g., 'default_metrics'
+  value: jsonb("value").notNull(), // JSON value for the setting
+  description: text("description"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export const insertAppSettingsSchema = createInsertSchema(appSettings).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export type AppSettings = typeof appSettings.$inferSelect;
+export type InsertAppSettings = z.infer<typeof insertAppSettingsSchema>;

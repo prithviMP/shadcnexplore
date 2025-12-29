@@ -10,3 +10,6 @@ vite.config.ts.*
 .local/state/replit/agent/
 .local/state/replit/agent/.agent_state_*.bin
 *.agent_state_*.bin
+test-results/
+playwright-report/
+playwright/.cache/

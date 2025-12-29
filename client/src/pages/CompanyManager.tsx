@@ -17,7 +17,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { Plus, Pencil, Trash2, Upload, ExternalLink, Search, CheckCircle2, FileText, Loader2, AlertCircle, MoreVertical, Filter, ChevronDown, ArrowUp, ArrowDown, ArrowUpDown } from "lucide-react";
+import { Plus, Pencil, Trash2, Upload, ExternalLink, Search, CheckCircle2, FileText, Loader2, AlertCircle, MoreVertical, Filter, ChevronDown, ArrowUp, ArrowDown, ArrowUpDown, Download } from "lucide-react";
 import { Link } from "wouter";
 import type { Company, Sector, InsertCompany } from "@shared/schema";
 import { formatDistanceToNow } from "date-fns";
@@ -73,6 +73,7 @@ export default function CompanyManager() {
   const [filtersOpen, setFiltersOpen] = useState<boolean>(false);
   const [sortField, setSortField] = useState<string>("updatedAt");
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("desc");
+  const [exporting, setExporting] = useState(false);
 
   const companiesQueryKey = selectedSector
     ? ["/api/companies", { sectorId: selectedSector }]
@@ -549,6 +550,36 @@ export default function CompanyManager() {
     }
   };
 
+  // Export companies data to CSV
+  const handleExportCSV = async () => {
+    setExporting(true);
+    try {
+      const response = await apiRequest("GET", "/api/v1/companies/export");
+      const blob = await response.blob();
+
+      const link = document.createElement("a");
+      link.href = URL.createObjectURL(blob);
+      link.download = `companies_export_${Date.now()}.csv`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(link.href);
+
+      toast({
+        title: "Export Successful",
+        description: "Companies data exported to CSV successfully",
+      });
+    } catch (error: any) {
+      toast({
+        title: "Export Failed",
+        description: error.message || "Failed to export companies data",
+        variant: "destructive",
+      });
+    } finally {
+      setExporting(false);
+    }
+  };
+
   const parseCSV = (csvText: string): Array<{ ticker: string; name?: string; sectorId?: string; sector?: string }> => {
     const lines = csvText.split('\n').filter(line => line.trim());
     if (lines.length === 0) return [];
@@ -908,6 +939,19 @@ export default function CompanyManager() {
           <p className="text-muted-foreground mt-1">Manage companies and their financial data</p>
         </div>
         <div className="flex gap-2">
+          <Button 
+            variant="outline" 
+            onClick={handleExportCSV}
+            disabled={exporting}
+            data-testid="button-export-csv"
+          >
+            {exporting ? (
+              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+            ) : (
+              <Download className="h-4 w-4 mr-2" />
+            )}
+            Export CSV
+          </Button>
           <Dialog open={bulkOpen} onOpenChange={setBulkOpen}>
             <DialogTrigger asChild>
               <Button variant="outline" data-testid="button-bulk-import">

@@ -19,7 +19,10 @@
     "db:migrate-signals-updated-at": "tsx server/migrations/addUpdatedAtToSignals.ts",
     "db:create-scheduler-settings": "tsx server/migrations/createSchedulerSettingsTable.ts",
     "db:update-permissions": "tsx server/updatePermissions.ts",
-    "update-csv-tickers": "tsx scripts/update_csv_tickers.ts"
+    "update-csv-tickers": "tsx scripts/update_csv_tickers.ts",
+    "test": "playwright test",
+    "test:ui": "playwright test --ui",
+    "test:headed": "playwright test --headed"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",
@@ -102,6 +105,7 @@
     "zod-validation-error": "^3.4.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.57.0",
     "@replit/vite-plugin-cartographer": "^0.4.2",
     "@replit/vite-plugin-dev-banner": "^0.1.1",
     "@replit/vite-plugin-runtime-error-modal": "^0.0.3",

@@ -113,6 +113,8 @@ export default function FormulaBuilder() {
   const { data: defaultMetricsData } = useQuery<{
     metrics: Record<string, boolean>;
     visibleMetrics: string[];
+    bankingMetrics?: Record<string, boolean>;
+    visibleBankingMetrics?: string[];
   }>({
     queryKey: ["/api/settings/default-metrics"],
     retry: 1, // Retry once if it fails
@@ -147,6 +149,25 @@ export default function FormulaBuilder() {
     }
     return null;
   }, [previewType, previewId, sectors]);
+
+  // Check if preview entity is banking-related (must be after previewCompany and previewSector are defined)
+  const isBankingEntity = useMemo(() => {
+    if (previewType === "company" && previewCompany) {
+      // Check if company's sector is banking
+      if (previewCompany.sectorId && sectors) {
+        const sector = sectors.find(s => s.id === previewCompany.sectorId);
+        if (sector) {
+          const sectorName = sector.name.toLowerCase();
+          return sectorName.includes('bank') || sectorName.includes('banking') || sectorName.includes('financial');
+        }
+      }
+    } else if (previewType === "sector" && previewSector) {
+      // Check if sector is banking
+      const sectorName = previewSector.name.toLowerCase();
+      return sectorName.includes('bank') || sectorName.includes('banking') || sectorName.includes('financial');
+    }
+    return false;
+  }, [previewType, previewCompany, previewSector, sectors]);
 
   // Fetch quarterly data based on entity type
   // Fetch quarterly data based on preview selection
@@ -324,39 +345,24 @@ export default function FormulaBuilder() {
       setSelectedQuartersForTable(quartersToShow);
       setSelectedQuarters(new Set(quartersToShow));
 
-      // Use default metrics from settings API if available
-      let defaultMetricNames: string[] = [];
-
-      if (defaultMetricsData?.visibleMetrics && defaultMetricsData.visibleMetrics.length > 0) {
-        // Use metrics from settings API
-        defaultMetricNames = defaultMetricsData.visibleMetrics;
+      // Use banking metrics for banking entities, default metrics for others
+      if (isBankingEntity) {
+        if (defaultMetricsData?.visibleBankingMetrics && defaultMetricsData.visibleBankingMetrics.length > 0) {
+          // Use banking metrics from database settings
+          setSelectedMetrics(defaultMetricsData.visibleBankingMetrics);
+        }
       } else {
-        // Fallback to hardcoded defaults if API fails
-        defaultMetricNames = [
-          'Sales',
-          'Sales Growth(YoY) %',
-          'Sales Growth(QoQ) %',
-          'OPM %',
-          'EPS in Rs',
-          'EPS Growth(YoY) %',
-          'EPS Growth(QoQ) %',
-        ];
+        if (defaultMetricsData?.visibleMetrics && defaultMetricsData.visibleMetrics.length > 0) {
+          // Use default metrics from database settings
+          setSelectedMetrics(defaultMetricsData.visibleMetrics);
+        }
       }
-
-      // Find metrics that match default names exactly
-      const matchedMetrics = defaultMetricNames.filter(metricName =>
-        sortedQuarterlyData.metrics.includes(metricName)
-      );
-
-      if (matchedMetrics.length > 0) {
-        setSelectedMetrics(matchedMetrics);
-      } else if (sortedQuarterlyData.metrics.length > 0) {
-        // If default metrics not found, use first 6 metrics
-        setSelectedMetrics(sortedQuarterlyData.metrics.slice(0, Math.min(6, sortedQuarterlyData.metrics.length)));
-      }
+      // If defaultMetricsData hasn't loaded yet, wait for it rather than using fallbacks
+      // This ensures consistency with what's saved in the database
+      
       setHasAutoEvaluated(false); // Reset auto-evaluation flag when data changes
     }
-  }, [sortedQuarterlyData, selectedMetrics.length, defaultMetricsData]);
+  }, [sortedQuarterlyData, selectedMetrics.length, defaultMetricsData, isBankingEntity]);
 
   // Auto-evaluate formula when entity is first selected or formula is loaded
   useEffect(() => {

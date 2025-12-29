@@ -634,6 +634,7 @@ export default function SchedulerSettings() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const fileInputWithDataRef = useRef<HTMLInputElement>(null);
   const [currentTaskId, setCurrentTaskId] = useState<string | null>(null);
   const [selectedHistory, setSelectedHistory] = useState<HistoryEntry | null>(null);
   const [selectedBulkJob, setSelectedBulkJob] = useState<BulkImportJobWithDetails | null>(null);
@@ -735,6 +736,29 @@ export default function SchedulerSettings() {
       toast({
         title: "Error",
         description: error.message || "Failed to start sector update",
+        variant: "destructive",
+      });
+    },
+  });
+
+  // Import companies with data (from exported CSV format)
+  const importWithDataMutation = useMutation({
+    mutationFn: async (csvData: string) => {
+      const response = await apiRequest("POST", "/api/v1/companies/import-with-data", { csvData });
+      return await response.json();
+    },
+    onSuccess: (data) => {
+      toast({
+        title: "Import Successful",
+        description: `Successfully imported ${data.imported} companies with their data.${data.failed > 0 ? ` ${data.failed} failed.` : ''}`,
+      });
+      queryClient.invalidateQueries({ queryKey: ["/api/companies"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/sectors"] });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Import Failed",
+        description: error.message || "Failed to import companies with data",
         variant: "destructive",
       });
     },
@@ -894,6 +918,42 @@ export default function SchedulerSettings() {
       });
     },
   });
+
+  // Handle CSV file upload with data (exported format)
+  const handleFileUploadWithData = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const csvData = e.target?.result as string;
+      if (!csvData || csvData.trim().length === 0) {
+        toast({
+          title: "Invalid File",
+          description: "The CSV file is empty",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      importWithDataMutation.mutate(csvData);
+    };
+
+    reader.onerror = () => {
+      toast({
+        title: "File Read Error",
+        description: "Failed to read the CSV file",
+        variant: "destructive",
+      });
+    };
+
+    reader.readAsText(file);
+
+    // Reset file input
+    if (fileInputWithDataRef.current) {
+      fileInputWithDataRef.current.value = "";
+    }
+  };
 
   // Handle CSV file upload
   const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -1152,7 +1212,7 @@ export default function SchedulerSettings() {
                 Bulk Import Companies
               </CardTitle>
               <CardDescription>
-                Upload a CSV file to bulk import companies and scrape their data. CSV format: ticker, name, sector
+                Upload a CSV file to bulk import companies. Use "Import with Data" for exported CSV format (includes quarterly data), or "Upload CSV" for basic format (ticker, name, sector).
               </CardDescription>
             </div>
             <div className="flex items-center gap-2">
@@ -1163,9 +1223,29 @@ export default function SchedulerSettings() {
                 onChange={handleFileUpload}
                 className="hidden"
               />
+              <input
+                ref={fileInputWithDataRef}
+                type="file"
+                accept=".csv"
+                onChange={handleFileUploadWithData}
+                className="hidden"
+              />
+              <Button
+                onClick={() => fileInputWithDataRef.current?.click()}
+                disabled={importWithDataMutation.isPending}
+                variant="default"
+              >
+                {importWithDataMutation.isPending ? (
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                ) : (
+                  <FileText className="h-4 w-4 mr-2" />
+                )}
+                Import with Data
+              </Button>
               <Button
                 onClick={() => fileInputRef.current?.click()}
                 disabled={createBulkImportMutation.isPending}
+                variant="outline"
               >
                 {createBulkImportMutation.isPending ? (
                   <Loader2 className="h-4 w-4 mr-2 animate-spin" />

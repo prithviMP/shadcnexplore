@@ -210,6 +210,11 @@ export interface IStorage {
   getAssignedFormulaForCompany(companyId: string): Promise<Formula | null>;
   getAssignedFormulaForSector(sectorId: string): Promise<Formula | null>;
   resetAllFormulasToGlobal(formulaId?: string | null): Promise<{ companiesAffected: number; sectorsAffected: number }>;
+
+  // App Settings operations
+  getAppSetting(key: string): Promise<AppSettings | undefined>;
+  setAppSetting(key: string, value: any, description?: string): Promise<AppSettings>;
+  getAllAppSettings(): Promise<AppSettings[]>;
 }
 
 export class DbStorage implements IStorage {
@@ -1259,6 +1264,42 @@ export class DbStorage implements IStorage {
 
   async deleteSectorSchedule(id: string): Promise<void> {
     await db.delete(sectorSchedules).where(eq(sectorSchedules.id, id));
+  }
+
+  // App Settings operations
+  async getAppSetting(key: string): Promise<AppSettings | undefined> {
+    const result = await db.select().from(appSettings).where(eq(appSettings.key, key)).limit(1);
+    return result[0];
+  }
+
+  async setAppSetting(key: string, value: any, description?: string): Promise<AppSettings> {
+    const existing = await this.getAppSetting(key);
+    if (existing) {
+      const [updated] = await db
+        .update(appSettings)
+        .set({
+          value,
+          description: description ?? existing.description,
+          updatedAt: sql`NOW()`
+        })
+        .where(eq(appSettings.key, key))
+        .returning();
+      return updated;
+    } else {
+      const [created] = await db
+        .insert(appSettings)
+        .values({
+          key,
+          value,
+          description: description ?? null
+        })
+        .returning();
+      return created;
+    }
+  }
+
+  async getAllAppSettings(): Promise<AppSettings[]> {
+    return await db.select().from(appSettings);
   }
 
   // Formula Assignment operations

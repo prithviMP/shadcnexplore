@@ -6,15 +6,18 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
-import { Settings as SettingsIcon, Save, RotateCcw, Search, CheckCircle2 } from "lucide-react";
+import { Settings as SettingsIcon, Save, RotateCcw, Search, CheckCircle2, Building2 } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 
 interface DefaultMetricsResponse {
   metrics: Record<string, boolean>;
   visibleMetrics: string[];
+  bankingMetrics?: Record<string, boolean>;
+  visibleBankingMetrics?: string[];
 }
 
 // Default metrics configuration (must match backend)
@@ -39,11 +42,26 @@ const DEFAULT_METRICS: Record<string, boolean> = {
   "Gross NPA %": false,
 };
 
+// Default banking metrics configuration (must match backend)
+const DEFAULT_BANKING_METRICS: Record<string, boolean> = {
+  "Sales Growth(YoY) %": true,
+  "Sales Growth(QoQ) %": true,
+  "Financing Profit": true,
+  "Financing Margin %": true,
+  "EPS in Rs": true,
+  "EPS Growth(YoY) %": true,
+  "EPS Growth(QoQ) %": true,
+  "Gross NPA %": true,
+};
+
 export default function Settings() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [searchTerm, setSearchTerm] = useState("");
+  const [bankingSearchTerm, setBankingSearchTerm] = useState("");
   const [localMetrics, setLocalMetrics] = useState<Record<string, boolean>>(DEFAULT_METRICS);
+  const [localBankingMetrics, setLocalBankingMetrics] = useState<Record<string, boolean>>(DEFAULT_BANKING_METRICS);
+  const [activeTab, setActiveTab] = useState<"default" | "banking">("default");
 
   // Fetch default metrics configuration
   const { data: metricsData, isLoading } = useQuery<DefaultMetricsResponse>({
@@ -68,12 +86,27 @@ export default function Settings() {
         return prev;
       });
     }
+    
+    // Update banking metrics
+    if (metricsData?.bankingMetrics) {
+      const bankingMetrics = metricsData.bankingMetrics;
+      if (Object.keys(bankingMetrics).length > 0) {
+        setLocalBankingMetrics(bankingMetrics);
+      }
+    } else if (!isLoading) {
+      setLocalBankingMetrics(prev => {
+        if (Object.keys(prev).length === 0) {
+          return { ...DEFAULT_BANKING_METRICS };
+        }
+        return prev;
+      });
+    }
   }, [metricsData, isLoading]);
 
   // Save metrics mutation
   const saveMutation = useMutation({
-    mutationFn: async (metrics: Record<string, boolean>) => {
-      const res = await apiRequest("PUT", "/api/settings/default-metrics", { metrics });
+    mutationFn: async ({ metrics, bankingMetrics }: { metrics?: Record<string, boolean>; bankingMetrics?: Record<string, boolean> }) => {
+      const res = await apiRequest("PUT", "/api/settings/default-metrics", { metrics, bankingMetrics });
       return res.json();
     },
     onSuccess: (data) => {
@@ -81,9 +114,12 @@ export default function Settings() {
       if (data.metrics) {
         setLocalMetrics(data.metrics);
       }
+      if (data.bankingMetrics) {
+        setLocalBankingMetrics(data.bankingMetrics);
+      }
       toast({
         title: "Settings saved",
-        description: "Default metrics configuration has been updated successfully.",
+        description: "Metrics configuration has been updated successfully.",
       });
       // Refetch to ensure we have the latest data
       queryClient.invalidateQueries({ queryKey: ["/api/settings/default-metrics"] });
@@ -99,47 +135,83 @@ export default function Settings() {
 
   // Reset to default metrics
   const resetToDefault = () => {
-    setLocalMetrics({ ...DEFAULT_METRICS });
+    if (activeTab === "default") {
+      setLocalMetrics({ ...DEFAULT_METRICS });
+    } else {
+      setLocalBankingMetrics({ ...DEFAULT_BANKING_METRICS });
+    }
   };
 
   const handleSave = () => {
-    saveMutation.mutate(localMetrics);
+    if (activeTab === "default") {
+      saveMutation.mutate({ metrics: localMetrics });
+    } else {
+      saveMutation.mutate({ bankingMetrics: localBankingMetrics });
+    }
   };
 
   const handleToggleMetric = (metricName: string) => {
-    setLocalMetrics((prev) => ({
-      ...prev,
-      [metricName]: !prev[metricName],
-    }));
+    if (activeTab === "default") {
+      setLocalMetrics((prev) => ({
+        ...prev,
+        [metricName]: !prev[metricName],
+      }));
+    } else {
+      setLocalBankingMetrics((prev) => ({
+        ...prev,
+        [metricName]: !prev[metricName],
+      }));
+    }
   };
 
   const handleSelectAll = () => {
-    const allSelected: Record<string, boolean> = {};
-    Object.keys(localMetrics).forEach((key) => {
-      allSelected[key] = true;
-    });
-    setLocalMetrics(allSelected);
+    if (activeTab === "default") {
+      const allSelected: Record<string, boolean> = {};
+      Object.keys(localMetrics).forEach((key) => {
+        allSelected[key] = true;
+      });
+      setLocalMetrics(allSelected);
+    } else {
+      const allSelected: Record<string, boolean> = {};
+      Object.keys(localBankingMetrics).forEach((key) => {
+        allSelected[key] = true;
+      });
+      setLocalBankingMetrics(allSelected);
+    }
   };
 
   const handleDeselectAll = () => {
-    const allDeselected: Record<string, boolean> = {};
-    Object.keys(localMetrics).forEach((key) => {
-      allDeselected[key] = false;
-    });
-    setLocalMetrics(allDeselected);
+    if (activeTab === "default") {
+      const allDeselected: Record<string, boolean> = {};
+      Object.keys(localMetrics).forEach((key) => {
+        allDeselected[key] = false;
+      });
+      setLocalMetrics(allDeselected);
+    } else {
+      const allDeselected: Record<string, boolean> = {};
+      Object.keys(localBankingMetrics).forEach((key) => {
+        allDeselected[key] = false;
+      });
+      setLocalBankingMetrics(allDeselected);
+    }
   };
 
   // Filter metrics based on search term
-  const filteredMetrics = Object.entries(localMetrics).filter(([metricName]) =>
-    metricName.toLowerCase().includes(searchTerm.toLowerCase())
+  const filteredMetrics = Object.entries(activeTab === "default" ? localMetrics : localBankingMetrics).filter(([metricName]) =>
+    metricName.toLowerCase().includes((activeTab === "default" ? searchTerm : bankingSearchTerm).toLowerCase())
   );
 
-  const selectedCount = Object.values(localMetrics).filter(Boolean).length;
-  const totalCount = Object.keys(localMetrics).length;
+  const selectedCount = Object.values(activeTab === "default" ? localMetrics : localBankingMetrics).filter(Boolean).length;
+  const totalCount = Object.keys(activeTab === "default" ? localMetrics : localBankingMetrics).length;
+  
   // Compare with loaded data or empty object if not loaded yet
-  const hasChanges = metricsData?.metrics 
-    ? JSON.stringify(localMetrics) !== JSON.stringify(metricsData.metrics)
-    : Object.keys(localMetrics).length > 0;
+  const hasChanges = activeTab === "default"
+    ? (metricsData?.metrics 
+        ? JSON.stringify(localMetrics) !== JSON.stringify(metricsData.metrics)
+        : Object.keys(localMetrics).length > 0)
+    : (metricsData?.bankingMetrics
+        ? JSON.stringify(localBankingMetrics) !== JSON.stringify(metricsData.bankingMetrics)
+        : Object.keys(localBankingMetrics).length > 0);
 
   if (isLoading) {
     return (
@@ -162,7 +234,7 @@ export default function Settings() {
             <div>
               <CardTitle className="flex items-center gap-2">
                 <SettingsIcon className="h-5 w-5" />
-                Default Metrics Settings
+                Metrics Settings
               </CardTitle>
               <CardDescription>
                 Configure which metrics are displayed by default in quarterly data views
@@ -177,66 +249,138 @@ export default function Settings() {
           <Alert>
             <CheckCircle2 className="h-4 w-4" />
             <AlertDescription>
-              These settings determine which metrics are automatically selected when viewing quarterly data
-              in the Company Detail and Sectors List pages. Users can still manually select/deselect metrics
-              on those pages, but these will be the defaults.
+              Configure default metrics for regular companies and banking companies separately.
+              Banking companies are automatically detected based on their sector name (bank, banking, financial).
+              Users can still manually select/deselect metrics on individual pages.
             </AlertDescription>
           </Alert>
 
-          {/* Search and Actions */}
-          <div className="flex items-center gap-2">
-            <div className="relative flex-1">
-              <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
-              <Input
-                placeholder="Search metrics..."
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="pl-8"
-              />
-            </div>
-            <Button variant="outline" size="sm" onClick={handleSelectAll}>
-              Select All
-            </Button>
-            <Button variant="outline" size="sm" onClick={handleDeselectAll}>
-              Deselect All
-            </Button>
-            <Button variant="outline" size="sm" onClick={resetToDefault}>
-              <RotateCcw className="h-4 w-4 mr-2" />
-              Reset to Default
-            </Button>
-          </div>
+          <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as "default" | "banking")}>
+            <TabsList className="grid w-full grid-cols-2">
+              <TabsTrigger value="default">
+                <SettingsIcon className="h-4 w-4 mr-2" />
+                Default Metrics
+              </TabsTrigger>
+              <TabsTrigger value="banking">
+                <Building2 className="h-4 w-4 mr-2" />
+                Banking Metrics
+              </TabsTrigger>
+            </TabsList>
 
-          {/* Metrics List */}
-          <ScrollArea className="h-[500px] rounded-md border p-4">
-            <div className="space-y-3">
-              {filteredMetrics.length === 0 ? (
-                <div className="text-center py-8 text-muted-foreground">
-                  No metrics found matching "{searchTerm}"
+            <TabsContent value="default" className="space-y-4 mt-4">
+              {/* Search and Actions */}
+              <div className="flex items-center gap-2">
+                <div className="relative flex-1">
+                  <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
+                  <Input
+                    placeholder="Search metrics..."
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                    className="pl-8"
+                  />
                 </div>
-              ) : (
-                filteredMetrics.map(([metricName, isSelected]) => (
-                  <div key={metricName} className="flex items-center space-x-2 p-2 rounded-md hover:bg-muted/50">
-                    <Checkbox
-                      id={metricName}
-                      checked={isSelected}
-                      onCheckedChange={() => handleToggleMetric(metricName)}
-                    />
-                    <Label
-                      htmlFor={metricName}
-                      className="flex-1 cursor-pointer text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
-                    >
-                      {metricName}
-                    </Label>
-                    {isSelected && (
-                      <Badge variant="secondary" className="text-xs">
-                        Default
-                      </Badge>
-                    )}
-                  </div>
-                ))
-              )}
-            </div>
-          </ScrollArea>
+                <Button variant="outline" size="sm" onClick={handleSelectAll}>
+                  Select All
+                </Button>
+                <Button variant="outline" size="sm" onClick={handleDeselectAll}>
+                  Deselect All
+                </Button>
+                <Button variant="outline" size="sm" onClick={resetToDefault}>
+                  <RotateCcw className="h-4 w-4 mr-2" />
+                  Reset
+                </Button>
+              </div>
+
+              {/* Metrics List */}
+              <ScrollArea className="h-[500px] rounded-md border p-4">
+                <div className="space-y-3">
+                  {filteredMetrics.length === 0 ? (
+                    <div className="text-center py-8 text-muted-foreground">
+                      No metrics found matching "{searchTerm}"
+                    </div>
+                  ) : (
+                    filteredMetrics.map(([metricName, isSelected]) => (
+                      <div key={metricName} className="flex items-center space-x-2 p-2 rounded-md hover:bg-muted/50">
+                        <Checkbox
+                          id={metricName}
+                          checked={isSelected}
+                          onCheckedChange={() => handleToggleMetric(metricName)}
+                        />
+                        <Label
+                          htmlFor={metricName}
+                          className="flex-1 cursor-pointer text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
+                        >
+                          {metricName}
+                        </Label>
+                        {isSelected && (
+                          <Badge variant="secondary" className="text-xs">
+                            Default
+                          </Badge>
+                        )}
+                      </div>
+                    ))
+                  )}
+                </div>
+              </ScrollArea>
+            </TabsContent>
+
+            <TabsContent value="banking" className="space-y-4 mt-4">
+              {/* Search and Actions */}
+              <div className="flex items-center gap-2">
+                <div className="relative flex-1">
+                  <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
+                  <Input
+                    placeholder="Search banking metrics..."
+                    value={bankingSearchTerm}
+                    onChange={(e) => setBankingSearchTerm(e.target.value)}
+                    className="pl-8"
+                  />
+                </div>
+                <Button variant="outline" size="sm" onClick={handleSelectAll}>
+                  Select All
+                </Button>
+                <Button variant="outline" size="sm" onClick={handleDeselectAll}>
+                  Deselect All
+                </Button>
+                <Button variant="outline" size="sm" onClick={resetToDefault}>
+                  <RotateCcw className="h-4 w-4 mr-2" />
+                  Reset
+                </Button>
+              </div>
+
+              {/* Banking Metrics List */}
+              <ScrollArea className="h-[500px] rounded-md border p-4">
+                <div className="space-y-3">
+                  {filteredMetrics.length === 0 ? (
+                    <div className="text-center py-8 text-muted-foreground">
+                      No metrics found matching "{bankingSearchTerm}"
+                    </div>
+                  ) : (
+                    filteredMetrics.map(([metricName, isSelected]) => (
+                      <div key={metricName} className="flex items-center space-x-2 p-2 rounded-md hover:bg-muted/50">
+                        <Checkbox
+                          id={`banking-${metricName}`}
+                          checked={isSelected}
+                          onCheckedChange={() => handleToggleMetric(metricName)}
+                        />
+                        <Label
+                          htmlFor={`banking-${metricName}`}
+                          className="flex-1 cursor-pointer text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
+                        >
+                          {metricName}
+                        </Label>
+                        {isSelected && (
+                          <Badge variant="secondary" className="text-xs">
+                            Default
+                          </Badge>
+                        )}
+                      </div>
+                    ))
+                  )}
+                </div>
+              </ScrollArea>
+            </TabsContent>
+          </Tabs>
 
           {/* Save Button */}
           <div className="flex items-center justify-between pt-4 border-t">

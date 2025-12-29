@@ -76,6 +76,7 @@ export default function CompanyDetail() {
   const [formulaResultForSelected, setFormulaResultForSelected] = useState<string | null>(null);
   const [showFormulaBar, setShowFormulaBar] = useState(false);
   const formulaInputRef = useRef<HTMLTextAreaElement>(null);
+  const formulaDropdownDebounceRef = useRef<NodeJS.Timeout | null>(null);
 
   // Ticker update dialog state
   const [showTickerUpdateDialog, setShowTickerUpdateDialog] = useState(false);
@@ -230,12 +231,66 @@ export default function CompanyDetail() {
   const { data: defaultMetricsData } = useQuery<{
     metrics: Record<string, boolean>;
     visibleMetrics: string[];
+    bankingMetrics?: Record<string, boolean>;
+    visibleBankingMetrics?: string[];
   }>({
     queryKey: ["/api/settings/default-metrics"],
     retry: 1, // Retry once if it fails
   });
 
 
+
+  // Auto-calculate signals when company detail page loads (async, non-blocking)
+  useEffect(() => {
+    if (!company?.id) return;
+    
+    // Calculate and update signals for this company (async mode to avoid blocking UI)
+    const calculateSignals = async () => {
+      try {
+        const response = await apiRequest("POST", "/api/signals/calculate", {
+          companyIds: [company.id],
+          incremental: false,
+          async: true // Use async mode to avoid blocking UI
+        });
+        const data = await response.json();
+        
+        // Show toast notification that calculation is running
+        if (data.jobId) {
+          toast({
+            title: "Signal calculation started",
+            description: "Signals are being recalculated in the background. The page will update automatically.",
+          });
+        }
+        
+        // Refresh signals after a delay to allow calculation to complete
+        setTimeout(() => {
+          queryClient.invalidateQueries({ queryKey: ["/api/v1/companies", companyTicker, "data"] });
+          queryClient.invalidateQueries({ queryKey: ["/api/v1/companies", company.id || companyTicker, "signals"] });
+          queryClient.refetchQueries({ queryKey: ["/api/v1/companies", companyTicker, "signals"] });
+        }, 2000);
+      } catch (error) {
+        // Show error toast instead of silently failing
+        toast({
+          title: "Failed to start signal calculation",
+          description: error instanceof Error ? error.message : "An error occurred while calculating signals",
+          variant: "destructive"
+        });
+        console.error("Error calculating signals on page load:", error);
+      }
+    };
+    
+    calculateSignals();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [company?.id]); // Only run when company ID changes (i.e., when page loads with a new company)
+
+  // Cleanup debounce timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (formulaDropdownDebounceRef.current) {
+        clearTimeout(formulaDropdownDebounceRef.current);
+      }
+    };
+  }, []);
 
   // Auto-select last 12 quarters for formula evaluation when data loads
   useEffect(() => {
@@ -256,49 +311,23 @@ export default function CompanyDetail() {
     return sectorName.includes('bank') || sectorName.includes('banking') || sectorName.includes('financial');
   }, [company?.sectorId, sectors]);
 
-  // Filter metrics based on settings - match SectorsList behavior exactly
+  // Filter metrics based on settings - use banking metrics for banking companies, default for others
   const filteredMetrics = useMemo(() => {
-    if (availableMetrics.length === 0) return [];
-
-    // Get default metric names from settings or use fallback
-    let defaultMetricNames: string[] = [];
-    
-    // For banking companies, use banking-specific metrics
+    // Use banking metrics if this is a banking company, otherwise use default metrics
     if (isBankingCompany) {
-      defaultMetricNames = [
-        'Financing Profit',
-        'Financing Margin %',
-        'EPS in Rs',
-        'EPS Growth(YoY) %',
-        'EPS Growth(QoQ) %',
-      ];
-    } else if (defaultMetricsData?.visibleMetrics && defaultMetricsData.visibleMetrics.length > 0) {
-      defaultMetricNames = defaultMetricsData.visibleMetrics;
+      if (defaultMetricsData?.visibleBankingMetrics && defaultMetricsData.visibleBankingMetrics.length > 0) {
+        return defaultMetricsData.visibleBankingMetrics;
+      }
     } else {
-      // Fallback to hardcoded defaults if API fails (for non-banking companies)
-      defaultMetricNames = [
-        'Sales',
-        'Sales Growth(YoY) %',
-        'Sales Growth(QoQ) %',
-        'OPM %',
-        'EPS in Rs',
-        'EPS Growth(YoY) %',
-        'EPS Growth(QoQ) %',
-      ];
+      if (defaultMetricsData?.visibleMetrics && defaultMetricsData.visibleMetrics.length > 0) {
+        return defaultMetricsData.visibleMetrics;
+      }
     }
-
-    // Find metrics that match default names exactly (same as SectorsList)
-    const matchedMetrics = defaultMetricNames.filter(metricName =>
-      availableMetrics.includes(metricName)
-    );
-
-    // If default metrics found, use them; otherwise fall back to first 6 available metrics
-    if (matchedMetrics.length > 0) {
-      return matchedMetrics;
-    } else {
-      return availableMetrics.slice(0, 6);
-    }
-  }, [availableMetrics, defaultMetricsData, isBankingCompany]);
+    
+    // Only if API hasn't loaded yet or failed, show empty array (will be populated once data loads)
+    // This ensures we always show what's saved in the database, not hardcoded defaults
+    return [];
+  }, [defaultMetricsData, isBankingCompany]);
 
   const filteredQuarters = useMemo(() => {
     if (!sortedQuarterlyData) return [];
@@ -347,19 +376,20 @@ export default function CompanyDetail() {
     // Fallback: Try frontend evaluation only for simple formulas (not Excel formulas)
     // This is a best-effort fallback, but Excel formulas should always come from the server
     if (!sortedQuarterlyData || filteredQuarters.length === 0) {
-      return "HOLD";
+      return "No Signal";
     }
 
-    // If no formula is available, default to HOLD
+    // If no formula is available, return No Signal (not HOLD - formulas should return signals dynamically)
     if (!activeFormula) {
-      return "HOLD";
+      return "No Signal";
     }
 
     // Check if this is an Excel formula (contains Q12, Q11, etc.)
     // Excel formulas should always be evaluated on the server
     if (activeFormula.formulaType === 'excel' || /[QP]\d+/.test(activeFormula.condition)) {
-      // Can't evaluate Excel formulas on frontend, default to HOLD if no server signal
-      return "HOLD";
+      // Can't evaluate Excel formulas on frontend, return No Signal if no server signal
+      // Don't default to HOLD - formulas should return signals dynamically
+      return "No Signal";
     }
 
     const selectedQuarterNames = filteredQuarters.map(q => q.quarter);
@@ -373,8 +403,9 @@ export default function CompanyDetail() {
       availableMetrics
     );
 
-    // Default to HOLD if no signal matches
-    return signal || "HOLD";
+    // Return No Signal if no signal matches - don't default to HOLD
+    // Formulas should return signals dynamically, not default to HOLD
+    return signal || "No Signal";
   }, [latestSignal, activeFormula, sortedQuarterlyData, filteredQuarters]);
 
   // Always show signal column if we have quarterly data
@@ -570,9 +601,13 @@ export default function CompanyDetail() {
         title: "Formula assigned & signal calculated",
         description: data.message
       });
+      
+      // Backend route already calculates signals synchronously, so no need to recalculate here
       // Force refetch signals data to show updated formula and signal
       queryClient.invalidateQueries({ queryKey: ["/api/v1/companies", companyTicker, "signals"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/v1/companies", company?.id || companyTicker, "signals"] });
       queryClient.refetchQueries({ queryKey: ["/api/v1/companies", companyTicker, "signals"] });
+      queryClient.refetchQueries({ queryKey: ["/api/v1/companies", company?.id || companyTicker, "signals"] });
       queryClient.invalidateQueries({ queryKey: ["/api/v1/formulas/entity", "company", company?.id] });
     },
     onError: (error: Error) => {
@@ -1757,6 +1792,46 @@ export default function CompanyDetail() {
                                 } else {
                                   setSelectedFormulaId(value);
                                   setUseCustomFormula(false);
+                                  
+                                  // Debounce signal recalculation when formula selection changes
+                                  // Clear any pending debounce
+                                  if (formulaDropdownDebounceRef.current) {
+                                    clearTimeout(formulaDropdownDebounceRef.current);
+                                  }
+                                  
+                                  // Set new debounced calculation (500ms delay)
+                                  formulaDropdownDebounceRef.current = setTimeout(async () => {
+                                    if (company?.id) {
+                                      try {
+                                        const response = await apiRequest("POST", "/api/signals/calculate", {
+                                          companyIds: [company.id],
+                                          incremental: false,
+                                          async: true // Use async mode to avoid blocking
+                                        });
+                                        const data = await response.json();
+                                        
+                                        if (data.jobId) {
+                                          toast({
+                                            title: "Recalculating signals",
+                                            description: "Signals are being recalculated with the new formula.",
+                                          });
+                                        }
+                                        
+                                        // Refresh signals after a delay
+                                        setTimeout(() => {
+                                          queryClient.invalidateQueries({ queryKey: ["/api/v1/companies", company.id || companyTicker, "signals"] });
+                                          queryClient.refetchQueries({ queryKey: ["/api/v1/companies", company.id || companyTicker, "signals"] });
+                                        }, 2000);
+                                      } catch (error) {
+                                        toast({
+                                          title: "Failed to recalculate signals",
+                                          description: error instanceof Error ? error.message : "An error occurred",
+                                          variant: "destructive"
+                                        });
+                                        console.error("Error calculating signals after formula change:", error);
+                                      }
+                                    }
+                                  }, 500); // 500ms debounce delay
                                 }
                               }}
                             >

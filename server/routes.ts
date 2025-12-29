@@ -29,7 +29,7 @@ import {
   type InsertSectorMapping
 } from "@shared/schema";
 import { db } from "./db";
-import { eq, sql, and } from "drizzle-orm";
+import { eq, sql, and, inArray } from "drizzle-orm";
 import { z } from "zod";
 import { queryExecutor, type QueryCondition } from "./queryExecutor";
 import { FormulaEvaluator } from "./formulaEvaluator";
@@ -1192,6 +1192,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // Immediately recalculate signal for this company using the new formula
       let newSignal = "No Signal";
+      let calculationError: string | null = null;
       try {
         const { FormulaEvaluator } = await import("./formulaEvaluator");
         const allFormulas = await storage.getAllFormulas();
@@ -1224,17 +1225,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
           await storage.deleteSignalsByCompany(company.id);
         }
       } catch (calcError) {
+        calculationError = calcError instanceof Error ? calcError.message : "Unknown error";
         console.error(`[Routes] Error calculating signal for company ${company.id}:`, calcError);
+        // Don't fail the entire request - formula assignment succeeded, just signal calculation failed
       }
+
+      const baseMessage = formulaId 
+        ? `Formula "${assignedFormula?.name}" assigned to company. Signal: ${newSignal}` 
+        : `Formula assignment cleared, using default. Signal: ${newSignal}`;
+      
+      const message = calculationError 
+        ? `${baseMessage} (Warning: Signal calculation failed: ${calculationError})`
+        : baseMessage;
 
       res.json({
         success: true,
         company,
         assignedFormula: assignedFormula || null,
         newSignal,
-        message: formulaId 
-          ? `Formula "${assignedFormula?.name}" assigned to company. Signal: ${newSignal}` 
-          : `Formula assignment cleared, using default. Signal: ${newSignal}`
+        message,
+        calculationError: calculationError || null
       });
     } catch (error: any) {
       res.status(400).json({ error: error.message });
@@ -1603,6 +1613,59 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!formula) {
         return res.status(404).json({ error: "Formula not found" });
       }
+
+      // Trigger signal recalculation for affected companies
+      // Determine which companies are affected by this formula update
+      let affectedCompanyIds: string[] = [];
+      
+      if (formula.scope === "company" && formula.scopeValue) {
+        // Company-scoped formula: only this company is affected
+        affectedCompanyIds = [formula.scopeValue];
+      } else if (formula.scope === "sector" && formula.scopeValue) {
+        // Sector-scoped formula: all companies in this sector are affected
+        const sectorCompanies = await storage.getCompaniesBySector(formula.scopeValue);
+        affectedCompanyIds = sectorCompanies.map(c => c.id);
+      } else if (formula.scope === "global") {
+        // Global formula: need to find companies using this formula
+        // 1. Companies that have this formula explicitly assigned
+        const allCompanies = await storage.getAllCompanies();
+        const companiesWithThisFormula = allCompanies.filter(c => c.assignedFormulaId === formula.id);
+        const assignedCompanyIds = companiesWithThisFormula.map(c => c.id);
+        
+        // 2. For global formulas, we'd need to check if this is the highest priority global formula
+        // Since this is complex and global formulas affect many companies, 
+        // we'll recalculate all companies that don't have explicit formula assignments
+        // (those using global formulas) + companies explicitly assigned to this formula
+        const { formulas: formulasTable } = await import("@shared/schema");
+        const allFormulas = await storage.getAllFormulas();
+        const globalFormulas = allFormulas
+          .filter(f => f.enabled && f.scope === "global")
+          .sort((a, b) => a.priority - b.priority);
+        
+        const isHighestPriorityGlobal = globalFormulas.length > 0 && globalFormulas[0].id === formula.id;
+        
+        if (isHighestPriorityGlobal || assignedCompanyIds.length > 0) {
+          // If this is the highest priority global formula or has explicit assignments,
+          // recalculate all companies (those with assignments + those using global formulas)
+          // For simplicity, recalculate all companies when a global formula changes
+          // Can be optimized later with better tracking
+          affectedCompanyIds = allCompanies.map(c => c.id);
+        } else {
+          // Only recalculate companies explicitly assigned to this formula
+          affectedCompanyIds = assignedCompanyIds;
+        }
+      }
+      
+      // Queue async recalculation for affected companies
+      if (affectedCompanyIds.length > 0) {
+        const { signalProcessor } = await import("./signalProcessor");
+        signalProcessor.enqueueJob("company", affectedCompanyIds).catch((err) => {
+          console.error(`[Routes] Failed to queue signal recalculation for formula ${formula.id}:`, err);
+          // Don't fail the request if queuing fails - formula update still succeeded
+        });
+        console.log(`[Routes] Queued signal recalculation for ${affectedCompanyIds.length} companies after formula update`);
+      }
+
       res.json(formula);
     } catch (error: any) {
       res.status(400).json({ error: error.message });
@@ -3196,6 +3259,379 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Export all companies data as CSV
+  app.get("/api/v1/companies/export", requireAuth, requirePermission("companies:read"), async (req, res) => {
+    try {
+      const { companies: companiesTable, sectors: sectorsTable, quarterlyData: quarterlyDataTable, signals: signalsTable } = await import("@shared/schema");
+
+      // 1. Fetch all companies with sector info
+      const companiesData = await db
+        .select({
+          id: companiesTable.id,
+          ticker: companiesTable.ticker,
+          name: companiesTable.name,
+          sectorId: companiesTable.sectorId,
+          sectorName: sectorsTable.name,
+          marketCap: companiesTable.marketCap,
+          financialData: companiesTable.financialData,
+        })
+        .from(companiesTable)
+        .leftJoin(sectorsTable, eq(companiesTable.sectorId, sectorsTable.id));
+
+      if (companiesData.length === 0) {
+        // Return empty CSV with headers
+        const csv = "ticker,name,sector_id,sector_name,market_cap,financial_data,quarter,metric_name,metric_value,latest_signal,formula_id\n";
+        res.setHeader("Content-Type", "text/csv; charset=utf-8");
+        res.setHeader("Content-Disposition", `attachment; filename="companies_export_${Date.now()}.csv"`);
+        return res.send(csv);
+      }
+
+      const companyIds = companiesData.map(c => c.id);
+      const tickers = companiesData.map(c => c.ticker);
+
+      // 2. Fetch all quarterly data for these companies
+      // Handle empty arrays to avoid SQL errors
+      let quarterlyDataList: typeof quarterlyDataTable.$inferSelect[] = [];
+      if (tickers.length > 0) {
+        quarterlyDataList = await db
+          .select()
+          .from(quarterlyDataTable)
+          .where(inArray(quarterlyDataTable.ticker, tickers));
+      }
+
+      // 3. Fetch latest signals for all companies
+      // Handle empty arrays to avoid SQL errors
+      let latestSignals: Array<{
+        companyId: string;
+        signal: string;
+        formulaId: string;
+        updatedAt: Date | null;
+      }> = [];
+      if (companyIds.length > 0) {
+        // Use inArray for better compatibility with drizzle-orm
+        const allSignals = await db
+          .select({
+            companyId: signalsTable.companyId,
+            signal: signalsTable.signal,
+            formulaId: signalsTable.formulaId,
+            updatedAt: signalsTable.updatedAt,
+          })
+          .from(signalsTable)
+          .where(inArray(signalsTable.companyId, companyIds));
+        
+        // Filter to get only the latest signal per company (by updatedAt)
+        const latestSignalsMap = new Map<string, typeof allSignals[0]>();
+        for (const signal of allSignals) {
+          const existing = latestSignalsMap.get(signal.companyId);
+          if (!existing) {
+            latestSignalsMap.set(signal.companyId, signal);
+          } else {
+            // Compare updatedAt timestamps
+            const signalTime = signal.updatedAt ? new Date(signal.updatedAt).getTime() : 0;
+            const existingTime = existing.updatedAt ? new Date(existing.updatedAt).getTime() : 0;
+            if (signalTime > existingTime) {
+              latestSignalsMap.set(signal.companyId, signal);
+            }
+          }
+        }
+        latestSignals = Array.from(latestSignalsMap.values());
+      }
+
+      // Create maps for quick lookup
+      const signalsMap = new Map(
+        latestSignals.map(s => [s.companyId, { signal: s.signal, formulaId: s.formulaId }])
+      );
+
+      const quarterlyDataMap = new Map<string, typeof quarterlyDataList>();
+      quarterlyDataList.forEach(qd => {
+        const key = qd.ticker;
+        if (!quarterlyDataMap.has(key)) {
+          quarterlyDataMap.set(key, []);
+        }
+        quarterlyDataMap.get(key)!.push(qd);
+      });
+
+      // 4. Generate CSV rows
+      const csvRows: string[] = [];
+      
+      // CSV header
+      csvRows.push("ticker,name,sector_id,sector_name,market_cap,financial_data,quarter,metric_name,metric_value,latest_signal,formula_id");
+
+      // Helper function to escape CSV values
+      const escapeCSV = (value: any): string => {
+        if (value === null || value === undefined) {
+          return "";
+        }
+        const str = String(value);
+        // If contains comma, quote, or newline, wrap in quotes and escape quotes
+        if (str.includes(",") || str.includes('"') || str.includes("\n") || str.includes("\r")) {
+          return `"${str.replace(/"/g, '""')}"`;
+        }
+        return str;
+      };
+
+      // Generate rows for each company
+      for (const company of companiesData) {
+        const ticker = company.ticker; // Always use ticker from companies table
+        const companyInfo = {
+          ticker: escapeCSV(ticker),
+          name: escapeCSV(company.name),
+          sectorId: escapeCSV(company.sectorId || ""),
+          sectorName: escapeCSV(company.sectorName || ""),
+          marketCap: escapeCSV(company.marketCap || ""),
+          financialData: escapeCSV(company.financialData ? JSON.stringify(company.financialData) : ""),
+        };
+
+        const companyQuarterlyData = quarterlyDataMap.get(ticker) || [];
+        const companySignal = signalsMap.get(company.id);
+
+        if (companyQuarterlyData.length === 0) {
+          // Company has no quarterly data - create one row with company info only
+          csvRows.push([
+            companyInfo.ticker,
+            companyInfo.name,
+            companyInfo.sectorId,
+            companyInfo.sectorName,
+            companyInfo.marketCap,
+            companyInfo.financialData,
+            "", // quarter
+            "", // metric_name
+            "", // metric_value
+            escapeCSV(companySignal?.signal || ""),
+            escapeCSV(companySignal?.formulaId || ""),
+          ].join(","));
+        } else {
+          // Create one row per quarter-metric combination
+          for (const qd of companyQuarterlyData) {
+            csvRows.push([
+              companyInfo.ticker,
+              companyInfo.name,
+              companyInfo.sectorId,
+              companyInfo.sectorName,
+              companyInfo.marketCap,
+              companyInfo.financialData,
+              escapeCSV(qd.quarter),
+              escapeCSV(qd.metricName),
+              escapeCSV(qd.metricValue || ""),
+              escapeCSV(companySignal?.signal || ""),
+              escapeCSV(companySignal?.formulaId || ""),
+            ].join(","));
+          }
+        }
+      }
+
+      const csv = csvRows.join("\n");
+      const timestamp = Date.now();
+      const fileName = `companies_export_${timestamp}.csv`;
+
+      res.setHeader("Content-Type", "text/csv; charset=utf-8");
+      res.setHeader("Content-Disposition", `attachment; filename="${fileName}"`);
+      res.send(csv);
+    } catch (error: any) {
+      console.error("[EXPORT] Error exporting companies data:", error);
+      res.status(500).json({ error: error.message || "Failed to export companies data" });
+    }
+  });
+
+  // Import companies with data from exported CSV format
+  app.post("/api/v1/companies/import-with-data", requireAuth, requirePermission("companies:create"), async (req: AuthRequest, res) => {
+    try {
+      const schema = z.object({
+        csvData: z.string(), // CSV content as string
+      });
+      const { csvData } = schema.parse(req.body);
+
+      const lines = csvData.split("\n").filter(line => line.trim());
+      if (lines.length === 0) {
+        return res.status(400).json({ error: "CSV is empty" });
+      }
+
+      // Parse header
+      const header = lines[0].split(",").map(h => h.trim());
+      const expectedHeaders = ["ticker", "name", "sector_id", "sector_name", "market_cap", "financial_data", "quarter", "metric_name", "metric_value", "latest_signal", "formula_id"];
+      
+      // Check if header matches expected format
+      if (header.length < 3) {
+        return res.status(400).json({ error: "Invalid CSV format. Expected columns: ticker, name, sector_name, ..." });
+      }
+
+      // Parse CSV rows (handle quoted fields properly)
+      const parseCSVLine = (line: string): string[] => {
+        const result: string[] = [];
+        let current = '';
+        let inQuotes = false;
+
+        for (let i = 0; i < line.length; i++) {
+          const char = line[i];
+          if (char === '"') {
+            if (inQuotes && line[i + 1] === '"') {
+              current += '"';
+              i++; // Skip next quote
+            } else {
+              inQuotes = !inQuotes;
+            }
+          } else if (char === ',' && !inQuotes) {
+            result.push(current.trim());
+            current = '';
+          } else {
+            current += char;
+          }
+        }
+        result.push(current.trim());
+        return result;
+      };
+
+      // Group rows by ticker
+      const companiesMap = new Map<string, {
+        ticker: string;
+        name: string;
+        sectorId: string | null;
+        sectorName: string;
+        marketCap: string | null;
+        financialData: any;
+        quarterlyData: Array<{
+          quarter: string;
+          metricName: string;
+          metricValue: string | null;
+        }>;
+      }>();
+
+      for (let i = 1; i < lines.length; i++) {
+        const values = parseCSVLine(lines[i]);
+        if (values.length < 3) continue; // Skip invalid rows
+
+        const ticker = values[0]?.trim();
+        if (!ticker) continue;
+
+        if (!companiesMap.has(ticker)) {
+          companiesMap.set(ticker, {
+            ticker,
+            name: values[1]?.trim() || ticker,
+            sectorId: values[2]?.trim() || null,
+            sectorName: values[3]?.trim() || "",
+            marketCap: values[4]?.trim() || null,
+            financialData: values[5]?.trim() ? (() => {
+              try {
+                return JSON.parse(values[5]);
+              } catch {
+                return null;
+              }
+            })() : null,
+            quarterlyData: [],
+          });
+        }
+
+        // Add quarterly data if present
+        const quarter = values[6]?.trim();
+        const metricName = values[7]?.trim();
+        const metricValue = values[8]?.trim() || null;
+
+        if (quarter && metricName) {
+          const company = companiesMap.get(ticker)!;
+          company.quarterlyData.push({ quarter, metricName, metricValue });
+        }
+      }
+
+      const results = {
+        success: 0,
+        failed: 0,
+        errors: [] as Array<{ ticker: string; error: string }>,
+        importedTickers: [] as string[],
+      };
+
+      // Process each company
+      for (const [ticker, companyData] of companiesMap.entries()) {
+        try {
+          // 1. Get or create sector
+          let sector = companyData.sectorId 
+            ? await storage.getSector(companyData.sectorId)
+            : null;
+          
+          if (!sector && companyData.sectorName) {
+            // Try to find by name
+            sector = await storage.getSectorByName(companyData.sectorName);
+            if (!sector) {
+              // Create new sector
+              sector = await storage.createSector({
+                name: companyData.sectorName,
+              });
+            }
+          }
+
+          if (!sector) {
+            throw new Error("Sector is required");
+          }
+
+          // 2. Get or create company
+          let company = await storage.getCompanyByTickerAndSector(ticker, sector.id);
+          
+          const companyDataToUpdate: any = {
+            name: companyData.name,
+            sectorId: sector.id,
+          };
+
+          if (companyData.marketCap) {
+            companyDataToUpdate.marketCap = companyData.marketCap;
+          }
+
+          if (companyData.financialData) {
+            companyDataToUpdate.financialData = companyData.financialData;
+          }
+
+          if (company) {
+            // Update existing company
+            company = await storage.updateCompany(company.id, companyDataToUpdate);
+          } else {
+            // Create new company
+            company = await storage.createCompany({
+              ticker,
+              ...companyDataToUpdate,
+            });
+          }
+
+          if (!company) {
+            throw new Error("Failed to create or update company");
+          }
+
+          // 3. Import quarterly data
+          if (companyData.quarterlyData.length > 0) {
+            const quarterlyDataToInsert = companyData.quarterlyData.map(qd => ({
+              ticker: company!.ticker,
+              companyId: company!.id,
+              quarter: qd.quarter,
+              metricName: qd.metricName,
+              metricValue: qd.metricValue ? qd.metricValue : null,
+              scrapeTimestamp: null, // Will be set to current time by default
+            }));
+
+            await storage.bulkCreateQuarterlyData(quarterlyDataToInsert);
+          }
+
+          results.success++;
+          results.importedTickers.push(ticker);
+        } catch (error: any) {
+          results.failed++;
+          results.errors.push({
+            ticker,
+            error: error.message || "Unknown error",
+          });
+          console.error(`[IMPORT] Error importing company ${ticker}:`, error);
+        }
+      }
+
+      res.json({
+        success: results.success > 0,
+        imported: results.success,
+        failed: results.failed,
+        importedTickers: results.importedTickers,
+        errors: results.errors,
+      });
+    } catch (error: any) {
+      console.error("[IMPORT] Error importing companies with data:", error);
+      res.status(400).json({ error: error.message || "Failed to import companies" });
+    }
+  });
+
   // ============================================
   // Settings Endpoints
   // ============================================
@@ -3203,8 +3639,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Get default metrics configuration
   app.get("/api/settings/default-metrics", requireAuth, requirePermission("settings:read"), async (req, res) => {
     try {
-      const allMetrics = getAllMetrics();
-      const visibleMetrics = loadVisibleMetrics();
+      const allMetrics = await getAllMetrics();
+      const visibleMetrics = await loadVisibleMetrics();
       
       // Ensure all metrics are in the visible metrics object
       // Start with defaults, then override with saved values
@@ -3221,9 +3657,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       });
       
+      const visibleMetricsList = await getVisibleMetrics();
+      
+      // Also get banking metrics
+      const { loadBankingMetrics, getVisibleBankingMetrics, DEFAULT_BANKING_METRICS } = await import("./settingsManager");
+      const bankingMetrics = await loadBankingMetrics();
+      const visibleBankingMetrics = await getVisibleBankingMetrics();
+      
       res.json({
         metrics: metricsConfig,
-        visibleMetrics: getVisibleMetrics()
+        visibleMetrics: visibleMetricsList,
+        bankingMetrics,
+        visibleBankingMetrics
       });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
@@ -3234,16 +3679,34 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.put("/api/settings/default-metrics", requireAuth, requirePermission("settings:write"), async (req, res) => {
     try {
       const schema = z.object({
-        metrics: z.record(z.string(), z.boolean())
+        metrics: z.record(z.string(), z.boolean()).optional(),
+        bankingMetrics: z.record(z.string(), z.boolean()).optional()
       });
-      const { metrics } = schema.parse(req.body);
+      const { metrics, bankingMetrics } = schema.parse(req.body);
       
-      const success = saveVisibleMetrics(metrics);
-      if (success) {
+      let defaultSuccess = true;
+      let bankingSuccess = true;
+      
+      if (metrics !== undefined) {
+        defaultSuccess = await saveVisibleMetrics(metrics);
+      }
+      
+      if (bankingMetrics !== undefined) {
+        const { saveBankingMetrics } = await import("./settingsManager");
+        bankingSuccess = await saveBankingMetrics(bankingMetrics);
+      }
+      
+      if (defaultSuccess && bankingSuccess) {
+        const { loadBankingMetrics, getVisibleBankingMetrics } = await import("./settingsManager");
+        const savedBankingMetrics = await loadBankingMetrics();
+        const visibleBankingMetrics = await getVisibleBankingMetrics();
+        
         res.json({ 
           success: true, 
-          message: "Default metrics updated successfully",
-          metrics 
+          message: "Metrics configuration updated successfully",
+          metrics: metrics || undefined,
+          bankingMetrics: bankingMetrics || savedBankingMetrics,
+          visibleBankingMetrics
         });
       } else {
         res.status(500).json({ error: "Failed to save metrics configuration" });
