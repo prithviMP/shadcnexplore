@@ -29,7 +29,7 @@ import {
   type InsertSectorMapping
 } from "@shared/schema";
 import { db } from "./db";
-import { eq, sql, and, inArray } from "drizzle-orm";
+import { eq, sql, and, inArray, asc } from "drizzle-orm";
 import { z } from "zod";
 import { queryExecutor, type QueryCondition } from "./queryExecutor";
 import { FormulaEvaluator } from "./formulaEvaluator";
@@ -3259,103 +3259,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Export all companies data as CSV
+  // Export all companies data as CSV (streaming for large datasets)
   app.get("/api/v1/companies/export", requireAuth, requirePermission("companies:read"), async (req, res) => {
     try {
       const { companies: companiesTable, sectors: sectorsTable, quarterlyData: quarterlyDataTable, signals: signalsTable } = await import("@shared/schema");
 
-      // 1. Fetch all companies with sector info
-      const companiesData = await db
-        .select({
-          id: companiesTable.id,
-          ticker: companiesTable.ticker,
-          name: companiesTable.name,
-          sectorId: companiesTable.sectorId,
-          sectorName: sectorsTable.name,
-          marketCap: companiesTable.marketCap,
-          financialData: companiesTable.financialData,
-        })
-        .from(companiesTable)
-        .leftJoin(sectorsTable, eq(companiesTable.sectorId, sectorsTable.id));
+      const timestamp = Date.now();
+      const fileName = `companies_export_${timestamp}.csv`;
 
-      if (companiesData.length === 0) {
-        // Return empty CSV with headers
-        const csv = "ticker,name,sector_id,sector_name,market_cap,financial_data,quarter,metric_name,metric_value,latest_signal,formula_id\n";
-        res.setHeader("Content-Type", "text/csv; charset=utf-8");
-        res.setHeader("Content-Disposition", `attachment; filename="companies_export_${Date.now()}.csv"`);
-        return res.send(csv);
-      }
-
-      const companyIds = companiesData.map(c => c.id);
-      const tickers = companiesData.map(c => c.ticker);
-
-      // 2. Fetch all quarterly data for these companies
-      // Handle empty arrays to avoid SQL errors
-      let quarterlyDataList: typeof quarterlyDataTable.$inferSelect[] = [];
-      if (tickers.length > 0) {
-        quarterlyDataList = await db
-          .select()
-          .from(quarterlyDataTable)
-          .where(inArray(quarterlyDataTable.ticker, tickers));
-      }
-
-      // 3. Fetch latest signals for all companies
-      // Handle empty arrays to avoid SQL errors
-      let latestSignals: Array<{
-        companyId: string;
-        signal: string;
-        formulaId: string;
-        updatedAt: Date | null;
-      }> = [];
-      if (companyIds.length > 0) {
-        // Use inArray for better compatibility with drizzle-orm
-        const allSignals = await db
-          .select({
-            companyId: signalsTable.companyId,
-            signal: signalsTable.signal,
-            formulaId: signalsTable.formulaId,
-            updatedAt: signalsTable.updatedAt,
-          })
-          .from(signalsTable)
-          .where(inArray(signalsTable.companyId, companyIds));
-        
-        // Filter to get only the latest signal per company (by updatedAt)
-        const latestSignalsMap = new Map<string, typeof allSignals[0]>();
-        for (const signal of allSignals) {
-          const existing = latestSignalsMap.get(signal.companyId);
-          if (!existing) {
-            latestSignalsMap.set(signal.companyId, signal);
-          } else {
-            // Compare updatedAt timestamps
-            const signalTime = signal.updatedAt ? new Date(signal.updatedAt).getTime() : 0;
-            const existingTime = existing.updatedAt ? new Date(existing.updatedAt).getTime() : 0;
-            if (signalTime > existingTime) {
-              latestSignalsMap.set(signal.companyId, signal);
-            }
-          }
-        }
-        latestSignals = Array.from(latestSignalsMap.values());
-      }
-
-      // Create maps for quick lookup
-      const signalsMap = new Map(
-        latestSignals.map(s => [s.companyId, { signal: s.signal, formulaId: s.formulaId }])
-      );
-
-      const quarterlyDataMap = new Map<string, typeof quarterlyDataList>();
-      quarterlyDataList.forEach(qd => {
-        const key = qd.ticker;
-        if (!quarterlyDataMap.has(key)) {
-          quarterlyDataMap.set(key, []);
-        }
-        quarterlyDataMap.get(key)!.push(qd);
-      });
-
-      // 4. Generate CSV rows
-      const csvRows: string[] = [];
-      
-      // CSV header
-      csvRows.push("ticker,name,sector_id,sector_name,market_cap,financial_data,quarter,metric_name,metric_value,latest_signal,formula_id");
+      res.setHeader("Content-Type", "text/csv; charset=utf-8");
+      res.setHeader("Content-Disposition", `attachment; filename="${fileName}"`);
 
       // Helper function to escape CSV values
       const escapeCSV = (value: any): string => {
@@ -3370,66 +3283,160 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return str;
       };
 
-      // Generate rows for each company
-      for (const company of companiesData) {
-        const ticker = company.ticker; // Always use ticker from companies table
-        const companyInfo = {
-          ticker: escapeCSV(ticker),
-          name: escapeCSV(company.name),
-          sectorId: escapeCSV(company.sectorId || ""),
-          sectorName: escapeCSV(company.sectorName || ""),
-          marketCap: escapeCSV(company.marketCap || ""),
-          financialData: escapeCSV(company.financialData ? JSON.stringify(company.financialData) : ""),
-        };
+      // Write CSV header
+      res.write("ticker,name,sector_id,sector_name,market_cap,financial_data,quarter,metric_name,metric_value,latest_signal,formula_id\n");
 
-        const companyQuarterlyData = quarterlyDataMap.get(ticker) || [];
-        const companySignal = signalsMap.get(company.id);
+      // Process companies in batches to avoid memory issues and timeout
+      const BATCH_SIZE = 50;
+      let offset = 0;
+      let hasMore = true;
 
-        if (companyQuarterlyData.length === 0) {
-          // Company has no quarterly data - create one row with company info only
-          csvRows.push([
-            companyInfo.ticker,
-            companyInfo.name,
-            companyInfo.sectorId,
-            companyInfo.sectorName,
-            companyInfo.marketCap,
-            companyInfo.financialData,
-            "", // quarter
-            "", // metric_name
-            "", // metric_value
-            escapeCSV(companySignal?.signal || ""),
-            escapeCSV(companySignal?.formulaId || ""),
-          ].join(","));
-        } else {
-          // Create one row per quarter-metric combination
-          for (const qd of companyQuarterlyData) {
-            csvRows.push([
+      while (hasMore) {
+        // Fetch batch of companies (ordered for consistent pagination)
+        const companiesBatch = await db
+          .select({
+            id: companiesTable.id,
+            ticker: companiesTable.ticker,
+            name: companiesTable.name,
+            sectorId: companiesTable.sectorId,
+            sectorName: sectorsTable.name,
+            marketCap: companiesTable.marketCap,
+            financialData: companiesTable.financialData,
+          })
+          .from(companiesTable)
+          .leftJoin(sectorsTable, eq(companiesTable.sectorId, sectorsTable.id))
+          .orderBy(asc(companiesTable.ticker))
+          .limit(BATCH_SIZE)
+          .offset(offset);
+
+        if (companiesBatch.length === 0) {
+          hasMore = false;
+          break;
+        }
+
+        const batchCompanyIds = companiesBatch.map(c => c.id);
+        const batchTickers = companiesBatch.map(c => c.ticker);
+
+        // Fetch quarterly data for this batch
+        let batchQuarterlyData: typeof quarterlyDataTable.$inferSelect[] = [];
+        if (batchTickers.length > 0) {
+          batchQuarterlyData = await db
+            .select()
+            .from(quarterlyDataTable)
+            .where(inArray(quarterlyDataTable.ticker, batchTickers));
+        }
+
+        // Fetch latest signals for this batch
+        let batchLatestSignals: Array<{
+          companyId: string;
+          signal: string;
+          formulaId: string;
+          updatedAt: Date | null;
+        }> = [];
+        if (batchCompanyIds.length > 0) {
+          const allSignals = await db
+            .select({
+              companyId: signalsTable.companyId,
+              signal: signalsTable.signal,
+              formulaId: signalsTable.formulaId,
+              updatedAt: signalsTable.updatedAt,
+            })
+            .from(signalsTable)
+            .where(inArray(signalsTable.companyId, batchCompanyIds));
+          
+          // Filter to get only the latest signal per company (by updatedAt)
+          const latestSignalsMap = new Map<string, typeof allSignals[0]>();
+          for (const signal of allSignals) {
+            const existing = latestSignalsMap.get(signal.companyId);
+            if (!existing) {
+              latestSignalsMap.set(signal.companyId, signal);
+            } else {
+              const signalTime = signal.updatedAt ? new Date(signal.updatedAt).getTime() : 0;
+              const existingTime = existing.updatedAt ? new Date(existing.updatedAt).getTime() : 0;
+              if (signalTime > existingTime) {
+                latestSignalsMap.set(signal.companyId, signal);
+              }
+            }
+          }
+          batchLatestSignals = Array.from(latestSignalsMap.values());
+        }
+
+        // Create maps for quick lookup
+        const signalsMap = new Map(
+          batchLatestSignals.map(s => [s.companyId, { signal: s.signal, formulaId: s.formulaId }])
+        );
+
+        const quarterlyDataMap = new Map<string, typeof batchQuarterlyData>();
+        batchQuarterlyData.forEach(qd => {
+          const key = qd.ticker;
+          if (!quarterlyDataMap.has(key)) {
+            quarterlyDataMap.set(key, []);
+          }
+          quarterlyDataMap.get(key)!.push(qd);
+        });
+
+        // Generate and write CSV rows for this batch
+        for (const company of companiesBatch) {
+          const ticker = company.ticker;
+          const companyInfo = {
+            ticker: escapeCSV(ticker),
+            name: escapeCSV(company.name),
+            sectorId: escapeCSV(company.sectorId || ""),
+            sectorName: escapeCSV(company.sectorName || ""),
+            marketCap: escapeCSV(company.marketCap || ""),
+            financialData: escapeCSV(company.financialData ? JSON.stringify(company.financialData) : ""),
+          };
+
+          const companyQuarterlyData = quarterlyDataMap.get(ticker) || [];
+          const companySignal = signalsMap.get(company.id);
+
+          if (companyQuarterlyData.length === 0) {
+            // Company has no quarterly data - create one row with company info only
+            res.write([
               companyInfo.ticker,
               companyInfo.name,
               companyInfo.sectorId,
               companyInfo.sectorName,
               companyInfo.marketCap,
               companyInfo.financialData,
-              escapeCSV(qd.quarter),
-              escapeCSV(qd.metricName),
-              escapeCSV(qd.metricValue || ""),
+              "", // quarter
+              "", // metric_name
+              "", // metric_value
               escapeCSV(companySignal?.signal || ""),
               escapeCSV(companySignal?.formulaId || ""),
-            ].join(","));
+            ].join(",") + "\n");
+          } else {
+            // Create one row per quarter-metric combination
+            for (const qd of companyQuarterlyData) {
+              res.write([
+                companyInfo.ticker,
+                companyInfo.name,
+                companyInfo.sectorId,
+                companyInfo.sectorName,
+                companyInfo.marketCap,
+                companyInfo.financialData,
+                escapeCSV(qd.quarter),
+                escapeCSV(qd.metricName),
+                escapeCSV(qd.metricValue || ""),
+                escapeCSV(companySignal?.signal || ""),
+                escapeCSV(companySignal?.formulaId || ""),
+              ].join(",") + "\n");
+            }
           }
         }
+
+        offset += BATCH_SIZE;
+        hasMore = companiesBatch.length === BATCH_SIZE; // Continue if we got a full batch
       }
 
-      const csv = csvRows.join("\n");
-      const timestamp = Date.now();
-      const fileName = `companies_export_${timestamp}.csv`;
-
-      res.setHeader("Content-Type", "text/csv; charset=utf-8");
-      res.setHeader("Content-Disposition", `attachment; filename="${fileName}"`);
-      res.send(csv);
+      res.end();
     } catch (error: any) {
       console.error("[EXPORT] Error exporting companies data:", error);
-      res.status(500).json({ error: error.message || "Failed to export companies data" });
+      if (!res.headersSent) {
+        res.status(500).json({ error: error.message || "Failed to export companies data" });
+      } else {
+        res.end();
+      }
     }
   });
 

@@ -84,17 +84,34 @@ async function migrate() {
   // Parse connection string into components to handle missing password properly
   const url = new URL(dbUrl);
   
-  // Build connection config explicitly to handle missing password
+  // Check if password is missing - SCRAM authentication requires a password
+  const hasPassword = url.password && url.password.length > 0;
+  
+  if (!hasPassword) {
+    console.error('❌ Error: PostgreSQL SCRAM authentication requires a password');
+    console.error('   Your DATABASE_URL is missing a password');
+    console.error('');
+    console.error('   Solution 1: Add password to DATABASE_URL');
+    console.error('   DATABASE_URL="postgresql://prithvirajpillai:YOUR_PASSWORD@localhost:5432/scrapper_screener"');
+    console.error('');
+    console.error('   Solution 2: Set PostgreSQL password for your user');
+    console.error('   Run: sudo -u postgres psql -c "ALTER USER prithvirajpillai PASSWORD \'your_password\';"');
+    console.error('   Then update DATABASE_URL with the password');
+    console.error('');
+    console.error('   Solution 3: Change PostgreSQL auth method (less secure, for localhost only)');
+    console.error('   Edit /var/lib/pgsql/data/pg_hba.conf and change "scram-sha-256" to "trust" for localhost');
+    console.error('   Then restart PostgreSQL: sudo systemctl restart postgresql');
+    process.exit(1);
+  }
+  
+  // Build connection config explicitly
   const poolConfig: any = {
     host: url.hostname,
     port: parseInt(url.port || '5432'),
     database: url.pathname.substring(1),
     user: url.username || undefined,
+    password: url.password || '', // Ensure it's always a string
   };
-  
-  // Explicitly set password (even if empty string) to avoid SCRAM authentication errors
-  // PostgreSQL SCRAM requires password to be a string, not undefined
-  poolConfig.password = url.password !== undefined ? url.password : '';
   
   // Add any query parameters (like sslmode)
   if (url.search) {
@@ -104,10 +121,43 @@ async function migrate() {
     }
   }
   
+  // Verify password is a string (not null/undefined)
+  if (typeof poolConfig.password !== 'string') {
+    console.error('❌ Error: Password must be a string');
+    console.error('   Password type:', typeof poolConfig.password);
+    process.exit(1);
+  }
+  
   const pool = new Pool(poolConfig);
 
   try {
     console.log('Creating app_settings table...');
+    
+    // Test connection first to provide better error messages
+    try {
+      await pool.query('SELECT 1');
+    } catch (connError: any) {
+      // Handle specific PostgreSQL errors with helpful messages
+      if (connError.code === '28000' || connError.message?.includes('does not exist')) {
+        console.error('❌ Error: PostgreSQL user/role does not exist');
+        console.error(`   User "${poolConfig.user}" was not found in PostgreSQL`);
+        console.error('');
+        console.error('   Solution 1: Create the PostgreSQL user');
+        console.error(`   Run: sudo -u postgres psql -c "CREATE USER ${poolConfig.user} WITH PASSWORD 'your_password';"`);
+        console.error(`   Then: sudo -u postgres psql -c "ALTER USER ${poolConfig.user} CREATEDB;"`);
+        console.error(`   Update DATABASE_URL: postgresql://${poolConfig.user}:your_password@localhost:5432/scrapper_screener`);
+        console.error('');
+        console.error('   Solution 2: Use existing PostgreSQL user (e.g., postgres)');
+        console.error('   Update DATABASE_URL: postgresql://postgres:postgres_password@localhost:5432/scrapper_screener');
+        console.error('');
+        console.error('   Solution 3: List existing users');
+        console.error('   Run: sudo -u postgres psql -c "\\du"');
+        await pool.end();
+        process.exit(1);
+      }
+      // Re-throw other connection errors
+      throw connError;
+    }
 
     // Check if table already exists
     const checkResult = await pool.query(`
