@@ -6,10 +6,105 @@
 import { Pool } from "pg";
 import "dotenv/config";
 
+// Validate DATABASE_URL before proceeding
+if (!process.env.DATABASE_URL) {
+  console.error('❌ Error: DATABASE_URL environment variable is not set');
+  console.error('   Please set DATABASE_URL in your .env file or environment variables');
+  console.error('   Example: DATABASE_URL="postgresql://user:password@host:port/database"');
+  process.exit(1);
+}
+
+if (typeof process.env.DATABASE_URL !== 'string') {
+  console.error('❌ Error: DATABASE_URL must be a string');
+  process.exit(1);
+}
+
+// Check if DATABASE_URL is empty or just whitespace
+const dbUrl = process.env.DATABASE_URL.trim();
+if (!dbUrl || dbUrl.length === 0) {
+  console.error('❌ Error: DATABASE_URL is empty');
+  console.error('   Please set a valid DATABASE_URL in your .env file');
+  process.exit(1);
+}
+
+// Validate that it looks like a PostgreSQL connection string
+if (!dbUrl.startsWith('postgresql://') && !dbUrl.startsWith('postgres://')) {
+  console.error('❌ Error: DATABASE_URL must start with postgresql:// or postgres://');
+  console.error('   Current value (masked):', dbUrl.substring(0, 20) + '...');
+  console.error('   Example format: postgresql://user:password@host:port/database');
+  process.exit(1);
+}
+
+// Parse and validate the connection string components
+let parsedUrl: URL;
+try {
+  parsedUrl = new URL(dbUrl);
+  
+  // Validate required components
+  if (!parsedUrl.hostname) {
+    console.error('❌ Error: DATABASE_URL is missing hostname');
+    console.error('   Format should be: postgresql://user:password@host:port/database');
+    process.exit(1);
+  }
+  
+  if (!parsedUrl.pathname || parsedUrl.pathname === '/') {
+    console.error('❌ Error: DATABASE_URL is missing database name');
+    console.error('   Format should be: postgresql://user:password@host:port/database');
+    console.error('   Current URL (masked):', dbUrl.replace(/:([^:@]+)@/, ':****@'));
+    process.exit(1);
+  }
+  
+  // Check if password is missing (username exists but no password after colon)
+  const hasPassword = parsedUrl.password !== undefined && parsedUrl.password !== '';
+  if (!hasPassword && parsedUrl.username) {
+    console.warn('⚠ Warning: DATABASE_URL appears to be missing a password');
+    console.warn('   If your PostgreSQL requires a password, add it to the connection string');
+    console.warn('   Format: postgresql://username:password@host:port/database');
+    console.warn('   If using passwordless authentication, ensure PostgreSQL is configured for trust/md5');
+  }
+  
+  // Debug: Show parsed components (masked)
+  const maskedUrl = dbUrl.replace(/:([^:@]+)@/, ':****@');
+  console.log('🔗 Connecting to database:', maskedUrl);
+  console.log('   Host:', parsedUrl.hostname);
+  console.log('   Port:', parsedUrl.port || '5432 (default)');
+  console.log('   Database:', parsedUrl.pathname.substring(1));
+  console.log('   Username:', parsedUrl.username || '(none)');
+  console.log('   Password:', hasPassword ? '****' : '(none - may cause authentication issues)');
+} catch (urlError: any) {
+  console.error('❌ Error: DATABASE_URL is not a valid URL');
+  console.error('   Error:', urlError.message);
+  console.error('   Current value (masked):', dbUrl.substring(0, 50) + '...');
+  console.error('   Expected format: postgresql://user:password@host:port/database');
+  console.error('   Example: postgresql://myuser:mypass@localhost:5432/mydb');
+  process.exit(1);
+}
+
 async function migrate() {
-  const pool = new Pool({
-    connectionString: process.env.DATABASE_URL,
-  });
+  // Parse connection string into components to handle missing password properly
+  const url = new URL(dbUrl);
+  
+  // Build connection config explicitly to handle missing password
+  const poolConfig: any = {
+    host: url.hostname,
+    port: parseInt(url.port || '5432'),
+    database: url.pathname.substring(1),
+    user: url.username || undefined,
+  };
+  
+  // Explicitly set password (even if empty string) to avoid SCRAM authentication errors
+  // PostgreSQL SCRAM requires password to be a string, not undefined
+  poolConfig.password = url.password !== undefined ? url.password : '';
+  
+  // Add any query parameters (like sslmode)
+  if (url.search) {
+    const params = new URLSearchParams(url.search);
+    if (params.has('sslmode')) {
+      poolConfig.ssl = params.get('sslmode') === 'require' ? { rejectUnauthorized: false } : false;
+    }
+  }
+  
+  const pool = new Pool(poolConfig);
 
   try {
     console.log('Creating app_settings table...');
