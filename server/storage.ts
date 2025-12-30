@@ -17,6 +17,7 @@ import {
   sectorUpdateHistory,
   bulkImportJobs,
   bulkImportItems,
+  appSettings,
   type User,
   type InsertUser,
   type Role,
@@ -55,7 +56,8 @@ import {
   schedulerSettings,
   type SectorSchedule,
   type InsertSectorSchedule,
-  sectorSchedules
+  sectorSchedules,
+  type AppSettings
 } from "@shared/schema";
 import { eq, and, inArray, desc, sql, gte, lte, lt, or, isNull, max } from "drizzle-orm";
 import { randomBytes } from "crypto";

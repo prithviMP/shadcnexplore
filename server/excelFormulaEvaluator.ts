@@ -168,6 +168,7 @@ interface Token {
 export class ExcelFormulaEvaluator {
   private dataMap: QuarterlyDataMap;
   public sortedQuarters: string[]; // Q1 is index 0
+  private selectedQuarters?: string[]; // Store selected quarters for trace
   private tokens: Token[] = [];
   private currentTokenIndex = 0;
   private verboseLogging: boolean;
@@ -180,6 +181,7 @@ export class ExcelFormulaEvaluator {
     const extracted = extractQuarterlyMetrics(quarterlyData, selectedQuarters);
     this.dataMap = extracted.dataMap;
     this.sortedQuarters = extracted.sortedQuarters;
+    this.selectedQuarters = selectedQuarters; // Store for trace
     this.verboseLogging = verboseLogging || process.env.EXCEL_FORMULA_VERBOSE_LOGGING === 'true';
     this.collectTrace = collectTrace;
   }
@@ -945,13 +947,39 @@ export class ExcelFormulaEvaluator {
       }
     }
 
+    // Extract unique quarters that were actually used in the formula from metric substitutions
+    const substitutions = Array.from(this.metricSubstitutions.values());
+    const actuallyUsedQuarters = new Set<string>();
+    substitutions.forEach(sub => {
+      if (sub.quarter) {
+        actuallyUsedQuarters.add(sub.quarter);
+      }
+    });
+    
+    // Sort the actually used quarters (newest first, matching the evaluation order)
+    const sortedActuallyUsedQuarters = Array.from(actuallyUsedQuarters).sort((a, b) => {
+      const dateA = new Date(a);
+      const dateB = new Date(b);
+      if (!isNaN(dateA.getTime()) && !isNaN(dateB.getTime())) {
+        return dateB.getTime() - dateA.getTime(); // Descending (Newest first)
+      }
+      return b.localeCompare(a);
+    });
+
+    // Use actually used quarters if we have substitutions, otherwise fall back to selectedQuarters or all sortedQuarters
+    const usedQuartersForTrace = sortedActuallyUsedQuarters.length > 0
+      ? sortedActuallyUsedQuarters
+      : (this.selectedQuarters && this.selectedQuarters.length > 0
+          ? this.selectedQuarters
+          : this.sortedQuarters);
+
     return {
       originalFormula: this.originalFormula,
       formulaWithSubstitutions: this.getFormulaWithSubstitutions(),
-      substitutions: Array.from(this.metricSubstitutions.values()),
+      substitutions: substitutions,
       steps: this.traceSteps,
       result: finalResult,
-      usedQuarters: this.sortedQuarters,
+      usedQuarters: usedQuartersForTrace,
       evaluationTime,
     };
   }

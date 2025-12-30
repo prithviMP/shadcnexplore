@@ -3728,8 +3728,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       
       if (bankingMetrics !== undefined) {
-        const { saveBankingMetrics } = await import("./settingsManager");
-        bankingSuccess = await saveBankingMetrics(bankingMetrics);
+        try {
+          const { saveBankingMetrics } = await import("./settingsManager");
+          bankingSuccess = await saveBankingMetrics(bankingMetrics);
+        } catch (bankingError: any) {
+          console.error("Error saving banking metrics in route handler:", bankingError);
+          console.error("Banking metrics data:", JSON.stringify(bankingMetrics, null, 2));
+          bankingSuccess = false;
+          // Include error details in response
+          return res.status(500).json({ 
+            error: "Failed to save banking metrics configuration",
+            details: bankingError?.message || String(bankingError)
+          });
+        }
       }
       
       if (defaultSuccess && bankingSuccess) {
@@ -3748,7 +3759,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         res.status(500).json({ error: "Failed to save metrics configuration" });
       }
     } catch (error: any) {
-      res.status(400).json({ error: error.message });
+      console.error("Error in PUT /api/settings/default-metrics:", error);
+      console.error("Error stack:", error?.stack);
+      res.status(400).json({ error: error.message || "Failed to save metrics configuration" });
     }
   });
 

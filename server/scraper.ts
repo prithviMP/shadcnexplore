@@ -1140,21 +1140,27 @@ class ScreenerScraper {
           }
         }
         
-        // ROCE - look for pattern like "ROCE 31.3 %"
-        if (!metrics.roce && /ROCE\s+[\d,.]+\s*%/i.test(text)) {
-          const match = text.match(/ROCE\s+([\d,.]+)\s*%/i);
+        // ROCE - find element containing ROCE, then look in parent for number
+        if (!metrics.roce && /^ROCE$/i.test(text.trim())) {
+          const parent = $(el).parent();
+          const parentText = parent.text();
+          // Look for number pattern in parent element
+          const match = parentText.match(/ROCE[\s\S]{0,200}?([\d,.]+)\s*%/i);
           if (match) {
             metrics.roce = parseNumber(match[1]);
-            console.log(`[SCRAPER] [extractKeyMetrics] Found ROCE (DOM): ${match[1]}%`);
+            console.log(`[SCRAPER] [extractKeyMetrics] Found ROCE (DOM parent): ${match[1]}%`);
           }
         }
         
-        // ROE - look for pattern like "ROE 23.4 %"
-        if (!metrics.roe && /ROE\s+[\d,.]+\s*%/i.test(text)) {
-          const match = text.match(/ROE\s+([\d,.]+)\s*%/i);
+        // ROE - find element containing ROE, then look in parent for number
+        if (!metrics.roe && /^ROE$/i.test(text.trim())) {
+          const parent = $(el).parent();
+          const parentText = parent.text();
+          // Look for number pattern in parent element
+          const match = parentText.match(/ROE[\s\S]{0,200}?([\d,.]+)\s*%/i);
           if (match) {
             metrics.roe = parseNumber(match[1]);
-            console.log(`[SCRAPER] [extractKeyMetrics] Found ROE (DOM): ${match[1]}%`);
+            console.log(`[SCRAPER] [extractKeyMetrics] Found ROE (DOM parent): ${match[1]}%`);
           }
         }
       });
@@ -1209,20 +1215,110 @@ class ScreenerScraper {
         console.log(`[SCRAPER] [extractKeyMetrics] Found Dividend Yield: ${dividendYieldMatch[1]}%`);
       }
 
-      // Extract ROCE - handle "ROCE 31.3 %" or "ROCE 31.3%"
-      // Use word boundary to avoid matching "ROCED" or other words
-      const roceMatch = pageText.match(/\bROCE\s+([\d,.]+)\s*%/i) || pageText.match(/ROCE\s+([\d,.]+)\s*%/i);
-      if (roceMatch) {
-        metrics.roce = parseNumber(roceMatch[1]);
-        console.log(`[SCRAPER] [extractKeyMetrics] Found ROCE: ${roceMatch[1]}%`);
+      // Extract ROCE - use targeted DOM traversal after main loop
+      if (!metrics.roce) {
+        // Find elements containing exactly "ROCE" text (case-insensitive)
+        $('*').each((_, el) => {
+          if (metrics.roce) return false; // Stop if already found
+          
+          const text = $(el).text().trim();
+          if (text === 'ROCE' || text === 'Roce' || text === 'roce') {
+            // Get parent container
+            const parent = $(el).parent();
+            if (parent.length > 0) {
+              // Get all children of parent to find the value
+              parent.children().each((_, child) => {
+                if (metrics.roce) return false;
+                const childText = $(child).text().trim();
+                // Look for a number followed by %
+                const numMatch = childText.match(/^([\d,.]+)\s*%$/);
+                if (numMatch) {
+                  metrics.roce = parseNumber(numMatch[1]);
+                  console.log(`[SCRAPER] [extractKeyMetrics] Found ROCE (sibling element): ${numMatch[1]}%`);
+                  return false;
+                }
+              });
+              
+              // If not found in direct children, check parent's text for pattern
+              if (!metrics.roce) {
+                const parentText = parent.text();
+                const match = parentText.match(/ROCE[\s\S]{0,200}?([\d,.]+)\s*%/i);
+                if (match) {
+                  metrics.roce = parseNumber(match[1]);
+                  console.log(`[SCRAPER] [extractKeyMetrics] Found ROCE (parent text): ${match[1]}%`);
+                  return false;
+                }
+              }
+              
+              // Also check next sibling of parent (sometimes value is in next element)
+              if (!metrics.roce) {
+                const nextSibling = parent.next();
+                if (nextSibling.length > 0) {
+                  const nextText = nextSibling.text().trim();
+                  const numMatch = nextText.match(/^([\d,.]+)\s*%$/);
+                  if (numMatch) {
+                    metrics.roce = parseNumber(numMatch[1]);
+                    console.log(`[SCRAPER] [extractKeyMetrics] Found ROCE (next sibling): ${numMatch[1]}%`);
+                    return false;
+                  }
+                }
+              }
+            }
+          }
+        });
       }
 
-      // Extract ROE - handle "ROE 23.4 %" or "ROE 23.4%"
-      // Use word boundary to avoid matching "ROEC" or other words
-      const roeMatch = pageText.match(/\bROE\s+([\d,.]+)\s*%/i) || pageText.match(/ROE\s+([\d,.]+)\s*%/i);
-      if (roeMatch) {
-        metrics.roe = parseNumber(roeMatch[1]);
-        console.log(`[SCRAPER] [extractKeyMetrics] Found ROE: ${roeMatch[1]}%`);
+      // Extract ROE - use targeted DOM traversal after main loop
+      if (!metrics.roe) {
+        // Find elements containing exactly "ROE" text (case-insensitive)
+        $('*').each((_, el) => {
+          if (metrics.roe) return false; // Stop if already found
+          
+          const text = $(el).text().trim();
+          if (text === 'ROE' || text === 'Roe' || text === 'roe') {
+            // Get parent container
+            const parent = $(el).parent();
+            if (parent.length > 0) {
+              // Get all children of parent to find the value
+              parent.children().each((_, child) => {
+                if (metrics.roe) return false;
+                const childText = $(child).text().trim();
+                // Look for a number followed by %
+                const numMatch = childText.match(/^([\d,.]+)\s*%$/);
+                if (numMatch) {
+                  metrics.roe = parseNumber(numMatch[1]);
+                  console.log(`[SCRAPER] [extractKeyMetrics] Found ROE (sibling element): ${numMatch[1]}%`);
+                  return false;
+                }
+              });
+              
+              // If not found in direct children, check parent's text for pattern
+              if (!metrics.roe) {
+                const parentText = parent.text();
+                const match = parentText.match(/ROE[\s\S]{0,200}?([\d,.]+)\s*%/i);
+                if (match) {
+                  metrics.roe = parseNumber(match[1]);
+                  console.log(`[SCRAPER] [extractKeyMetrics] Found ROE (parent text): ${match[1]}%`);
+                  return false;
+                }
+              }
+              
+              // Also check next sibling of parent (sometimes value is in next element)
+              if (!metrics.roe) {
+                const nextSibling = parent.next();
+                if (nextSibling.length > 0) {
+                  const nextText = nextSibling.text().trim();
+                  const numMatch = nextText.match(/^([\d,.]+)\s*%$/);
+                  if (numMatch) {
+                    metrics.roe = parseNumber(numMatch[1]);
+                    console.log(`[SCRAPER] [extractKeyMetrics] Found ROE (next sibling): ${numMatch[1]}%`);
+                    return false;
+                  }
+                }
+              }
+            }
+          }
+        });
       }
 
       // Extract Face Value - handle comma-separated numbers

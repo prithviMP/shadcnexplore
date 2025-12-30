@@ -210,7 +210,9 @@ export async function saveBankingMetrics(metrics: Record<string, boolean>): Prom
     return true;
   } catch (error: any) {
     console.error("Error saving banking metrics to database:", error);
-    return false;
+    console.error("Error stack:", error?.stack);
+    console.error("Metrics being saved:", JSON.stringify(metrics, null, 2));
+    throw error; // Re-throw to get better error details in the route handler
   }
 }
 
