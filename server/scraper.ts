@@ -1129,6 +1129,34 @@ class ScreenerScraper {
             console.log(`[SCRAPER] [extractKeyMetrics] Found Current Price (DOM): ₹${match[1]}`);
           }
         }
+        
+        // High/Low - handle "High / Low ₹ 2,012 / 1,303" (second number may not have ₹)
+        if (!metrics.highPrice && /High\s*\/\s*Low/i.test(text)) {
+          const match = text.match(/High\s*\/\s*Low\s+₹\s*([\d,.]+)\s*\/\s*₹?\s*([\d,.]+)/i);
+          if (match) {
+            metrics.highPrice = parseNumber(match[1]);
+            metrics.lowPrice = parseNumber(match[2]);
+            console.log(`[SCRAPER] [extractKeyMetrics] Found High/Low (DOM): ₹${match[1]} / ₹${match[2]}`);
+          }
+        }
+        
+        // ROCE - look for pattern like "ROCE 31.3 %"
+        if (!metrics.roce && /ROCE\s+[\d,.]+\s*%/i.test(text)) {
+          const match = text.match(/ROCE\s+([\d,.]+)\s*%/i);
+          if (match) {
+            metrics.roce = parseNumber(match[1]);
+            console.log(`[SCRAPER] [extractKeyMetrics] Found ROCE (DOM): ${match[1]}%`);
+          }
+        }
+        
+        // ROE - look for pattern like "ROE 23.4 %"
+        if (!metrics.roe && /ROE\s+[\d,.]+\s*%/i.test(text)) {
+          const match = text.match(/ROE\s+([\d,.]+)\s*%/i);
+          if (match) {
+            metrics.roe = parseNumber(match[1]);
+            console.log(`[SCRAPER] [extractKeyMetrics] Found ROE (DOM): ${match[1]}%`);
+          }
+        }
       });
 
       // Method 2: Regex on full page text (fallback and for metrics not found via DOM)
@@ -1151,8 +1179,9 @@ class ScreenerScraper {
         console.log(`[SCRAPER] [extractKeyMetrics] Found Current Price: ₹${currentPriceMatch[1]}`);
       }
 
-      // Extract High/Low - handle comma-separated numbers
-      const highLowMatch = pageText.match(/High\s*\/\s*Low\s+₹\s*([\d,.]+)\s*\/\s*₹\s*([\d,.]+)/i);
+      // Extract High/Low - handle "High / Low ₹ 2,012 / 1,303" format
+      // Second number may or may not have ₹ symbol
+      const highLowMatch = pageText.match(/High\s*\/\s*Low\s+₹\s*([\d,.]+)\s*\/\s*₹?\s*([\d,.]+)/i);
       if (highLowMatch) {
         metrics.highPrice = parseNumber(highLowMatch[1]);
         metrics.lowPrice = parseNumber(highLowMatch[2]);
@@ -1180,15 +1209,17 @@ class ScreenerScraper {
         console.log(`[SCRAPER] [extractKeyMetrics] Found Dividend Yield: ${dividendYieldMatch[1]}%`);
       }
 
-      // Extract ROCE
-      const roceMatch = pageText.match(/ROCE\s+([\d,.]+)\s*%/i);
+      // Extract ROCE - handle "ROCE 31.3 %" or "ROCE 31.3%"
+      // Use word boundary to avoid matching "ROCED" or other words
+      const roceMatch = pageText.match(/\bROCE\s+([\d,.]+)\s*%/i) || pageText.match(/ROCE\s+([\d,.]+)\s*%/i);
       if (roceMatch) {
         metrics.roce = parseNumber(roceMatch[1]);
         console.log(`[SCRAPER] [extractKeyMetrics] Found ROCE: ${roceMatch[1]}%`);
       }
 
-      // Extract ROE
-      const roeMatch = pageText.match(/ROE\s+([\d,.]+)\s*%/i);
+      // Extract ROE - handle "ROE 23.4 %" or "ROE 23.4%"
+      // Use word boundary to avoid matching "ROEC" or other words
+      const roeMatch = pageText.match(/\bROE\s+([\d,.]+)\s*%/i) || pageText.match(/ROE\s+([\d,.]+)\s*%/i);
       if (roeMatch) {
         metrics.roe = parseNumber(roeMatch[1]);
         console.log(`[SCRAPER] [extractKeyMetrics] Found ROE: ${roeMatch[1]}%`);
