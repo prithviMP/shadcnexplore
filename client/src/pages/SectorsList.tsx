@@ -18,7 +18,7 @@ import React, { useState, useMemo, useEffect, useRef } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 import { queryClient } from "@/lib/queryClient";
-import { Search, ArrowLeft, TrendingUp, Play, Loader2, Filter, RefreshCw, Calculator, CheckCircle2, CheckSquare, Square, XCircle, Plus, Trash2, Settings, List, Grid3x3, Building2, ChevronDown } from "lucide-react";
+import { Search, ArrowLeft, TrendingUp, Play, Loader2, Filter, RefreshCw, Calculator, CheckCircle2, CheckSquare, Square, XCircle, Plus, Trash2, Settings, List, Grid3x3, Building2, ChevronDown, Code2 } from "lucide-react";
 import { Link, useRoute } from "wouter";
 import type { Company, Sector, Formula, SectorMapping } from "@shared/schema";
 import { apiRequest } from "@/lib/queryClient";
@@ -29,6 +29,7 @@ import SignalBadge from "@/components/SignalBadge";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import QuarterlyDataSpreadsheet from "@/components/QuarterlyDataSpreadsheet";
 import { FormulaEditor } from "@/components/FormulaEditor";
+import FormulaEvaluationTrace from "@/components/FormulaEvaluationTrace";
 
 interface QuarterlyDataResponse {
   sectorId: string;
@@ -94,6 +95,8 @@ export default function SectorsList() {
   // Signal field removed - formulas return signals dynamically
   const [formulaResults, setFormulaResults] = useState<Record<string, { result: string | number | boolean, type: string }>>({});
   const [isEvaluating, setIsEvaluating] = useState(false);
+  const [showTraceModal, setShowTraceModal] = useState(false);
+  const [traceCompanyTicker, setTraceCompanyTicker] = useState<string | null>(null);
 
   // Sector list view state
   const [sectorSearchTerm, setSectorSearchTerm] = useState("");
@@ -2071,6 +2074,53 @@ export default function SectorsList() {
                         Evaluate
                       </Button>
                       <Button
+                        variant="outline"
+                        onClick={() => {
+                          // Get the formula to trace
+                          let formulaToTrace = customFormula;
+                          if (!useCustomFormula && selectedFormulaId) {
+                            const formula = formulas?.find(f => f.id === selectedFormulaId);
+                            if (formula) {
+                              formulaToTrace = formula.condition;
+                            }
+                          }
+                          if (!formulaToTrace && activeSectorFormula) {
+                            formulaToTrace = activeSectorFormula.condition;
+                          }
+
+                          if (!formulaToTrace) {
+                            toast({
+                              title: "No formula selected",
+                              description: "Please select or enter a formula to view its evaluation trace",
+                              variant: "destructive"
+                            });
+                            return;
+                          }
+
+                          // Use first company in filtered list for trace, or prompt user
+                          const firstCompany = filteredCompaniesForQuarterly.length > 0 
+                            ? filteredCompaniesForQuarterly[0] 
+                            : null;
+                          
+                          if (!firstCompany) {
+                            toast({
+                              title: "No companies available",
+                              description: "Please ensure there are companies in the sector",
+                              variant: "destructive"
+                            });
+                            return;
+                          }
+
+                          setTraceCompanyTicker(firstCompany.ticker);
+                          setShowTraceModal(true);
+                        }}
+                        disabled={!activeSectorFormula && !customFormula && !selectedFormulaId}
+                        title="View evaluation trace for first company in list"
+                      >
+                        <Code2 className="h-4 w-4 mr-2" />
+                        View Trace
+                      </Button>
+                      <Button
                         className="bg-emerald-600 hover:bg-emerald-700 text-white"
                         onClick={async () => {
                           if (!customFormula && (!selectedFormulaId || selectedFormulaId === "default")) {
@@ -2358,6 +2408,35 @@ export default function SectorsList() {
           </Card>
         </TabsContent>
       </Tabs>
+
+      {/* Formula Evaluation Trace Modal */}
+      {traceCompanyTicker && (() => {
+        let formulaToTrace = customFormula;
+        if (!useCustomFormula && selectedFormulaId) {
+          const formula = formulas?.find(f => f.id === selectedFormulaId);
+          if (formula) {
+            formulaToTrace = formula.condition;
+          }
+        }
+        if (!formulaToTrace && activeSectorFormula) {
+          formulaToTrace = activeSectorFormula.condition;
+        }
+        
+        return formulaToTrace ? (
+          <FormulaEvaluationTrace
+            ticker={traceCompanyTicker}
+            formula={formulaToTrace}
+            selectedQuarters={Array.from(selectedQuartersForFormula)}
+            open={showTraceModal}
+            onOpenChange={(open) => {
+              setShowTraceModal(open);
+              if (!open) {
+                setTraceCompanyTicker(null);
+              }
+            }}
+          />
+        ) : null;
+      })()}
     </div>
   );
 }

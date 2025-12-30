@@ -98,3 +98,46 @@ export const queryClient = new QueryClient({
     },
   },
 });
+
+/**
+ * Get formula evaluation trace
+ */
+export async function getFormulaEvaluationTrace(
+  ticker: string,
+  formula: string,
+  selectedQuarters?: string[]
+): Promise<{
+  trace: {
+    originalFormula: string;
+    formulaWithSubstitutions: string;
+    substitutions: Array<{
+      original: string;
+      metricName: string;
+      quarter: string;
+      quarterIndex: number;
+      value: number | null;
+      normalized: boolean;
+    }>;
+    steps: Array<{
+      type: string;
+      description: string;
+      input?: any;
+      output?: any;
+      metadata?: Record<string, any>;
+      timestamp: number;
+    }>;
+    result: string | number | boolean | null;
+    usedQuarters: string[];
+    evaluationTime: number;
+  };
+  result: string | number | boolean | null;
+  resultType: string;
+  usedQuarters: string[];
+}> {
+  const res = await apiRequest("POST", "/api/v1/formulas/evaluate-trace", {
+    ticker,
+    formula,
+    selectedQuarters,
+  });
+  return res.json();
+}

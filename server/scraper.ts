@@ -1087,68 +1087,118 @@ class ScreenerScraper {
     console.log(`[SCRAPER] [extractKeyMetrics] Starting key metrics extraction...`);
 
     try {
-      // Find the key metrics section - typically in a table or div with class containing "ratios" or similar
-      // Screener.in displays these in a structured format
+      // Helper function to parse number with commas
+      const parseNumber = (str: string): number => {
+        return parseFloat(str.replace(/,/g, ''));
+      };
 
-      // Method 1: Look for specific text patterns
+      // Helper to extract value from DOM using selectors (more reliable than regex)
+      const extractFromDOM = (label: string, selectors: string[]): string | null => {
+        for (const selector of selectors) {
+          const element = $(selector);
+          if (element.length > 0) {
+            const text = element.text().trim();
+            if (text) return text;
+          }
+        }
+        return null;
+      };
+
+      // Try DOM-based extraction first (more reliable)
+      // Screener.in often structures data in tables or specific divs
+      // Look for elements containing the label text followed by the value
+      
+      // Method 1: DOM-based extraction (try this first for better reliability)
+      $('*').each((_, el) => {
+        const text = $(el).text().trim();
+        
+        // Market Cap - handle "Market Cap ₹ 1,14,718 Cr." or "Market Cap ₹5,715 Cr"
+        if (text.includes('Market Cap') && !metrics.marketCap) {
+          const match = text.match(/Market Cap\s+₹\s*([\d,.]+)\s*Cr\.?/i);
+          if (match) {
+            metrics.marketCap = parseNumber(match[1]) * 10000000;
+            console.log(`[SCRAPER] [extractKeyMetrics] Found Market Cap (DOM): ₹${match[1]} Cr`);
+          }
+        }
+        
+        // Current Price
+        if (text.includes('Current Price') && !metrics.currentPrice) {
+          const match = text.match(/Current Price\s+₹\s*([\d,.]+)/i);
+          if (match) {
+            metrics.currentPrice = parseNumber(match[1]);
+            console.log(`[SCRAPER] [extractKeyMetrics] Found Current Price (DOM): ₹${match[1]}`);
+          }
+        }
+      });
+
+      // Method 2: Regex on full page text (fallback and for metrics not found via DOM)
       const pageText = $.text();
       console.log(`[SCRAPER] [extractKeyMetrics] Page text length: ${pageText.length} characters`);
 
-      // Extract Market Cap
-      const marketCapMatch = pageText.match(/Market Cap\s+₹\s*([\d.]+)\s*Cr/i);
+      // Extract Market Cap - handle comma-separated numbers like "5,715" or "1,14,718" (Indian numbering)
+      // Also handle "Cr." with period
+      const marketCapMatch = pageText.match(/Market Cap\s+₹\s*([\d,.]+)\s*Cr\.?/i);
       if (marketCapMatch) {
-        const value = parseFloat(marketCapMatch[1]) * 10000000; // Convert crores to actual value
+        const value = parseNumber(marketCapMatch[1]) * 10000000; // Convert crores to actual value
         metrics.marketCap = value;
         console.log(`[SCRAPER] [extractKeyMetrics] Found Market Cap: ₹${marketCapMatch[1]} Cr`);
       }
 
-      // Extract Current Price
-      const currentPriceMatch = pageText.match(/Current Price\s+₹\s*([\d.]+)/i);
+      // Extract Current Price - handle comma-separated numbers
+      const currentPriceMatch = pageText.match(/Current Price\s+₹\s*([\d,.]+)/i);
       if (currentPriceMatch) {
-        metrics.currentPrice = parseFloat(currentPriceMatch[1]);
+        metrics.currentPrice = parseNumber(currentPriceMatch[1]);
+        console.log(`[SCRAPER] [extractKeyMetrics] Found Current Price: ₹${currentPriceMatch[1]}`);
       }
 
-      // Extract High/Low
-      const highLowMatch = pageText.match(/High\s*\/\s*Low\s+₹\s*([\d.]+)\s*\/\s*([\d.]+)/i);
+      // Extract High/Low - handle comma-separated numbers
+      const highLowMatch = pageText.match(/High\s*\/\s*Low\s+₹\s*([\d,.]+)\s*\/\s*₹\s*([\d,.]+)/i);
       if (highLowMatch) {
-        metrics.highPrice = parseFloat(highLowMatch[1]);
-        metrics.lowPrice = parseFloat(highLowMatch[2]);
+        metrics.highPrice = parseNumber(highLowMatch[1]);
+        metrics.lowPrice = parseNumber(highLowMatch[2]);
+        console.log(`[SCRAPER] [extractKeyMetrics] Found High/Low: ₹${highLowMatch[1]} / ₹${highLowMatch[2]}`);
       }
 
       // Extract Stock P/E
-      const peMatch = pageText.match(/Stock P\/E\s+([\d.]+)/i) || pageText.match(/P\/E\s+([\d.]+)/i);
+      const peMatch = pageText.match(/Stock P\/E\s+([\d,.]+)/i) || pageText.match(/P\/E\s+([\d,.]+)/i);
       if (peMatch) {
-        metrics.pe = parseFloat(peMatch[1]);
+        metrics.pe = parseNumber(peMatch[1]);
+        console.log(`[SCRAPER] [extractKeyMetrics] Found Stock P/E: ${peMatch[1]}`);
       }
 
-      // Extract Book Value
-      const bookValueMatch = pageText.match(/Book Value\s+₹\s*([\d.]+)/i);
+      // Extract Book Value - handle comma-separated numbers
+      const bookValueMatch = pageText.match(/Book Value\s+₹\s*([\d,.]+)/i);
       if (bookValueMatch) {
-        metrics.bookValue = parseFloat(bookValueMatch[1]);
+        metrics.bookValue = parseNumber(bookValueMatch[1]);
+        console.log(`[SCRAPER] [extractKeyMetrics] Found Book Value: ₹${bookValueMatch[1]}`);
       }
 
       // Extract Dividend Yield
-      const dividendYieldMatch = pageText.match(/Dividend Yield\s+([\d.]+)\s*%/i);
+      const dividendYieldMatch = pageText.match(/Dividend Yield\s+([\d,.]+)\s*%/i);
       if (dividendYieldMatch) {
-        metrics.dividendYield = parseFloat(dividendYieldMatch[1]);
+        metrics.dividendYield = parseNumber(dividendYieldMatch[1]);
+        console.log(`[SCRAPER] [extractKeyMetrics] Found Dividend Yield: ${dividendYieldMatch[1]}%`);
       }
 
       // Extract ROCE
-      const roceMatch = pageText.match(/ROCE\s+([\d.]+)\s*%/i);
+      const roceMatch = pageText.match(/ROCE\s+([\d,.]+)\s*%/i);
       if (roceMatch) {
-        metrics.roce = parseFloat(roceMatch[1]);
+        metrics.roce = parseNumber(roceMatch[1]);
+        console.log(`[SCRAPER] [extractKeyMetrics] Found ROCE: ${roceMatch[1]}%`);
       }
 
       // Extract ROE
-      const roeMatch = pageText.match(/ROE\s+([\d.]+)\s*%/i);
+      const roeMatch = pageText.match(/ROE\s+([\d,.]+)\s*%/i);
       if (roeMatch) {
-        metrics.roe = parseFloat(roeMatch[1]);
+        metrics.roe = parseNumber(roeMatch[1]);
+        console.log(`[SCRAPER] [extractKeyMetrics] Found ROE: ${roeMatch[1]}%`);
       }
 
-      // Extract Face Value
-      const faceValueMatch = pageText.match(/Face Value\s+₹\s*([\d.]+)/i);
+      // Extract Face Value - handle comma-separated numbers
+      const faceValueMatch = pageText.match(/Face Value\s+₹\s*([\d,.]+)/i);
       if (faceValueMatch) {
-        metrics.faceValue = parseFloat(faceValueMatch[1]);
+        metrics.faceValue = parseNumber(faceValueMatch[1]);
+        console.log(`[SCRAPER] [extractKeyMetrics] Found Face Value: ₹${faceValueMatch[1]}`);
       }
 
     } catch (error) {

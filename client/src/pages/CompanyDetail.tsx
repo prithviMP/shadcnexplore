@@ -2,7 +2,7 @@ import { useState, useMemo, useEffect, useRef } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Clock, CheckCircle2, XCircle, Settings, Calculator, CheckSquare, Square, RefreshCw, Loader2, Edit } from "lucide-react";
+import { Clock, CheckCircle2, XCircle, Settings, Calculator, CheckSquare, Square, RefreshCw, Loader2, Edit, Code2 } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
@@ -27,6 +27,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { sortQuarters, formatQuarterWithLabel } from "@/utils/quarterUtils";
 import QuarterlyDataSpreadsheet from "@/components/QuarterlyDataSpreadsheet";
 import { FormulaEditor } from "@/components/FormulaEditor";
+import FormulaEvaluationTrace from "@/components/FormulaEvaluationTrace";
 
 const formatCurrency = (value: number): string => {
   // Format in Indian currency (Rupees) with Crores/Lakhs/Thousands
@@ -77,6 +78,7 @@ export default function CompanyDetail() {
   const [showFormulaBar, setShowFormulaBar] = useState(false);
   const formulaInputRef = useRef<HTMLTextAreaElement>(null);
   const formulaDropdownDebounceRef = useRef<NodeJS.Timeout | null>(null);
+  const [showTraceModal, setShowTraceModal] = useState(false);
 
   // Ticker update dialog state
   const [showTickerUpdateDialog, setShowTickerUpdateDialog] = useState(false);
@@ -1202,8 +1204,23 @@ export default function CompanyDetail() {
           <div className="grid gap-6 md:grid-cols-2">
             <Card>
               <CardHeader>
-                <CardTitle>Latest Signal</CardTitle>
-                <CardDescription>Most recent signal evaluation</CardDescription>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <CardTitle>Latest Signal</CardTitle>
+                    <CardDescription>Most recent signal evaluation</CardDescription>
+                  </div>
+                  {activeFormula && companyTicker && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setShowTraceModal(true)}
+                      disabled={!activeFormula.condition}
+                    >
+                      <Code2 className="w-4 h-4 mr-2" />
+                      View Evaluation
+                    </Button>
+                  )}
+                </div>
               </CardHeader>
               <CardContent>
                 {signalsLoading ? (
@@ -2150,6 +2167,17 @@ export default function CompanyDetail() {
           </Alert>
         )
       }
+
+      {/* Formula Evaluation Trace Modal */}
+      {activeFormula && companyTicker && (
+        <FormulaEvaluationTrace
+          ticker={companyTicker}
+          formula={activeFormula.condition}
+          selectedQuarters={filteredQuarters.map(q => q.quarter)}
+          open={showTraceModal}
+          onOpenChange={setShowTraceModal}
+        />
+      )}
     </div >
   );
 }

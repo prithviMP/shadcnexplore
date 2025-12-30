@@ -22,6 +22,35 @@ type FormulaResult = string | number | boolean | null;
 // Map of Quarter Name -> Metric Name -> Value
 type QuarterlyDataMap = Map<string, Map<string, number | null>>;
 
+// Trace data structures for formula evaluation debugging
+export interface EvaluationStep {
+  type: 'metric_lookup' | 'function_call' | 'comparison' | 'arithmetic' | 'logical' | 'unary';
+  description: string;
+  input?: any;
+  output?: any;
+  metadata?: Record<string, any>;
+  timestamp: number;
+}
+
+export interface MetricSubstitution {
+  original: string; // e.g., "OPM[Q12]"
+  metricName: string; // e.g., "OPM"
+  quarter: string; // e.g., "2024-03-31"
+  quarterIndex: number; // e.g., 12 (Q12)
+  value: number | null;
+  normalized: boolean;
+}
+
+export interface FormulaTrace {
+  originalFormula: string;
+  formulaWithSubstitutions: string;
+  substitutions: MetricSubstitution[];
+  steps: EvaluationStep[];
+  result: FormulaResult;
+  usedQuarters: string[];
+  evaluationTime: number;
+}
+
 /**
  * Extract quarterly metrics from quarterly data
  * Returns a structured map for easy lookup
@@ -142,12 +171,17 @@ export class ExcelFormulaEvaluator {
   private tokens: Token[] = [];
   private currentTokenIndex = 0;
   private verboseLogging: boolean;
+  private collectTrace: boolean;
+  private traceSteps: EvaluationStep[] = [];
+  private metricSubstitutions: Map<string, MetricSubstitution> = new Map();
+  private originalFormula: string = '';
 
-  constructor(quarterlyData: QuarterlyData[], selectedQuarters?: string[], verboseLogging: boolean = false) {
+  constructor(quarterlyData: QuarterlyData[], selectedQuarters?: string[], verboseLogging: boolean = false, collectTrace: boolean = false) {
     const extracted = extractQuarterlyMetrics(quarterlyData, selectedQuarters);
     this.dataMap = extracted.dataMap;
     this.sortedQuarters = extracted.sortedQuarters;
     this.verboseLogging = verboseLogging || process.env.EXCEL_FORMULA_VERBOSE_LOGGING === 'true';
+    this.collectTrace = collectTrace;
   }
 
   /**
@@ -161,19 +195,56 @@ export class ExcelFormulaEvaluator {
         formula = formula.substring(1).trim();
       }
 
+      this.originalFormula = formula;
+      if (this.collectTrace) {
+        this.traceSteps = [];
+        this.metricSubstitutions.clear();
+      }
+
+      const startTime = Date.now();
       this.tokenize(formula);
       const result = this.parseExpression();
+      const evaluationTime = Date.now() - startTime;
 
       if (this.currentTokenIndex < this.tokens.length && this.tokens[this.currentTokenIndex].type !== TokenType.EOF) {
         console.warn("Formula has trailing tokens");
       }
 
-      // Convert null to "No Signal" to ensure we always return a meaningful result
-      return result === null || result === undefined ? "No Signal" : result;
+      const finalResult = result === null || result === undefined ? "No Signal" : result;
+
+      if (this.collectTrace) {
+        this.addTraceStep('logical', 'Formula evaluation completed', { formula }, { result: finalResult, evaluationTime });
+      }
+
+      return finalResult;
     } catch (error: any) {
       console.error(`Error evaluating formula: ${error.message}`);
+      if (this.collectTrace) {
+        this.addTraceStep('logical', `Error: ${error.message}`, { formula }, { result: "No Signal" });
+      }
       return "No Signal";
     }
+  }
+
+  /**
+   * Add a trace step
+   */
+  private addTraceStep(
+    type: EvaluationStep['type'],
+    description: string,
+    input?: any,
+    output?: any,
+    metadata?: Record<string, any>
+  ): void {
+    if (!this.collectTrace) return;
+    this.traceSteps.push({
+      type,
+      description,
+      input,
+      output,
+      metadata,
+      timestamp: Date.now(),
+    });
   }
 
   // --- Tokenizer ---
@@ -442,20 +513,40 @@ export class ExcelFormulaEvaluator {
   // --- Execution ---
 
   private executeFunction(name: string, args: FormulaResult[]): FormulaResult {
+    const functionStartTime = Date.now();
+    let result: FormulaResult;
+
     switch (name) {
       // Logical Functions
       case 'IF':
         if (args.length < 2) throw new Error("IF requires at least 2 arguments");
-        const ifResult = this.toBoolean(args[0]) ? args[1] : (args[2] ?? "No Signal");
+        const condition = this.toBoolean(args[0]);
+        result = condition ? args[1] : (args[2] ?? "No Signal");
         // Ensure IF never returns null - convert to "No Signal"
-        return ifResult === null || ifResult === undefined ? "No Signal" : ifResult;
+        result = result === null || result === undefined ? "No Signal" : result;
+        if (this.collectTrace) {
+          this.addTraceStep('function_call', `IF(${args[0]}, ${args[1]}, ${args[2] ?? "No Signal"})`, { function: 'IF', condition, trueValue: args[1], falseValue: args[2] }, { result }, { evaluationTime: Date.now() - functionStartTime });
+        }
+        return result;
       case 'AND':
-        return args.every(arg => this.toBoolean(arg));
+        result = args.every(arg => this.toBoolean(arg));
+        if (this.collectTrace) {
+          this.addTraceStep('function_call', `AND(${args.map(a => String(a)).join(', ')})`, { function: 'AND', arguments: args }, { result });
+        }
+        return result;
       case 'OR':
-        return args.some(arg => this.toBoolean(arg));
+        result = args.some(arg => this.toBoolean(arg));
+        if (this.collectTrace) {
+          this.addTraceStep('function_call', `OR(${args.map(a => String(a)).join(', ')})`, { function: 'OR', arguments: args }, { result });
+        }
+        return result;
       case 'NOT':
         if (args.length !== 1) throw new Error("NOT requires 1 argument");
-        return !this.toBoolean(args[0]);
+        result = !this.toBoolean(args[0]);
+        if (this.collectTrace) {
+          this.addTraceStep('function_call', `NOT(${args[0]})`, { function: 'NOT', argument: args[0] }, { result });
+        }
+        return result;
       case 'ISNUMBER':
         if (args.length !== 1) throw new Error("ISNUMBER requires 1 argument");
         return typeof args[0] === 'number' && !isNaN(args[0]);
@@ -466,10 +557,18 @@ export class ExcelFormulaEvaluator {
       // Math Functions
       case 'MIN':
         const numsMin = args.filter(a => typeof a === 'number') as number[];
-        return numsMin.length > 0 ? Math.min(...numsMin) : null;
+        result = numsMin.length > 0 ? Math.min(...numsMin) : null;
+        if (this.collectTrace) {
+          this.addTraceStep('function_call', `MIN(${args.map(a => String(a)).join(', ')})`, { function: 'MIN', arguments: args, numericArgs: numsMin }, { result });
+        }
+        return result;
       case 'MAX':
         const numsMax = args.filter(a => typeof a === 'number') as number[];
-        return numsMax.length > 0 ? Math.max(...numsMax) : null;
+        result = numsMax.length > 0 ? Math.max(...numsMax) : null;
+        if (this.collectTrace) {
+          this.addTraceStep('function_call', `MAX(${args.map(a => String(a)).join(', ')})`, { function: 'MAX', arguments: args, numericArgs: numsMax }, { result });
+        }
+        return result;
       case 'ABS':
         if (args.length !== 1) throw new Error("ABS requires 1 argument");
         return typeof args[0] === 'number' ? Math.abs(args[0]) : null;
@@ -679,19 +778,39 @@ export class ExcelFormulaEvaluator {
   }
 
   private evaluateArithmetic(left: FormulaResult, op: string, right: FormulaResult): FormulaResult {
-    if (typeof left !== 'number' || typeof right !== 'number') return null;
-
-    switch (op) {
-      case '+': return left + right;
-      case '-': return left - right;
-      case '*': return left * right;
-      case '/': return right !== 0 ? left / right : null;
-      default: return null;
+    if (typeof left !== 'number' || typeof right !== 'number') {
+      if (this.collectTrace) {
+        this.addTraceStep('arithmetic', `Arithmetic operation failed: ${op}`, { left, right, op }, { result: null }, { error: 'Non-numeric operands' });
+      }
+      return null;
     }
+
+    let result: number | null;
+    switch (op) {
+      case '+': result = left + right; break;
+      case '-': result = left - right; break;
+      case '*': result = left * right; break;
+      case '/': result = right !== 0 ? left / right : null; break;
+      default: result = null;
+    }
+
+    if (this.collectTrace) {
+      this.addTraceStep('arithmetic', `${left} ${op} ${right}`, { left, right, op }, { result });
+    }
+
+    return result;
   }
 
   private evaluateComparison(left: FormulaResult, op: string, right: FormulaResult): boolean {
-    if (left === null || right === null) return false;
+    let result: boolean;
+
+    if (left === null || right === null) {
+      result = false;
+      if (this.collectTrace) {
+        this.addTraceStep('comparison', `Comparison failed: null value`, { left, right, op }, { result: false }, { error: 'Null operand' });
+      }
+      return result;
+    }
 
     if (typeof left === 'number' && typeof right === 'number') {
       // Float precision check
@@ -699,23 +818,30 @@ export class ExcelFormulaEvaluator {
       const epsilon = 0.0000001;
 
       switch (op) {
-        case '>': return left > right;
-        case '<': return left < right;
-        case '>=': return left >= right - epsilon;
-        case '<=': return left <= right + epsilon;
-        case '=': return Math.abs(diff) < epsilon;
+        case '>': result = left > right; break;
+        case '<': result = left < right; break;
+        case '>=': result = left >= right - epsilon; break;
+        case '<=': result = left <= right + epsilon; break;
+        case '=': result = Math.abs(diff) < epsilon; break;
         case '<>':
-        case '!=': return Math.abs(diff) >= epsilon;
+        case '!=': result = Math.abs(diff) >= epsilon; break;
+        default: result = false;
+      }
+    } else {
+      // String/Bool comparison
+      switch (op) {
+        case '=': result = left === right; break;
+        case '<>':
+        case '!=': result = left !== right; break;
+        default: result = false; // Invalid for non-numbers
       }
     }
 
-    // String/Bool comparison
-    switch (op) {
-      case '=': return left === right;
-      case '<>':
-      case '!=': return left !== right;
-      default: return false; // Invalid for non-numbers
+    if (this.collectTrace) {
+      this.addTraceStep('comparison', `${left} ${op} ${right}`, { left, right, op }, { result });
     }
+
+    return result;
   }
 
   private getCellValue(metricName: string, quarterIndex: number): number | null {
@@ -725,48 +851,74 @@ export class ExcelFormulaEvaluator {
     // Q1 -> Index 11 (if length is 12)
     // General formula: arrayIndex = sortedQuarters.length - quarterIndex
     const arrayIndex = this.sortedQuarters.length - quarterIndex;
+    const metricRef = `${metricName}[Q${quarterIndex}]`;
+    let normalized = false;
+    let value: number | null = null;
+    let quarterName: string | undefined;
 
     if (arrayIndex < 0 || arrayIndex >= this.sortedQuarters.length) {
       if (this.verboseLogging) {
         console.log(`[EXCEL-FORMULA] ⚠️  ${metricName}[Q${quarterIndex}]: arrayIndex ${arrayIndex} out of range (0-${this.sortedQuarters.length - 1}), returning null`);
       }
-      return null;
-    }
+      quarterName = undefined;
+      value = null;
+    } else {
+      quarterName = this.sortedQuarters[arrayIndex];
+      const quarterMetrics = this.dataMap.get(quarterName);
 
-    const quarterName = this.sortedQuarters[arrayIndex];
-    const quarterMetrics = this.dataMap.get(quarterName);
-
-    if (!quarterMetrics) {
-      if (this.verboseLogging) {
-        console.log(`[EXCEL-FORMULA] ⚠️  ${metricName}[Q${quarterIndex}]: No metrics found for quarter ${quarterName}, returning null`);
+      if (!quarterMetrics) {
+        if (this.verboseLogging) {
+          console.log(`[EXCEL-FORMULA] ⚠️  ${metricName}[Q${quarterIndex}]: No metrics found for quarter ${quarterName}, returning null`);
+        }
+        value = null;
+      } else {
+        // Try exact match
+        if (quarterMetrics.has(metricName)) {
+          value = quarterMetrics.get(metricName) ?? null;
+          normalized = false;
+          if (this.verboseLogging) {
+            console.log(`[EXCEL-FORMULA] ✓ ${metricName}[Q${quarterIndex}] (${quarterName}): ${value}`);
+          }
+        } else {
+          // Try normalized match
+          const normalizedKey = normalizeKey(metricName);
+          if (quarterMetrics.has(normalizedKey)) {
+            value = quarterMetrics.get(normalizedKey) ?? null;
+            normalized = true;
+            if (this.verboseLogging) {
+              console.log(`[EXCEL-FORMULA] ✓ ${metricName}[Q${quarterIndex}] (${quarterName}, normalized): ${value}`);
+            }
+          } else {
+            if (this.verboseLogging) {
+              console.log(`[EXCEL-FORMULA] ⚠️  ${metricName}[Q${quarterIndex}] (${quarterName}): Metric not found (tried "${metricName}" and "${normalizedKey}"), returning null`);
+              console.log(`[EXCEL-FORMULA] Available metrics in ${quarterName}: ${Array.from(quarterMetrics.keys()).slice(0, 10).join(', ')}${quarterMetrics.size > 10 ? ` (${quarterMetrics.size} total)` : ''}`);
+            }
+            value = null;
+          }
+        }
       }
-      return null;
     }
 
-    // Try exact match
-    if (quarterMetrics.has(metricName)) {
-      const value = quarterMetrics.get(metricName) ?? null;
-      if (this.verboseLogging) {
-        console.log(`[EXCEL-FORMULA] ✓ ${metricName}[Q${quarterIndex}] (${quarterName}): ${value}`);
-      }
-      return value;
+    // Record substitution for trace
+    if (this.collectTrace && quarterName) {
+      this.metricSubstitutions.set(metricRef, {
+        original: metricRef,
+        metricName,
+        quarter: quarterName,
+        quarterIndex,
+        value,
+        normalized,
+      });
+      this.addTraceStep(
+        'metric_lookup',
+        `Lookup ${metricRef}`,
+        { metricName, quarterIndex, quarter: quarterName },
+        { value, normalized },
+        { found: value !== null }
+      );
     }
 
-    // Try normalized match
-    const normalized = normalizeKey(metricName);
-    if (quarterMetrics.has(normalized)) {
-      const value = quarterMetrics.get(normalized) ?? null;
-      if (this.verboseLogging) {
-        console.log(`[EXCEL-FORMULA] ✓ ${metricName}[Q${quarterIndex}] (${quarterName}, normalized): ${value}`);
-      }
-      return value;
-    }
-
-    if (this.verboseLogging) {
-      console.log(`[EXCEL-FORMULA] ⚠️  ${metricName}[Q${quarterIndex}] (${quarterName}): Metric not found (tried "${metricName}" and "${normalized}"), returning null`);
-      console.log(`[EXCEL-FORMULA] Available metrics in ${quarterName}: ${Array.from(quarterMetrics.keys()).slice(0, 10).join(', ')}${quarterMetrics.size > 10 ? ` (${quarterMetrics.size} total)` : ''}`);
-    }
-    return null;
+    return value;
   }
 
   private toBoolean(value: FormulaResult): boolean {
@@ -774,6 +926,54 @@ export class ExcelFormulaEvaluator {
     if (typeof value === 'number') return value !== 0 && !isNaN(value);
     if (typeof value === 'string') return value.toLowerCase() !== 'false' && value.length > 0;
     return false;
+  }
+
+  /**
+   * Get the trace of the evaluation
+   */
+  getTrace(): FormulaTrace {
+    const startTime = this.traceSteps.length > 0 ? this.traceSteps[0].timestamp : Date.now();
+    const endTime = this.traceSteps.length > 0 ? this.traceSteps[this.traceSteps.length - 1].timestamp : Date.now();
+    const evaluationTime = endTime - startTime;
+
+    // Get the final result from the last step if available, otherwise use "No Signal"
+    let finalResult: FormulaResult = "No Signal";
+    if (this.traceSteps.length > 0) {
+      const lastStep = this.traceSteps[this.traceSteps.length - 1];
+      if (lastStep.output?.result !== undefined) {
+        finalResult = lastStep.output.result;
+      }
+    }
+
+    return {
+      originalFormula: this.originalFormula,
+      formulaWithSubstitutions: this.getFormulaWithSubstitutions(),
+      substitutions: Array.from(this.metricSubstitutions.values()),
+      steps: this.traceSteps,
+      result: finalResult,
+      usedQuarters: this.sortedQuarters,
+      evaluationTime,
+    };
+  }
+
+  /**
+   * Get formula with metric values substituted
+   */
+  getFormulaWithSubstitutions(): string {
+    let substituted = this.originalFormula;
+    
+    // Replace metric references with their values in reverse order of length to avoid partial matches
+    const substitutions = Array.from(this.metricSubstitutions.entries()).sort((a, b) => b[0].length - a[0].length);
+    
+    for (const [metricRef, sub] of substitutions) {
+      // Escape special regex characters in the metric reference
+      const escaped = metricRef.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const pattern = new RegExp(escaped, 'g');
+      const valueStr = sub.value !== null ? String(sub.value) : 'null';
+      substituted = substituted.replace(pattern, valueStr);
+    }
+
+    return substituted;
   }
 }
 
@@ -784,8 +984,9 @@ export async function evaluateExcelFormulaForCompany(
   ticker: string,
   formula: string,
   selectedQuarters?: string[],
-  verboseLogging: boolean = false
-): Promise<{ result: FormulaResult; resultType: string; usedQuarters: string[] }> {
+  verboseLogging: boolean = false,
+  collectTrace: boolean = false
+): Promise<{ result: FormulaResult; resultType: string; usedQuarters: string[]; trace?: FormulaTrace }> {
   const isVerbose = verboseLogging || process.env.EXCEL_FORMULA_VERBOSE_LOGGING === 'true';
   
   console.log(`[EXCEL-FORMULA] Evaluating formula for ticker: ${ticker}`);
@@ -796,7 +997,18 @@ export async function evaluateExcelFormulaForCompany(
 
     if (!quarterlyData || quarterlyData.length === 0) {
       console.log(`[EXCEL-FORMULA] No quarterly data found for ticker ${ticker}, returning "No Signal"`);
-      return { result: "No Signal", resultType: "string", usedQuarters: [] };
+      const emptyTrace: FormulaTrace = {
+        originalFormula: formula,
+        formulaWithSubstitutions: formula,
+        substitutions: [],
+        steps: [],
+        result: "No Signal",
+        usedQuarters: [],
+        evaluationTime: 0,
+      };
+      return collectTrace 
+        ? { result: "No Signal", resultType: "string", usedQuarters: [], trace: emptyTrace }
+        : { result: "No Signal", resultType: "string", usedQuarters: [] };
     }
 
     // Log available quarters
@@ -816,7 +1028,7 @@ export async function evaluateExcelFormulaForCompany(
 
     // Create evaluator with filtered data
     console.log(`[EXCEL-FORMULA] Creating evaluator with ${quartersToUse.length} quarters${selectedQuarters ? ` (filtered from ${selectedQuarters.length} selected)` : ''}`);
-    const evaluator = new ExcelFormulaEvaluator(quartersToUse, selectedQuarters, isVerbose);
+    const evaluator = new ExcelFormulaEvaluator(quartersToUse, selectedQuarters, isVerbose, collectTrace);
     console.log(`[EXCEL-FORMULA] Evaluator sorted quarters (Q1=oldest, Q${evaluator.sortedQuarters.length}=newest): ${evaluator.sortedQuarters.slice(0, 5).join(', ')}${evaluator.sortedQuarters.length > 5 ? '...' : ''}`);
     console.log(`[EXCEL-FORMULA] Quarter mapping: Q${evaluator.sortedQuarters.length} = ${evaluator.sortedQuarters[0]} (newest), Q1 = ${evaluator.sortedQuarters[evaluator.sortedQuarters.length - 1]} (oldest)`);
     if (isVerbose) {
@@ -842,7 +1054,20 @@ export async function evaluateExcelFormulaForCompany(
       ? selectedQuarters 
       : evaluator.sortedQuarters;
     console.log(`[EXCEL-FORMULA] Final result: ${JSON.stringify(result)} (${resultType}), used quarters: ${usedQuartersResult.join(', ')}`);
-    return { result, resultType, usedQuarters: usedQuartersResult };
+    
+    const returnValue: { result: FormulaResult; resultType: string; usedQuarters: string[]; trace?: FormulaTrace } = {
+      result,
+      resultType,
+      usedQuarters: usedQuartersResult,
+    };
+
+    if (collectTrace) {
+      const trace = evaluator.getTrace();
+      trace.result = result; // Ensure trace has the final result
+      returnValue.trace = trace;
+    }
+
+    return returnValue;
   } catch (error) {
     console.error(`[EXCEL-FORMULA] ✗ Error evaluating Excel formula for ${ticker}:`, error);
     if (error instanceof Error) {

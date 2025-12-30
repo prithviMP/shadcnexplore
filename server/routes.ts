@@ -2893,6 +2893,35 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Test Excel formula for a company
+  // Get formula evaluation trace (detailed step-by-step evaluation)
+  app.post("/api/v1/formulas/evaluate-trace", requireAuth, requirePermission("formulas:read"), async (req, res) => {
+    try {
+      const schema = z.object({
+        ticker: z.string().min(1),
+        formula: z.string().min(1),
+        selectedQuarters: z.array(z.string()).optional(),
+      });
+      const { ticker, formula, selectedQuarters } = schema.parse(req.body);
+
+      // evaluateExcelFormulaForCompany with collectTrace=true returns { result, resultType, usedQuarters, trace }
+      const evalResult = await evaluateExcelFormulaForCompany(ticker, formula, selectedQuarters, false, true);
+
+      if (!evalResult.trace) {
+        return res.status(500).json({ error: "Failed to collect trace" });
+      }
+
+      res.json({
+        trace: evalResult.trace,
+        result: evalResult.result,
+        resultType: evalResult.resultType,
+        usedQuarters: evalResult.usedQuarters,
+      });
+    } catch (error: any) {
+      console.error("[TRACE] Error evaluating formula trace:", error);
+      res.status(400).json({ error: error.message || "Failed to evaluate formula trace" });
+    }
+  });
+
   app.post("/api/v1/formulas/test-excel", requireAuth, requirePermission("formulas:read"), async (req, res) => {
     try {
       const schema = z.object({

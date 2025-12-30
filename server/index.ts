@@ -14,12 +14,12 @@ declare module 'http' {
   }
 }
 app.use(express.json({
-  limit: '50mb', // Increase limit for large CSV imports
+  limit: '1gb', // Increase limit for large CSV imports (import with data)
   verify: (req, _res, buf) => {
     req.rawBody = buf;
   }
 }));
-app.use(express.urlencoded({ extended: false, limit: '50mb' }));
+app.use(express.urlencoded({ extended: false, limit: '1gb' }));
 app.use(cookieParser());
 
 app.use((req, res, next) => {
