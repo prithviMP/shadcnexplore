@@ -1478,12 +1478,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Populate quarterly data
       quarterlyData.forEach((item) => {
         if (!companyData[item.ticker]) {
+          // Find matching company to get name
+          const matchingCompany = companies.find(c => c.ticker === item.ticker);
           companyData[item.ticker] = {
             ticker: item.ticker,
-            companyId: item.companyId || null,
-            companyName: companies.find(c => c.ticker === item.ticker)?.name || item.ticker,
+            companyId: item.companyId || matchingCompany?.id || null,
+            companyName: matchingCompany?.name || item.ticker,
             quarters: {}
           };
+        }
+        // Ensure companyName is always populated (in case it was null from initial creation)
+        if (!companyData[item.ticker].companyName || companyData[item.ticker].companyName === 'null') {
+          const matchingCompany = companies.find(c => c.ticker === item.ticker);
+          companyData[item.ticker].companyName = matchingCompany?.name || item.ticker;
         }
         if (!companyData[item.ticker].quarters[item.quarter]) {
           companyData[item.ticker].quarters[item.quarter] = {};
@@ -1594,6 +1601,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const formula = await storage.createFormula(data);
       res.json(formula);
     } catch (error: any) {
+      // Handle unique constraint violation for formula name
+      if (error.message?.includes('duplicate key') || error.message?.includes('unique constraint') || 
+          error.code === '23505') {
+        return res.status(400).json({ 
+          error: `A formula with the name "${req.body.name}" already exists. Please choose a different name.` 
+        });
+      }
       res.status(400).json({ error: error.message });
     }
   });
@@ -1668,6 +1682,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       res.json(formula);
     } catch (error: any) {
+      // Handle unique constraint violation for formula name
+      if (error.message?.includes('duplicate key') || error.message?.includes('unique constraint') || 
+          error.code === '23505') {
+        return res.status(400).json({ 
+          error: `A formula with the name "${req.body.name}" already exists. Please choose a different name.` 
+        });
+      }
       res.status(400).json({ error: error.message });
     }
   });
@@ -3695,16 +3716,36 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       const visibleMetricsList = await getVisibleMetrics();
       
-      // Also get banking metrics
-      const { loadBankingMetrics, getVisibleBankingMetrics, DEFAULT_BANKING_METRICS } = await import("./settingsManager");
+      // Also get banking metrics and order
+      const { 
+        loadBankingMetrics, 
+        getVisibleBankingMetrics, 
+        DEFAULT_BANKING_METRICS,
+        loadMetricsOrder,
+        loadBankingMetricsOrder,
+        getOrderedVisibleMetrics,
+        getOrderedVisibleBankingMetrics
+      } = await import("./settingsManager");
       const bankingMetrics = await loadBankingMetrics();
       const visibleBankingMetrics = await getVisibleBankingMetrics();
+      
+      // Get metric orders
+      const metricsOrder = await loadMetricsOrder();
+      const bankingMetricsOrder = await loadBankingMetricsOrder();
+      
+      // Get ordered visible metrics
+      const orderedVisibleMetrics = await getOrderedVisibleMetrics();
+      const orderedVisibleBankingMetrics = await getOrderedVisibleBankingMetrics();
       
       res.json({
         metrics: metricsConfig,
         visibleMetrics: visibleMetricsList,
         bankingMetrics,
-        visibleBankingMetrics
+        visibleBankingMetrics,
+        metricsOrder,
+        bankingMetricsOrder,
+        orderedVisibleMetrics,
+        orderedVisibleBankingMetrics
       });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
@@ -3716,12 +3757,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const schema = z.object({
         metrics: z.record(z.string(), z.boolean()).optional(),
-        bankingMetrics: z.record(z.string(), z.boolean()).optional()
+        bankingMetrics: z.record(z.string(), z.boolean()).optional(),
+        metricsOrder: z.array(z.string()).optional(),
+        bankingMetricsOrder: z.array(z.string()).optional()
       });
-      const { metrics, bankingMetrics } = schema.parse(req.body);
+      const { metrics, bankingMetrics, metricsOrder, bankingMetricsOrder } = schema.parse(req.body);
       
       let defaultSuccess = true;
       let bankingSuccess = true;
+      let orderSuccess = true;
+      let bankingOrderSuccess = true;
       
       if (metrics !== undefined) {
         defaultSuccess = await saveVisibleMetrics(metrics);
@@ -3743,17 +3788,54 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       }
       
-      if (defaultSuccess && bankingSuccess) {
-        const { loadBankingMetrics, getVisibleBankingMetrics } = await import("./settingsManager");
+      // Save metrics order if provided
+      if (metricsOrder !== undefined) {
+        try {
+          const { saveMetricsOrder } = await import("./settingsManager");
+          orderSuccess = await saveMetricsOrder(metricsOrder);
+        } catch (orderError: any) {
+          console.error("Error saving metrics order:", orderError);
+          orderSuccess = false;
+        }
+      }
+      
+      // Save banking metrics order if provided
+      if (bankingMetricsOrder !== undefined) {
+        try {
+          const { saveBankingMetricsOrder } = await import("./settingsManager");
+          bankingOrderSuccess = await saveBankingMetricsOrder(bankingMetricsOrder);
+        } catch (orderError: any) {
+          console.error("Error saving banking metrics order:", orderError);
+          bankingOrderSuccess = false;
+        }
+      }
+      
+      if (defaultSuccess && bankingSuccess && orderSuccess && bankingOrderSuccess) {
+        const { 
+          loadBankingMetrics, 
+          getVisibleBankingMetrics,
+          loadMetricsOrder,
+          loadBankingMetricsOrder,
+          getOrderedVisibleMetrics,
+          getOrderedVisibleBankingMetrics
+        } = await import("./settingsManager");
         const savedBankingMetrics = await loadBankingMetrics();
         const visibleBankingMetrics = await getVisibleBankingMetrics();
+        const savedMetricsOrder = await loadMetricsOrder();
+        const savedBankingMetricsOrder = await loadBankingMetricsOrder();
+        const orderedVisibleMetrics = await getOrderedVisibleMetrics();
+        const orderedVisibleBankingMetrics = await getOrderedVisibleBankingMetrics();
         
         res.json({ 
           success: true, 
           message: "Metrics configuration updated successfully",
           metrics: metrics || undefined,
           bankingMetrics: bankingMetrics || savedBankingMetrics,
-          visibleBankingMetrics
+          visibleBankingMetrics,
+          metricsOrder: savedMetricsOrder,
+          bankingMetricsOrder: savedBankingMetricsOrder,
+          orderedVisibleMetrics,
+          orderedVisibleBankingMetrics
         });
       } else {
         res.status(500).json({ error: "Failed to save metrics configuration" });

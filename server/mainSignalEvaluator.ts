@@ -123,7 +123,8 @@ function extractQuarterlyMetrics(quarterlyData: QuarterlyDataGrouped[]): Quarter
     'eps_yoy_percent'
   ]);
 
-  // Q14: OPM %
+  // Q14: OPM % (with fallback to Financing Margin % if OPM is not available)
+  // This fallback works for all sectors, not just banking
   metrics.Q14 = findMetricByVariations(currentQuarter, [
     'OPM %',
     'Operating Profit Margin %',
@@ -131,6 +132,16 @@ function extractQuarterlyMetrics(quarterlyData: QuarterlyDataGrouped[]): Quarter
     'opm_percent',
     'operating_profit_margin'
   ]);
+  
+  // If OPM % is not available, fallback to Financing Margin % (for any sector)
+  if (metrics.Q14 === null) {
+    metrics.Q14 = findMetricByVariations(currentQuarter, [
+      'Financing Margin %',
+      'Financing Margin',
+      'financingmargin',
+      'financing_margin'
+    ]);
+  }
 
   // Q15: Sales Growth (QoQ) %
   metrics.Q15 = findMetricByVariations(currentQuarter, [
@@ -177,6 +188,16 @@ function extractQuarterlyMetrics(quarterlyData: QuarterlyDataGrouped[]): Quarter
       'opm_percent',
       'operating_profit_margin'
     ]);
+    
+    // If OPM % is not available, fallback to Financing Margin % (for any sector)
+    if (metrics.P14 === null) {
+      metrics.P14 = findMetricByVariations(previousQuarter, [
+        'Financing Margin %',
+        'Financing Margin',
+        'financingmargin',
+        'financing_margin'
+      ]);
+    }
 
     metrics.P15 = findMetricByVariations(previousQuarter, [
       'Sales Growth(QoQ) %',  // Exact format from scraper

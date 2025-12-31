@@ -508,12 +508,16 @@ export default function SectorsList() {
     setCurrentPage(1);
   }, [searchTerm, signalFilter]);
 
-  // Fetch default metrics from settings
+  // Fetch default metrics from settings (includes order information)
   const { data: defaultMetricsData } = useQuery<{
     metrics: Record<string, boolean>;
     visibleMetrics: string[];
     bankingMetrics?: Record<string, boolean>;
     visibleBankingMetrics?: string[];
+    metricsOrder?: string[];
+    bankingMetricsOrder?: string[];
+    orderedVisibleMetrics?: string[];
+    orderedVisibleBankingMetrics?: string[];
   }>({
     queryKey: ["/api/settings/default-metrics"],
     retry: 1, // Retry once if it fails
@@ -537,17 +541,24 @@ export default function SectorsList() {
   }, [displaySectorId, sectors]);
 
   // Initialize selected metrics and quarters when data loads
+  // Uses orderedVisibleMetrics/orderedVisibleBankingMetrics which respect both visibility AND order
   useEffect(() => {
     if (sortedQuarterlyData && selectedMetricsForTable.length === 0) {
       // Use banking metrics for banking sectors, default metrics for others
       if (isBankingSector) {
-        if (defaultMetricsData?.visibleBankingMetrics && defaultMetricsData.visibleBankingMetrics.length > 0) {
-          // Use banking metrics from database settings
+        // Prefer ordered visible metrics (respects display order from settings)
+        if (defaultMetricsData?.orderedVisibleBankingMetrics && defaultMetricsData.orderedVisibleBankingMetrics.length > 0) {
+          setSelectedMetricsForTable(defaultMetricsData.orderedVisibleBankingMetrics);
+        } else if (defaultMetricsData?.visibleBankingMetrics && defaultMetricsData.visibleBankingMetrics.length > 0) {
+          // Fallback to unordered visible metrics
           setSelectedMetricsForTable(defaultMetricsData.visibleBankingMetrics);
         }
       } else {
-        if (defaultMetricsData?.visibleMetrics && defaultMetricsData.visibleMetrics.length > 0) {
-          // Use default metrics from database settings
+        // Prefer ordered visible metrics (respects display order from settings)
+        if (defaultMetricsData?.orderedVisibleMetrics && defaultMetricsData.orderedVisibleMetrics.length > 0) {
+          setSelectedMetricsForTable(defaultMetricsData.orderedVisibleMetrics);
+        } else if (defaultMetricsData?.visibleMetrics && defaultMetricsData.visibleMetrics.length > 0) {
+          // Fallback to unordered visible metrics
           setSelectedMetricsForTable(defaultMetricsData.visibleMetrics);
         }
       }

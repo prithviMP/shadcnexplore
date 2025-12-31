@@ -29,7 +29,33 @@ function normalizeMetricName(metricName: string): string {
 }
 
 /**
+ * Check if a metric name refers to OPM (Operating Profit Margin)
+ */
+function isOPMMetric(metricName: string): boolean {
+  const normalized = normalizeMetricName(metricName);
+  return normalized.includes('opm') || 
+         normalized.includes('operatingprofitmargin') ||
+         normalized.includes('operatingmargin');
+}
+
+/**
+ * Get Financing Margin metric name variations for fallback
+ */
+function getFinancingMarginVariations(): string[] {
+  return [
+    'Financing Margin %',
+    'Financing Margin',
+    'financingmargin',
+    'financing_margin',
+    'FinancingMargin',
+    'financing margin %',
+    'financing margin'
+  ];
+}
+
+/**
  * Find metric in quarterly data by name (fuzzy matching)
+ * Includes OPM fallback to Financing Margin for all sectors
  */
 function findMetricInData(metricName: string, availableMetrics: string[]): string | null {
   const normalized = normalizeMetricName(metricName);
@@ -64,6 +90,30 @@ function findMetricInData(metricName: string, availableMetrics: string[]): strin
       for (const metric of availableMetrics) {
         const metricNormalized = normalizeMetricName(metric);
         if (aliases.some(alias => metricNormalized.includes(alias))) {
+          return metric;
+        }
+      }
+    }
+  }
+  
+  // If OPM is requested but not found, try Financing Margin as fallback (for any sector)
+  if (isOPMMetric(metricName)) {
+    const financingMarginVariations = getFinancingMarginVariations();
+    
+    for (const fmName of financingMarginVariations) {
+      const normalizedFM = normalizeMetricName(fmName);
+      
+      // Try exact match
+      for (const metric of availableMetrics) {
+        if (normalizeMetricName(metric) === normalizedFM) {
+          return metric;
+        }
+      }
+      
+      // Try partial match
+      for (const metric of availableMetrics) {
+        const metricNormalized = normalizeMetricName(metric);
+        if (metricNormalized.includes(normalizedFM) || normalizedFM.includes(metricNormalized)) {
           return metric;
         }
       }

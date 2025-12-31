@@ -874,28 +874,63 @@ export class ExcelFormulaEvaluator {
         }
         value = null;
       } else {
-        // Try exact match
-        if (quarterMetrics.has(metricName)) {
-          value = quarterMetrics.get(metricName) ?? null;
-          normalized = false;
-          if (this.verboseLogging) {
+        // Helper function to try finding a metric
+        const tryFindMetric = (name: string): number | null => {
+          // Try exact match
+          if (quarterMetrics.has(name)) {
+            return quarterMetrics.get(name) ?? null;
+          }
+          // Try normalized match
+          const normalizedKey = normalizeKey(name);
+          if (quarterMetrics.has(normalizedKey)) {
+            return quarterMetrics.get(normalizedKey) ?? null;
+          }
+          return null;
+        };
+
+        // Try to find the requested metric
+        value = tryFindMetric(metricName);
+
+        // If OPM % is not available, fallback to Financing Margin % (for any sector)
+        // This ensures companies without OPM can still use Financing Margin as a substitute
+        if (value === null) {
+          const normalizedMetricName = normalizeKey(metricName);
+          const isOPM = normalizedMetricName.includes('opm') || 
+                       normalizedMetricName.includes('operatingprofitmargin') ||
+                       normalizedMetricName.includes('operatingmargin');
+          
+          if (isOPM) {
+            // Try Financing Margin % as fallback (works for all sectors, not just banking)
+            const financingMarginVariations = [
+              'Financing Margin %',
+              'Financing Margin',
+              'financingmargin',
+              'financing_margin'
+            ];
+            
+            for (const fmName of financingMarginVariations) {
+              const fmValue = tryFindMetric(fmName);
+              if (fmValue !== null) {
+                value = fmValue;
+                normalized = true;
+                if (this.verboseLogging) {
+                  console.log(`[EXCEL-FORMULA] ✓ ${metricName}[Q${quarterIndex}] (${quarterName}): OPM not found, using Financing Margin %: ${value}`);
+                }
+                break;
+              }
+            }
+          }
+        }
+
+        // Log result
+        if (value !== null) {
+          if (!normalized && this.verboseLogging) {
             console.log(`[EXCEL-FORMULA] ✓ ${metricName}[Q${quarterIndex}] (${quarterName}): ${value}`);
           }
         } else {
-          // Try normalized match
-          const normalizedKey = normalizeKey(metricName);
-          if (quarterMetrics.has(normalizedKey)) {
-            value = quarterMetrics.get(normalizedKey) ?? null;
-            normalized = true;
-            if (this.verboseLogging) {
-              console.log(`[EXCEL-FORMULA] ✓ ${metricName}[Q${quarterIndex}] (${quarterName}, normalized): ${value}`);
-            }
-          } else {
-            if (this.verboseLogging) {
-              console.log(`[EXCEL-FORMULA] ⚠️  ${metricName}[Q${quarterIndex}] (${quarterName}): Metric not found (tried "${metricName}" and "${normalizedKey}"), returning null`);
-              console.log(`[EXCEL-FORMULA] Available metrics in ${quarterName}: ${Array.from(quarterMetrics.keys()).slice(0, 10).join(', ')}${quarterMetrics.size > 10 ? ` (${quarterMetrics.size} total)` : ''}`);
-            }
-            value = null;
+          if (this.verboseLogging) {
+            console.log(`[EXCEL-FORMULA] ⚠️  ${metricName}[Q${quarterIndex}] (${quarterName}): Metric not found, returning null`);
+            console.log(`[EXCEL-FORMULA] Available metrics in ${quarterName}: ${Array.from(quarterMetrics.keys()).slice(0, 10).join(', ')}${quarterMetrics.size > 10 ? ` (${quarterMetrics.size} total)` : ''}`);
           }
         }
       }

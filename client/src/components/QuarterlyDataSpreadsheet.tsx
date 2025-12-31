@@ -218,13 +218,14 @@ export default function QuarterlyDataSpreadsheet({
 
         // 2. Data Rows (Grouped by Company)
         const dataRows: Row[] = data.companies.flatMap((company) => {
-            // Company Header Row
+            // Company Header Row - handle null/undefined companyName gracefully
+            const displayName = company.companyName || company.ticker;
             const companyHeaderRow: Row = {
                 rowId: `company-${company.ticker}`,
                 cells: [
                     {
                         type: "text" as const,
-                        text: `${company.ticker} - ${company.companyName}`,
+                        text: `${company.ticker} - ${displayName}`,
                         nonEditable: true,
                         style: {
                             ...baseCellStyle,

@@ -957,14 +957,20 @@ class ScreenerScraper {
       console.log(`[SCRAPER] [extractQuarterlyData] Searching all tables for quarterly data...`);
       let tablesChecked = 0;
       // Look for table with quarterly data by checking content
+      // Note: Some companies (especially financial/banking) use "Revenue" instead of "Sales"
       $('table').each((_, elem) => {
         tablesChecked++;
         const tableText = $(elem).text();
-        if (tableText.includes('Sales') && tableText.includes('Net Profit') &&
-          (tableText.includes('2022') || tableText.includes('2023') || tableText.includes('2024') ||
-            tableText.includes('Sep') || tableText.includes('Dec') || tableText.includes('Mar') || tableText.includes('Jun'))) {
+        const hasSalesOrRevenue = tableText.includes('Sales') || tableText.includes('Revenue');
+        const hasNetProfit = tableText.includes('Net Profit');
+        const hasQuarterIndicator = tableText.includes('2022') || tableText.includes('2023') || 
+          tableText.includes('2024') || tableText.includes('2025') ||
+          tableText.includes('Sep') || tableText.includes('Dec') || 
+          tableText.includes('Mar') || tableText.includes('Jun');
+        
+        if (hasSalesOrRevenue && hasNetProfit && hasQuarterIndicator) {
           table = $(elem);
-          console.log(`[SCRAPER] [extractQuarterlyData] Found quarterly table at index ${tablesChecked}`);
+          console.log(`[SCRAPER] [extractQuarterlyData] Found quarterly table at index ${tablesChecked} (hasSales=${tableText.includes('Sales')}, hasRevenue=${tableText.includes('Revenue')})`);
           return false; // Break
         }
       });
@@ -979,24 +985,43 @@ class ScreenerScraper {
     console.log(`[SCRAPER] [extractQuarterlyData] Found quarterly table with ${table.find('tr').length} rows`);
 
     // Extract quarter headers - more robust parsing
-    const headerRow = table.find('thead tr, tr').first();
+    // Try thead first, then first row
+    let headerRow = table.find('thead tr').first();
+    if (headerRow.length === 0) {
+      headerRow = table.find('tr').first();
+    }
     const quarterHeaders: string[] = [];
 
     console.log(`[SCRAPER] [extractQuarterlyData] Extracting quarter headers from header row...`);
+    console.log(`[SCRAPER] [extractQuarterlyData] Header row has ${headerRow.find('th, td').length} cells`);
+    
     headerRow.find('th, td').each((idx, elem) => {
       if (idx === 0) return; // Skip first column (metric names)
       const text = $(elem).text().trim();
+      const html = $(elem).html() || '';
+      
       // Match quarter formats: "Sep 2023", "Dec 2023", "Mar 2024", "Jun 2024", etc.
+      // Also check for dates like "30 Sep 2024" and extract just "Sep 2024"
       if (text && (
         /(Sep|Dec|Mar|Jun)\s+\d{4}/i.test(text) ||
         /(Sep|Dec|Mar|Jun)\s+\d{2}/i.test(text) ||
+        /\d+\s+(Sep|Dec|Mar|Jun)\s+\d{4}/i.test(text) || // "30 Sep 2024" format
         (text.includes('Sep') || text.includes('Dec') || text.includes('Mar') || text.includes('Jun'))
       )) {
         // Normalize quarter format to "Sep 2023" style
         const normalized = this.normalizeQuarterFormat(text);
         if (normalized && !quarterHeaders.includes(normalized)) {
           quarterHeaders.push(normalized);
-          console.log(`[SCRAPER] [extractQuarterlyData] Found quarter header: ${text} -> ${normalized}`);
+          console.log(`[SCRAPER] [extractQuarterlyData] Found quarter header [${idx}]: "${text}" -> "${normalized}"`);
+        } else if (normalized) {
+          console.log(`[SCRAPER] [extractQuarterlyData] Skipping duplicate quarter header [${idx}]: "${text}" -> "${normalized}"`);
+        } else {
+          console.log(`[SCRAPER] [extractQuarterlyData] Could not normalize quarter header [${idx}]: "${text}"`);
+        }
+      } else if (text) {
+        // Log non-matching cells for debugging (only first few to avoid spam)
+        if (idx < 10) {
+          console.log(`[SCRAPER] [extractQuarterlyData] Non-quarter cell [${idx}]: "${text.substring(0, 50)}"`);
         }
       }
     });
@@ -1104,11 +1129,290 @@ class ScreenerScraper {
         return null;
       };
 
-      // Try DOM-based extraction first (more reliable)
+      // Method 0: Extract from #top-ratios list (most reliable for Screener.in structure)
+      // This is the primary method used by Screener.in for displaying key metrics
+      console.log(`[SCRAPER] [extractKeyMetrics] Method 0: Checking for #top-ratios list...`);
+      const topRatiosList = $('#top-ratios');
+      if (topRatiosList.length > 0) {
+        const listItems = topRatiosList.find('li');
+        console.log(`[SCRAPER] [extractKeyMetrics] ✓ Found #top-ratios list with ${listItems.length} items, extracting metrics...`);
+        
+        let metricsFoundInTopRatios = 0;
+        topRatiosList.find('li').each((_, li) => {
+          const $li = $(li);
+          // Try both selectors: span.name and .name
+          const nameSpan = $li.find('span.name').length > 0 ? $li.find('span.name') : $li.find('.name');
+          // Try both selectors: span.value, .value, and span.nowrap.value
+          let valueSpan = $li.find('span.value').length > 0 ? $li.find('span.value') : 
+                         $li.find('.value').length > 0 ? $li.find('.value') :
+                         $li.find('span.nowrap.value');
+          
+          if (nameSpan.length > 0 && valueSpan.length > 0) {
+            const metricName = nameSpan.text().trim();
+            
+            // Try to get value from nested <span class="number"> first, then fallback to full text
+            const numberSpan = valueSpan.find('span.number');
+            let valueText: string;
+            let fullValueText: string;
+            
+            // Get full value text first (includes all text content)
+            fullValueText = valueSpan.text().trim();
+            
+            if (numberSpan.length > 0) {
+              // Get text from number span - this is the most reliable
+              valueText = numberSpan.text().trim();
+              console.log(`[SCRAPER] [extractKeyMetrics] Processing metric from #top-ratios: "${metricName}" = "${valueText}" (from number span), full text: "${fullValueText}"`);
+            } else {
+              // Fallback: try to extract number from full text
+              valueText = fullValueText;
+              console.log(`[SCRAPER] [extractKeyMetrics] Processing metric from #top-ratios: "${metricName}" = "${valueText}" (from value span, no number span found)`);
+            }
+            
+            // Debug: log the HTML structure for troubleshooting
+            if (valueText === '' || valueText === null || valueText === undefined) {
+              console.log(`[SCRAPER] [extractKeyMetrics] ⚠️  Empty valueText for "${metricName}", HTML: ${$li.html()?.substring(0, 200)}`);
+            }
+            
+            // Extract numeric value from value text
+            let numericValue: number | null = null;
+            let metricKey: string | null = null;
+            
+            // Handle Market Cap (e.g., "976" in number span, with "Cr." in parent)
+            if (metricName === 'Market Cap') {
+              // Get full value text to check for "Cr."
+              const fullValueText = valueSpan.text().trim();
+              
+              // Strategy 1: Use number span if available and valid
+              if (valueText && valueText !== '' && !isNaN(parseNumber(valueText)) && fullValueText.includes('Cr')) {
+                numericValue = parseNumber(valueText) * 10000000;
+                metrics.marketCap = numericValue;
+                metricKey = 'marketCap';
+                metricsFoundInTopRatios++;
+                console.log(`[SCRAPER] [extractKeyMetrics] ✓ Found Market Cap from #top-ratios (number span): ${valueText} Cr → ${numericValue}`);
+              } else {
+                // Strategy 2: Try to match the full text (includes ₹ and Cr.)
+                let match = fullValueText.match(/₹\s*([\d,.]+)\s*Cr\.?/i);
+                if (!match) {
+                  // Strategy 3: Try just the number with "Cr." context
+                  match = fullValueText.match(/([\d,.]+)\s*Cr\.?/i);
+                }
+                if (match) {
+                  numericValue = parseNumber(match[1]) * 10000000; // Convert crores to actual value
+                  metrics.marketCap = numericValue;
+                  metricKey = 'marketCap';
+                  metricsFoundInTopRatios++;
+                  console.log(`[SCRAPER] [extractKeyMetrics] ✓ Found Market Cap from #top-ratios (regex): ${match[1]} Cr → ${numericValue}`);
+                } else {
+                  console.log(`[SCRAPER] [extractKeyMetrics] ⚠️  Market Cap value text didn't match pattern: valueText="${valueText}", fullValueText="${fullValueText}"`);
+                  console.log(`[SCRAPER] [extractKeyMetrics] Debug HTML: ${valueSpan.html()?.substring(0, 150)}`);
+                }
+              }
+            }
+            // Handle Current Price (e.g., "24.7" in number span)
+            else if (metricName === 'Current Price') {
+              const fullValueText = valueSpan.text().trim();
+              
+              // Strategy 1: Use number span if available and valid
+              if (valueText && valueText !== '' && !isNaN(parseNumber(valueText))) {
+                numericValue = parseNumber(valueText);
+                metrics.currentPrice = numericValue;
+                metricKey = 'currentPrice';
+                metricsFoundInTopRatios++;
+                console.log(`[SCRAPER] [extractKeyMetrics] ✓ Found Current Price from #top-ratios (number span): ${valueText}`);
+              } else {
+                // Strategy 2: Try regex on full text
+                let match = fullValueText.match(/₹\s*([\d,.]+)/i);
+                if (match) {
+                  numericValue = parseNumber(match[1]);
+                  metrics.currentPrice = numericValue;
+                  metricKey = 'currentPrice';
+                  metricsFoundInTopRatios++;
+                  console.log(`[SCRAPER] [extractKeyMetrics] ✓ Found Current Price from #top-ratios (regex): ₹${match[1]}`);
+                } else {
+                  console.log(`[SCRAPER] [extractKeyMetrics] ⚠️  Current Price value text didn't match pattern: valueText="${valueText}", fullValueText="${fullValueText}"`);
+                  console.log(`[SCRAPER] [extractKeyMetrics] Debug HTML: ${valueSpan.html()?.substring(0, 150)}`);
+                }
+              }
+            }
+            // Handle High / Low (e.g., "₹ 33.5 / 22.0") - has TWO number spans
+            else if (metricName === 'High / Low') {
+              const fullValueText = valueSpan.text().trim();
+              // Try to get both number spans
+              const numberSpans = valueSpan.find('span.number');
+              if (numberSpans.length >= 2) {
+                const highValue = parseNumber($(numberSpans[0]).text().trim());
+                const lowValue = parseNumber($(numberSpans[1]).text().trim());
+                if (!isNaN(highValue) && !isNaN(lowValue)) {
+                  metrics.highPrice = highValue;
+                  metrics.lowPrice = lowValue;
+                  metricKey = 'highPrice/lowPrice';
+                  metricsFoundInTopRatios++;
+                  console.log(`[SCRAPER] [extractKeyMetrics] ✓ Found High/Low from #top-ratios (two number spans): ₹${highValue} / ₹${lowValue}`);
+                } else {
+                  console.log(`[SCRAPER] [extractKeyMetrics] ⚠️  High/Low number spans found but values invalid: "${$(numberSpans[0]).text().trim()}" / "${$(numberSpans[1]).text().trim()}"`);
+                }
+              } else {
+                // Fallback to regex on full text
+                const match = fullValueText.match(/₹\s*([\d,.]+)\s*\/\s*₹?\s*([\d,.]+)/i);
+                if (match) {
+                  metrics.highPrice = parseNumber(match[1]);
+                  metrics.lowPrice = parseNumber(match[2]);
+                  metricKey = 'highPrice/lowPrice';
+                  metricsFoundInTopRatios++;
+                  console.log(`[SCRAPER] [extractKeyMetrics] ✓ Found High/Low from #top-ratios (regex fallback): ₹${match[1]} / ₹${match[2]}`);
+                } else {
+                  console.log(`[SCRAPER] [extractKeyMetrics] ⚠️  High/Low value text didn't match pattern: valueText="${valueText}", fullValueText="${fullValueText}", numberSpans.length=${numberSpans.length}`);
+                }
+              }
+            }
+            // Handle Stock P/E (e.g., "11.6" in number span)
+            else if (metricName === 'Stock P/E') {
+              numericValue = parseNumber(valueText);
+              if (!isNaN(numericValue)) {
+                metrics.pe = numericValue;
+                metricKey = 'pe';
+                metricsFoundInTopRatios++;
+                console.log(`[SCRAPER] [extractKeyMetrics] ✓ Found Stock P/E from #top-ratios: ${numericValue}`);
+              } else {
+                console.log(`[SCRAPER] [extractKeyMetrics] ⚠️  Stock P/E value is not a valid number: "${valueText}"`);
+              }
+            }
+            // Handle Book Value (e.g., "35.9" in number span)
+            else if (metricName === 'Book Value') {
+              const fullValueText = valueSpan.text().trim();
+              let match = fullValueText.match(/₹\s*([\d,.]+)/i);
+              if (!match && !isNaN(parseNumber(valueText))) {
+                // If no ₹ symbol but valueText is a valid number, use it directly
+                numericValue = parseNumber(valueText);
+                metrics.bookValue = numericValue;
+                metricKey = 'bookValue';
+                metricsFoundInTopRatios++;
+                console.log(`[SCRAPER] [extractKeyMetrics] ✓ Found Book Value from #top-ratios: ${valueText}`);
+              } else if (match) {
+                numericValue = parseNumber(match[1]);
+                metrics.bookValue = numericValue;
+                metricKey = 'bookValue';
+                metricsFoundInTopRatios++;
+                console.log(`[SCRAPER] [extractKeyMetrics] ✓ Found Book Value from #top-ratios: ₹${match[1]}`);
+              } else {
+                console.log(`[SCRAPER] [extractKeyMetrics] ⚠️  Book Value value text didn't match pattern: valueText="${valueText}", fullValueText="${fullValueText}"`);
+              }
+            }
+            // Handle Dividend Yield (e.g., "0.00" in number span, with "%" in parent)
+            else if (metricName === 'Dividend Yield') {
+              const fullValueText = valueSpan.text().trim();
+              let match = fullValueText.match(/([\d,.]+)\s*%/i);
+              if (!match && !isNaN(parseNumber(valueText))) {
+                // If valueText is a valid number and fullValueText has %, use valueText
+                if (fullValueText.includes('%')) {
+                  numericValue = parseNumber(valueText);
+                  metrics.dividendYield = numericValue;
+                  metricKey = 'dividendYield';
+                  metricsFoundInTopRatios++;
+                  console.log(`[SCRAPER] [extractKeyMetrics] ✓ Found Dividend Yield from #top-ratios: ${numericValue}%`);
+                } else {
+                  console.log(`[SCRAPER] [extractKeyMetrics] ⚠️  Dividend Yield value text didn't match pattern: valueText="${valueText}", fullValueText="${fullValueText}"`);
+                }
+              } else if (match) {
+                numericValue = parseNumber(match[1]);
+                metrics.dividendYield = numericValue;
+                metricKey = 'dividendYield';
+                metricsFoundInTopRatios++;
+                console.log(`[SCRAPER] [extractKeyMetrics] ✓ Found Dividend Yield from #top-ratios: ${numericValue}%`);
+              } else {
+                console.log(`[SCRAPER] [extractKeyMetrics] ⚠️  Dividend Yield value text didn't match pattern: valueText="${valueText}", fullValueText="${fullValueText}"`);
+              }
+            }
+            // Handle ROCE (e.g., "5.47" in number span, with "%" in parent)
+            else if (metricName === 'ROCE') {
+              const fullValueText = valueSpan.text().trim();
+              let match = fullValueText.match(/([\d,.]+)\s*%/i);
+              if (!match && !isNaN(parseNumber(valueText))) {
+                // If valueText is a valid number and fullValueText has %, use valueText
+                if (fullValueText.includes('%')) {
+                  numericValue = parseNumber(valueText);
+                  metrics.roce = numericValue;
+                  metricKey = 'roce';
+                  metricsFoundInTopRatios++;
+                  console.log(`[SCRAPER] [extractKeyMetrics] ✓ Found ROCE from #top-ratios: ${numericValue}%`);
+                } else {
+                  console.log(`[SCRAPER] [extractKeyMetrics] ⚠️  ROCE value text didn't match pattern: valueText="${valueText}", fullValueText="${fullValueText}"`);
+                }
+              } else if (match) {
+                numericValue = parseNumber(match[1]);
+                metrics.roce = numericValue;
+                metricKey = 'roce';
+                metricsFoundInTopRatios++;
+                console.log(`[SCRAPER] [extractKeyMetrics] ✓ Found ROCE from #top-ratios: ${numericValue}%`);
+              } else {
+                console.log(`[SCRAPER] [extractKeyMetrics] ⚠️  ROCE value text didn't match pattern: valueText="${valueText}", fullValueText="${fullValueText}"`);
+              }
+            }
+            // Handle ROE (e.g., "5.48" in number span, with "%" in parent)
+            else if (metricName === 'ROE') {
+              const fullValueText = valueSpan.text().trim();
+              let match = fullValueText.match(/([\d,.]+)\s*%/i);
+              if (!match && !isNaN(parseNumber(valueText))) {
+                // If valueText is a valid number and fullValueText has %, use valueText
+                if (fullValueText.includes('%')) {
+                  numericValue = parseNumber(valueText);
+                  metrics.roe = numericValue;
+                  metricKey = 'roe';
+                  metricsFoundInTopRatios++;
+                  console.log(`[SCRAPER] [extractKeyMetrics] ✓ Found ROE from #top-ratios: ${numericValue}%`);
+                } else {
+                  console.log(`[SCRAPER] [extractKeyMetrics] ⚠️  ROE value text didn't match pattern: valueText="${valueText}", fullValueText="${fullValueText}"`);
+                }
+              } else if (match) {
+                numericValue = parseNumber(match[1]);
+                metrics.roe = numericValue;
+                metricKey = 'roe';
+                metricsFoundInTopRatios++;
+                console.log(`[SCRAPER] [extractKeyMetrics] ✓ Found ROE from #top-ratios: ${numericValue}%`);
+              } else {
+                console.log(`[SCRAPER] [extractKeyMetrics] ⚠️  ROE value text didn't match pattern: valueText="${valueText}", fullValueText="${fullValueText}"`);
+              }
+            }
+            // Handle Face Value (e.g., "10.0" in number span)
+            else if (metricName === 'Face Value') {
+              const fullValueText = valueSpan.text().trim();
+              let match = fullValueText.match(/₹\s*([\d,.]+)/i);
+              if (!match && !isNaN(parseNumber(valueText))) {
+                // If no ₹ symbol but valueText is a valid number, use it directly
+                numericValue = parseNumber(valueText);
+                metrics.faceValue = numericValue;
+                metricKey = 'faceValue';
+                metricsFoundInTopRatios++;
+                console.log(`[SCRAPER] [extractKeyMetrics] ✓ Found Face Value from #top-ratios: ${valueText}`);
+              } else if (match) {
+                numericValue = parseNumber(match[1]);
+                metrics.faceValue = numericValue;
+                metricKey = 'faceValue';
+                metricsFoundInTopRatios++;
+                console.log(`[SCRAPER] [extractKeyMetrics] ✓ Found Face Value from #top-ratios: ₹${match[1]}`);
+              } else {
+                console.log(`[SCRAPER] [extractKeyMetrics] ⚠️  Face Value value text didn't match pattern: valueText="${valueText}", fullValueText="${fullValueText}"`);
+              }
+            } else {
+              console.log(`[SCRAPER] [extractKeyMetrics] ℹ️  Unknown metric name in #top-ratios: "${metricName}" (value: "${valueText}")`);
+            }
+          } else {
+            console.log(`[SCRAPER] [extractKeyMetrics] ⚠️  List item missing name or value span: nameSpan.length=${nameSpan.length}, valueSpan.length=${valueSpan.length}`);
+          }
+        });
+        
+        console.log(`[SCRAPER] [extractKeyMetrics] Method 0 (#top-ratios) summary: Found ${metricsFoundInTopRatios} metrics, Total metrics so far: ${Object.keys(metrics).length}`);
+      } else {
+        console.log(`[SCRAPER] [extractKeyMetrics] ✗ #top-ratios list not found, will try fallback methods`);
+      }
+
+      // Method 1: DOM-based extraction (fallback for pages without #top-ratios or missing metrics)
       // Screener.in often structures data in tables or specific divs
       // Look for elements containing the label text followed by the value
+      console.log(`[SCRAPER] [extractKeyMetrics] Method 1: DOM-based extraction (fallback for missing metrics)...`);
+      const metricsBeforeMethod1 = Object.keys(metrics).length;
+      let metricsFoundInMethod1 = 0;
       
-      // Method 1: DOM-based extraction (try this first for better reliability)
       $('*').each((_, el) => {
         const text = $(el).text().trim();
         
@@ -1117,7 +1421,8 @@ class ScreenerScraper {
           const match = text.match(/Market Cap\s+₹\s*([\d,.]+)\s*Cr\.?/i);
           if (match) {
             metrics.marketCap = parseNumber(match[1]) * 10000000;
-            console.log(`[SCRAPER] [extractKeyMetrics] Found Market Cap (DOM): ₹${match[1]} Cr`);
+            metricsFoundInMethod1++;
+            console.log(`[SCRAPER] [extractKeyMetrics] ✓ Found Market Cap (Method 1 - DOM): ₹${match[1]} Cr`);
           }
         }
         
@@ -1126,7 +1431,8 @@ class ScreenerScraper {
           const match = text.match(/Current Price\s+₹\s*([\d,.]+)/i);
           if (match) {
             metrics.currentPrice = parseNumber(match[1]);
-            console.log(`[SCRAPER] [extractKeyMetrics] Found Current Price (DOM): ₹${match[1]}`);
+            metricsFoundInMethod1++;
+            console.log(`[SCRAPER] [extractKeyMetrics] ✓ Found Current Price (Method 1 - DOM): ₹${match[1]}`);
           }
         }
         
@@ -1136,7 +1442,8 @@ class ScreenerScraper {
           if (match) {
             metrics.highPrice = parseNumber(match[1]);
             metrics.lowPrice = parseNumber(match[2]);
-            console.log(`[SCRAPER] [extractKeyMetrics] Found High/Low (DOM): ₹${match[1]} / ₹${match[2]}`);
+            metricsFoundInMethod1++;
+            console.log(`[SCRAPER] [extractKeyMetrics] ✓ Found High/Low (Method 1 - DOM): ₹${match[1]} / ₹${match[2]}`);
           }
         }
         
@@ -1148,7 +1455,8 @@ class ScreenerScraper {
           const match = parentText.match(/ROCE[\s\S]{0,200}?([\d,.]+)\s*%/i);
           if (match) {
             metrics.roce = parseNumber(match[1]);
-            console.log(`[SCRAPER] [extractKeyMetrics] Found ROCE (DOM parent): ${match[1]}%`);
+            metricsFoundInMethod1++;
+            console.log(`[SCRAPER] [extractKeyMetrics] ✓ Found ROCE (Method 1 - DOM parent): ${match[1]}%`);
           }
         }
         
@@ -1160,63 +1468,119 @@ class ScreenerScraper {
           const match = parentText.match(/ROE[\s\S]{0,200}?([\d,.]+)\s*%/i);
           if (match) {
             metrics.roe = parseNumber(match[1]);
-            console.log(`[SCRAPER] [extractKeyMetrics] Found ROE (DOM parent): ${match[1]}%`);
+            metricsFoundInMethod1++;
+            console.log(`[SCRAPER] [extractKeyMetrics] ✓ Found ROE (Method 1 - DOM parent): ${match[1]}%`);
           }
         }
       });
+      
+      console.log(`[SCRAPER] [extractKeyMetrics] Method 1 (DOM) summary: Found ${metricsFoundInMethod1} new metrics, Total metrics so far: ${Object.keys(metrics).length}`);
 
       // Method 2: Regex on full page text (fallback and for metrics not found via DOM)
+      console.log(`[SCRAPER] [extractKeyMetrics] Method 2: Regex extraction from full page text (fallback for missing metrics)...`);
       const pageText = $.text();
       console.log(`[SCRAPER] [extractKeyMetrics] Page text length: ${pageText.length} characters`);
+      const metricsBeforeMethod2 = Object.keys(metrics).length;
+      let metricsFoundInMethod2 = 0;
 
       // Extract Market Cap - handle comma-separated numbers like "5,715" or "1,14,718" (Indian numbering)
       // Also handle "Cr." with period
-      const marketCapMatch = pageText.match(/Market Cap\s+₹\s*([\d,.]+)\s*Cr\.?/i);
-      if (marketCapMatch) {
-        const value = parseNumber(marketCapMatch[1]) * 10000000; // Convert crores to actual value
-        metrics.marketCap = value;
-        console.log(`[SCRAPER] [extractKeyMetrics] Found Market Cap: ₹${marketCapMatch[1]} Cr`);
+      if (!metrics.marketCap) {
+        const marketCapMatch = pageText.match(/Market Cap\s+₹\s*([\d,.]+)\s*Cr\.?/i);
+        if (marketCapMatch) {
+          const value = parseNumber(marketCapMatch[1]) * 10000000; // Convert crores to actual value
+          metrics.marketCap = value;
+          metricsFoundInMethod2++;
+          console.log(`[SCRAPER] [extractKeyMetrics] ✓ Found Market Cap (Method 2 - Regex): ₹${marketCapMatch[1]} Cr → ${value}`);
+        } else {
+          console.log(`[SCRAPER] [extractKeyMetrics] ✗ Market Cap not found in page text (Method 2)`);
+        }
+      } else {
+        console.log(`[SCRAPER] [extractKeyMetrics] ⊘ Market Cap already found, skipping Method 2`);
       }
 
       // Extract Current Price - handle comma-separated numbers
-      const currentPriceMatch = pageText.match(/Current Price\s+₹\s*([\d,.]+)/i);
-      if (currentPriceMatch) {
-        metrics.currentPrice = parseNumber(currentPriceMatch[1]);
-        console.log(`[SCRAPER] [extractKeyMetrics] Found Current Price: ₹${currentPriceMatch[1]}`);
+      if (!metrics.currentPrice) {
+        const currentPriceMatch = pageText.match(/Current Price\s+₹\s*([\d,.]+)/i);
+        if (currentPriceMatch) {
+          metrics.currentPrice = parseNumber(currentPriceMatch[1]);
+          metricsFoundInMethod2++;
+          console.log(`[SCRAPER] [extractKeyMetrics] ✓ Found Current Price (Method 2 - Regex): ₹${currentPriceMatch[1]}`);
+        } else {
+          console.log(`[SCRAPER] [extractKeyMetrics] ✗ Current Price not found in page text (Method 2)`);
+        }
+      } else {
+        console.log(`[SCRAPER] [extractKeyMetrics] ⊘ Current Price already found, skipping Method 2`);
       }
 
       // Extract High/Low - handle "High / Low ₹ 2,012 / 1,303" format
       // Second number may or may not have ₹ symbol
-      const highLowMatch = pageText.match(/High\s*\/\s*Low\s+₹\s*([\d,.]+)\s*\/\s*₹?\s*([\d,.]+)/i);
-      if (highLowMatch) {
-        metrics.highPrice = parseNumber(highLowMatch[1]);
-        metrics.lowPrice = parseNumber(highLowMatch[2]);
-        console.log(`[SCRAPER] [extractKeyMetrics] Found High/Low: ₹${highLowMatch[1]} / ₹${highLowMatch[2]}`);
+      if (!metrics.highPrice) {
+        const highLowMatch = pageText.match(/High\s*\/\s*Low\s+₹\s*([\d,.]+)\s*\/\s*₹?\s*([\d,.]+)/i);
+        if (highLowMatch) {
+          metrics.highPrice = parseNumber(highLowMatch[1]);
+          metrics.lowPrice = parseNumber(highLowMatch[2]);
+          metricsFoundInMethod2++;
+          console.log(`[SCRAPER] [extractKeyMetrics] ✓ Found High/Low (Method 2 - Regex): ₹${highLowMatch[1]} / ₹${highLowMatch[2]}`);
+        } else {
+          console.log(`[SCRAPER] [extractKeyMetrics] ✗ High/Low not found in page text (Method 2)`);
+        }
+      } else {
+        console.log(`[SCRAPER] [extractKeyMetrics] ⊘ High/Low already found, skipping Method 2`);
       }
 
       // Extract Stock P/E
-      const peMatch = pageText.match(/Stock P\/E\s+([\d,.]+)/i) || pageText.match(/P\/E\s+([\d,.]+)/i);
-      if (peMatch) {
-        metrics.pe = parseNumber(peMatch[1]);
-        console.log(`[SCRAPER] [extractKeyMetrics] Found Stock P/E: ${peMatch[1]}`);
+      if (!metrics.pe) {
+        const peMatch = pageText.match(/Stock P\/E\s+([\d,.]+)/i) || pageText.match(/P\/E\s+([\d,.]+)/i);
+        if (peMatch) {
+          metrics.pe = parseNumber(peMatch[1]);
+          metricsFoundInMethod2++;
+          console.log(`[SCRAPER] [extractKeyMetrics] ✓ Found Stock P/E (Method 2 - Regex): ${peMatch[1]}`);
+        } else {
+          console.log(`[SCRAPER] [extractKeyMetrics] ✗ Stock P/E not found in page text (Method 2)`);
+        }
+      } else {
+        console.log(`[SCRAPER] [extractKeyMetrics] ⊘ Stock P/E already found, skipping Method 2`);
       }
 
       // Extract Book Value - handle comma-separated numbers
-      const bookValueMatch = pageText.match(/Book Value\s+₹\s*([\d,.]+)/i);
-      if (bookValueMatch) {
-        metrics.bookValue = parseNumber(bookValueMatch[1]);
-        console.log(`[SCRAPER] [extractKeyMetrics] Found Book Value: ₹${bookValueMatch[1]}`);
+      if (!metrics.bookValue) {
+        const bookValueMatch = pageText.match(/Book Value\s+₹\s*([\d,.]+)/i);
+        if (bookValueMatch) {
+          metrics.bookValue = parseNumber(bookValueMatch[1]);
+          metricsFoundInMethod2++;
+          console.log(`[SCRAPER] [extractKeyMetrics] ✓ Found Book Value (Method 2 - Regex): ₹${bookValueMatch[1]}`);
+        } else {
+          console.log(`[SCRAPER] [extractKeyMetrics] ✗ Book Value not found in page text (Method 2)`);
+        }
+      } else {
+        console.log(`[SCRAPER] [extractKeyMetrics] ⊘ Book Value already found, skipping Method 2`);
       }
 
       // Extract Dividend Yield
-      const dividendYieldMatch = pageText.match(/Dividend Yield\s+([\d,.]+)\s*%/i);
-      if (dividendYieldMatch) {
-        metrics.dividendYield = parseNumber(dividendYieldMatch[1]);
-        console.log(`[SCRAPER] [extractKeyMetrics] Found Dividend Yield: ${dividendYieldMatch[1]}%`);
+      if (!metrics.dividendYield) {
+        const dividendYieldMatch = pageText.match(/Dividend Yield\s+([\d,.]+)\s*%/i);
+        if (dividendYieldMatch) {
+          metrics.dividendYield = parseNumber(dividendYieldMatch[1]);
+          metricsFoundInMethod2++;
+          console.log(`[SCRAPER] [extractKeyMetrics] ✓ Found Dividend Yield (Method 2 - Regex): ${dividendYieldMatch[1]}%`);
+        } else {
+          console.log(`[SCRAPER] [extractKeyMetrics] ✗ Dividend Yield not found in page text (Method 2)`);
+        }
+      } else {
+        console.log(`[SCRAPER] [extractKeyMetrics] ⊘ Dividend Yield already found, skipping Method 2`);
       }
+      
+      console.log(`[SCRAPER] [extractKeyMetrics] Method 2 (Regex) summary: Found ${metricsFoundInMethod2} new metrics, Total metrics so far: ${Object.keys(metrics).length}`);
 
+      // Method 3: Targeted DOM traversal for ROCE and ROE (fallback for missing metrics)
+      console.log(`[SCRAPER] [extractKeyMetrics] Method 3: Targeted DOM traversal for ROCE/ROE (fallback for missing metrics)...`);
+      const metricsBeforeMethod3 = Object.keys(metrics).length;
+      let metricsFoundInMethod3 = 0;
+      
       // Extract ROCE - use targeted DOM traversal after main loop
       if (!metrics.roce) {
+        console.log(`[SCRAPER] [extractKeyMetrics] Searching for ROCE using Method 3...`);
         // Find elements containing exactly "ROCE" text (case-insensitive)
         $('*').each((_, el) => {
           if (metrics.roce) return false; // Stop if already found
@@ -1234,7 +1598,8 @@ class ScreenerScraper {
                 const numMatch = childText.match(/^([\d,.]+)\s*%$/);
                 if (numMatch) {
                   metrics.roce = parseNumber(numMatch[1]);
-                  console.log(`[SCRAPER] [extractKeyMetrics] Found ROCE (sibling element): ${numMatch[1]}%`);
+                  metricsFoundInMethod3++;
+                  console.log(`[SCRAPER] [extractKeyMetrics] ✓ Found ROCE (Method 3 - sibling element): ${numMatch[1]}%`);
                   return false;
                 }
               });
@@ -1245,7 +1610,8 @@ class ScreenerScraper {
                 const match = parentText.match(/ROCE[\s\S]{0,200}?([\d,.]+)\s*%/i);
                 if (match) {
                   metrics.roce = parseNumber(match[1]);
-                  console.log(`[SCRAPER] [extractKeyMetrics] Found ROCE (parent text): ${match[1]}%`);
+                  metricsFoundInMethod3++;
+                  console.log(`[SCRAPER] [extractKeyMetrics] ✓ Found ROCE (Method 3 - parent text): ${match[1]}%`);
                   return false;
                 }
               }
@@ -1258,7 +1624,8 @@ class ScreenerScraper {
                   const numMatch = nextText.match(/^([\d,.]+)\s*%$/);
                   if (numMatch) {
                     metrics.roce = parseNumber(numMatch[1]);
-                    console.log(`[SCRAPER] [extractKeyMetrics] Found ROCE (next sibling): ${numMatch[1]}%`);
+                    metricsFoundInMethod3++;
+                    console.log(`[SCRAPER] [extractKeyMetrics] ✓ Found ROCE (Method 3 - next sibling): ${numMatch[1]}%`);
                     return false;
                   }
                 }
@@ -1266,10 +1633,16 @@ class ScreenerScraper {
             }
           }
         });
+        if (!metrics.roce) {
+          console.log(`[SCRAPER] [extractKeyMetrics] ✗ ROCE not found using Method 3`);
+        }
+      } else {
+        console.log(`[SCRAPER] [extractKeyMetrics] ⊘ ROCE already found, skipping Method 3`);
       }
 
       // Extract ROE - use targeted DOM traversal after main loop
       if (!metrics.roe) {
+        console.log(`[SCRAPER] [extractKeyMetrics] Searching for ROE using Method 3...`);
         // Find elements containing exactly "ROE" text (case-insensitive)
         $('*').each((_, el) => {
           if (metrics.roe) return false; // Stop if already found
@@ -1287,7 +1660,8 @@ class ScreenerScraper {
                 const numMatch = childText.match(/^([\d,.]+)\s*%$/);
                 if (numMatch) {
                   metrics.roe = parseNumber(numMatch[1]);
-                  console.log(`[SCRAPER] [extractKeyMetrics] Found ROE (sibling element): ${numMatch[1]}%`);
+                  metricsFoundInMethod3++;
+                  console.log(`[SCRAPER] [extractKeyMetrics] ✓ Found ROE (Method 3 - sibling element): ${numMatch[1]}%`);
                   return false;
                 }
               });
@@ -1298,7 +1672,8 @@ class ScreenerScraper {
                 const match = parentText.match(/ROE[\s\S]{0,200}?([\d,.]+)\s*%/i);
                 if (match) {
                   metrics.roe = parseNumber(match[1]);
-                  console.log(`[SCRAPER] [extractKeyMetrics] Found ROE (parent text): ${match[1]}%`);
+                  metricsFoundInMethod3++;
+                  console.log(`[SCRAPER] [extractKeyMetrics] ✓ Found ROE (Method 3 - parent text): ${match[1]}%`);
                   return false;
                 }
               }
@@ -1311,7 +1686,8 @@ class ScreenerScraper {
                   const numMatch = nextText.match(/^([\d,.]+)\s*%$/);
                   if (numMatch) {
                     metrics.roe = parseNumber(numMatch[1]);
-                    console.log(`[SCRAPER] [extractKeyMetrics] Found ROE (next sibling): ${numMatch[1]}%`);
+                    metricsFoundInMethod3++;
+                    console.log(`[SCRAPER] [extractKeyMetrics] ✓ Found ROE (Method 3 - next sibling): ${numMatch[1]}%`);
                     return false;
                   }
                 }
@@ -1319,20 +1695,52 @@ class ScreenerScraper {
             }
           }
         });
+        if (!metrics.roe) {
+          console.log(`[SCRAPER] [extractKeyMetrics] ✗ ROE not found using Method 3`);
+        }
+      } else {
+        console.log(`[SCRAPER] [extractKeyMetrics] ⊘ ROE already found, skipping Method 3`);
       }
 
       // Extract Face Value - handle comma-separated numbers
-      const faceValueMatch = pageText.match(/Face Value\s+₹\s*([\d,.]+)/i);
-      if (faceValueMatch) {
-        metrics.faceValue = parseNumber(faceValueMatch[1]);
-        console.log(`[SCRAPER] [extractKeyMetrics] Found Face Value: ₹${faceValueMatch[1]}`);
+      if (!metrics.faceValue) {
+        const faceValueMatch = pageText.match(/Face Value\s+₹\s*([\d,.]+)/i);
+        if (faceValueMatch) {
+          metrics.faceValue = parseNumber(faceValueMatch[1]);
+          metricsFoundInMethod3++;
+          console.log(`[SCRAPER] [extractKeyMetrics] ✓ Found Face Value (Method 3 - Regex): ₹${faceValueMatch[1]}`);
+        } else {
+          console.log(`[SCRAPER] [extractKeyMetrics] ✗ Face Value not found in page text (Method 3)`);
+        }
+      } else {
+        console.log(`[SCRAPER] [extractKeyMetrics] ⊘ Face Value already found, skipping Method 3`);
       }
+      
+      console.log(`[SCRAPER] [extractKeyMetrics] Method 3 (Targeted DOM) summary: Found ${metricsFoundInMethod3} new metrics, Total metrics so far: ${Object.keys(metrics).length}`);
 
     } catch (error) {
-      console.error(`[SCRAPER] [extractKeyMetrics] Error extracting key metrics:`, error);
+      console.error(`[SCRAPER] [extractKeyMetrics] ✗ Error extracting key metrics:`, error);
+      if (error instanceof Error) {
+        console.error(`[SCRAPER] [extractKeyMetrics] Error stack:`, error.stack);
+      }
     }
 
-    console.log(`[SCRAPER] [extractKeyMetrics] Extracted ${Object.keys(metrics).length} key metrics: ${Object.keys(metrics).join(', ')}`);
+    // Final summary
+    const finalMetrics = Object.keys(metrics);
+    console.log(`[SCRAPER] [extractKeyMetrics] ========================================`);
+    console.log(`[SCRAPER] [extractKeyMetrics] FINAL SUMMARY: Extracted ${finalMetrics.length} key metrics`);
+    if (finalMetrics.length > 0) {
+      console.log(`[SCRAPER] [extractKeyMetrics] Metrics found: ${finalMetrics.join(', ')}`);
+      // Log each metric value for debugging
+      finalMetrics.forEach(key => {
+        console.log(`[SCRAPER] [extractKeyMetrics]   - ${key}: ${metrics[key]}`);
+      });
+    } else {
+      console.log(`[SCRAPER] [extractKeyMetrics] ⚠️  WARNING: No key metrics extracted!`);
+      console.log(`[SCRAPER] [extractKeyMetrics] This may indicate the page structure has changed or the company page is missing key metrics.`);
+    }
+    console.log(`[SCRAPER] [extractKeyMetrics] ========================================`);
+    
     return metrics;
   }
 
@@ -1340,24 +1748,37 @@ class ScreenerScraper {
    * Normalize quarter format to standard "Sep 2023" style
    */
   private normalizeQuarterFormat(text: string): string {
-    // Remove extra whitespace
-    text = text.trim();
+    // Remove extra whitespace and common suffixes like "(TTM)"
+    text = text.trim().replace(/\s*\(.*?\)\s*$/, '').trim();
 
-    // Match patterns like "Sep 2023", "Sep'23", "Sep23", etc.
-    const match = text.match(/(Sep|Dec|Mar|Jun)[\s']*(\d{2,4})/i);
+    // Match patterns like:
+    // - "Sep 2023", "Sep'23", "Sep23"
+    // - "30 Sep 2024" -> extract "Sep 2024"
+    // Pattern: optional day number, then month, then year
+    const match = text.match(/(\d+\s+)?(Sep|Dec|Mar|Jun)[\s']*(\d{2,4})/i);
+    
     if (match) {
-      const month = match[1].charAt(0).toUpperCase() + match[1].slice(1).toLowerCase();
-      let year = match[2];
+      // match[1] = optional day number (e.g., "30 ")
+      // match[2] = month (e.g., "Sep")
+      // match[3] = year (e.g., "2024" or "24")
+      const month = match[2];
+      const year = match[3];
+      
+      if (month && year) {
+        const monthStr = month.charAt(0).toUpperCase() + month.slice(1).toLowerCase();
+        let yearStr = year.toString();
 
-      // Convert 2-digit year to 4-digit
-      if (year.length === 2) {
-        const yearNum = parseInt(year);
-        year = yearNum > 50 ? `19${year}` : `20${year}`;
+        // Convert 2-digit year to 4-digit
+        if (yearStr.length === 2) {
+          const yearNum = parseInt(yearStr);
+          yearStr = yearNum > 50 ? `19${yearStr}` : `20${yearStr}`;
+        }
+
+        return `${monthStr} ${yearStr}`;
       }
-
-      return `${month} ${year}`;
     }
 
+    // Fallback: return text if we can't parse it
     return text;
   }
 
@@ -1506,18 +1927,25 @@ class ScreenerScraper {
 
   /**
    * Normalize metric names to standard format (matching Python implementation)
+   * Note: Financial companies on screener.in use "Revenue" instead of "Sales"
+   * We normalize both to "Sales" for consistency
    */
   private normalizeMetricName(metricName: string): string | null {
     const name = metricName.toLowerCase().trim();
 
     // Comprehensive metric mapping matching Python enhanced_scraper
-    if (name.includes('sales') && (name.includes('+') || name.includes('total'))) {
-      return 'Sales';
-    } else if ((name.includes('sales yoy') || name.includes('sales growth yoy')) && name.includes('%')) {
+    // Handle both "Sales" and "Revenue" - financial companies often use "Revenue"
+    // Check for "Revenue" first (more specific), then "Sales"
+    if ((name.includes('revenue') && (name.includes('+') || name === 'revenue' || name === 'revenue +')) ||
+        (name.includes('sales') && (name.includes('+') || name === 'sales' || name === 'sales +'))) {
+      return 'Sales';  // Normalize "Revenue" to "Sales" for consistency
+    } else if ((name.includes('sales yoy') || name.includes('sales growth yoy') || 
+                name.includes('revenue yoy') || name.includes('revenue growth yoy')) && name.includes('%')) {
       return 'Sales Growth(YoY) %';
-    } else if ((name.includes('sales qoq') || name.includes('sales growth qoq')) && name.includes('%')) {
+    } else if ((name.includes('sales qoq') || name.includes('sales growth qoq') ||
+                name.includes('revenue qoq') || name.includes('revenue growth qoq')) && name.includes('%')) {
       return 'Sales Growth(QoQ) %';
-    } else if (name.includes('expenses') && (name.includes('+') || name.includes('total'))) {
+    } else if (name.includes('expenses') && (name.includes('+') || name === 'expenses' || name === 'expenses +')) {
       return 'Expenses';
     } else if (name.includes('operating profit') && !name.includes('opm') && !name.includes('%')) {
       return 'Operating Profit';
@@ -1527,7 +1955,7 @@ class ScreenerScraper {
       return 'Financing Profit';
     } else if (name.includes('financing margin %') || name.includes('financing margin%')) {
       return 'Financing Margin %';
-    } else if (name.includes('other income') && (name.includes('+') || name.includes('total'))) {
+    } else if (name.includes('other income') && (name.includes('+') || name === 'other income' || name === 'other income +')) {
       return 'Other Income';
     } else if (name.includes('interest') && !name.includes('other') && !name.includes('income')) {
       return 'Interest';
@@ -1537,7 +1965,7 @@ class ScreenerScraper {
       return 'Profit before tax';
     } else if (name.includes('tax %') || name.includes('tax%') || (name.includes('tax') && name.includes('%'))) {
       return 'Tax %';
-    } else if (name.includes('net profit') && (name.includes('+') || name.includes('total'))) {
+    } else if (name.includes('net profit') && (name.includes('+') || name === 'net profit' || name === 'net profit +')) {
       return 'Net Profit';
     } else if (name.includes('eps in rs') || (name.includes('eps') && !name.includes('growth') && !name.includes('%'))) {
       return 'EPS in Rs';

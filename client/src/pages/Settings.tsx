@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -9,15 +9,95 @@ import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
-import { Settings as SettingsIcon, Save, RotateCcw, Search, CheckCircle2, Building2 } from "lucide-react";
+import { Settings as SettingsIcon, Save, RotateCcw, Search, CheckCircle2, Building2, GripVertical } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import {
+  DndContext,
+  closestCenter,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  DragEndEvent,
+} from "@dnd-kit/core";
+import {
+  arrayMove,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 
 interface DefaultMetricsResponse {
   metrics: Record<string, boolean>;
   visibleMetrics: string[];
   bankingMetrics?: Record<string, boolean>;
   visibleBankingMetrics?: string[];
+  metricsOrder?: string[];
+  bankingMetricsOrder?: string[];
+  orderedVisibleMetrics?: string[];
+  orderedVisibleBankingMetrics?: string[];
+}
+
+// Sortable Item Component
+interface SortableItemProps {
+  id: string;
+  metricName: string;
+  isSelected: boolean;
+  onToggle: () => void;
+  isBanking?: boolean;
+}
+
+function SortableItem({ id, metricName, isSelected, onToggle, isBanking }: SortableItemProps) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id });
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+  };
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      className={`flex items-center space-x-2 p-2 rounded-md hover:bg-muted/50 ${isDragging ? 'bg-muted shadow-lg' : ''}`}
+    >
+      <button
+        {...attributes}
+        {...listeners}
+        className="cursor-grab active:cursor-grabbing p-1 hover:bg-muted rounded"
+        type="button"
+      >
+        <GripVertical className="h-4 w-4 text-muted-foreground" />
+      </button>
+      <Checkbox
+        id={isBanking ? `banking-${metricName}` : metricName}
+        checked={isSelected}
+        onCheckedChange={onToggle}
+      />
+      <Label
+        htmlFor={isBanking ? `banking-${metricName}` : metricName}
+        className="flex-1 cursor-pointer text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
+      >
+        {metricName}
+      </Label>
+      {isSelected && (
+        <Badge variant="secondary" className="text-xs">
+          Default
+        </Badge>
+      )}
+    </div>
+  );
 }
 
 // Default metrics configuration (must match backend)
@@ -54,6 +134,39 @@ const DEFAULT_BANKING_METRICS: Record<string, boolean> = {
   "Gross NPA %": true,
 };
 
+// Default metric orders
+const DEFAULT_METRICS_ORDER: string[] = [
+  "Sales",
+  "Sales Growth(YoY) %",
+  "Sales Growth(QoQ) %",
+  "Expenses",
+  "Operating Profit",
+  "OPM %",
+  "Financing Profit",
+  "Financing Margin %",
+  "Other Income",
+  "Interest",
+  "Depreciation",
+  "Profit before tax",
+  "Tax %",
+  "Net Profit",
+  "EPS in Rs",
+  "EPS Growth(YoY) %",
+  "EPS Growth(QoQ) %",
+  "Gross NPA %"
+];
+
+const DEFAULT_BANKING_METRICS_ORDER: string[] = [
+  "Sales Growth(YoY) %",
+  "Sales Growth(QoQ) %",
+  "Financing Profit",
+  "Financing Margin %",
+  "EPS in Rs",
+  "EPS Growth(YoY) %",
+  "EPS Growth(QoQ) %",
+  "Gross NPA %"
+];
+
 export default function Settings() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
@@ -61,7 +174,17 @@ export default function Settings() {
   const [bankingSearchTerm, setBankingSearchTerm] = useState("");
   const [localMetrics, setLocalMetrics] = useState<Record<string, boolean>>(DEFAULT_METRICS);
   const [localBankingMetrics, setLocalBankingMetrics] = useState<Record<string, boolean>>(DEFAULT_BANKING_METRICS);
+  const [localMetricsOrder, setLocalMetricsOrder] = useState<string[]>(DEFAULT_METRICS_ORDER);
+  const [localBankingMetricsOrder, setLocalBankingMetricsOrder] = useState<string[]>(DEFAULT_BANKING_METRICS_ORDER);
   const [activeTab, setActiveTab] = useState<"default" | "banking">("default");
+
+  // DnD sensors
+  const sensors = useSensors(
+    useSensor(PointerSensor),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    })
+  );
 
   // Fetch default metrics configuration
   const { data: metricsData, isLoading } = useQuery<DefaultMetricsResponse>({
@@ -101,12 +224,35 @@ export default function Settings() {
         return prev;
       });
     }
+    
+    // Update metric orders
+    if (metricsData?.metricsOrder && metricsData.metricsOrder.length > 0) {
+      setLocalMetricsOrder(metricsData.metricsOrder);
+    }
+    if (metricsData?.bankingMetricsOrder && metricsData.bankingMetricsOrder.length > 0) {
+      setLocalBankingMetricsOrder(metricsData.bankingMetricsOrder);
+    }
   }, [metricsData, isLoading]);
 
   // Save metrics mutation
   const saveMutation = useMutation({
-    mutationFn: async ({ metrics, bankingMetrics }: { metrics?: Record<string, boolean>; bankingMetrics?: Record<string, boolean> }) => {
-      const res = await apiRequest("PUT", "/api/settings/default-metrics", { metrics, bankingMetrics });
+    mutationFn: async ({ 
+      metrics, 
+      bankingMetrics, 
+      metricsOrder, 
+      bankingMetricsOrder 
+    }: { 
+      metrics?: Record<string, boolean>; 
+      bankingMetrics?: Record<string, boolean>;
+      metricsOrder?: string[];
+      bankingMetricsOrder?: string[];
+    }) => {
+      const res = await apiRequest("PUT", "/api/settings/default-metrics", { 
+        metrics, 
+        bankingMetrics, 
+        metricsOrder, 
+        bankingMetricsOrder 
+      });
       return res.json();
     },
     onSuccess: (data) => {
@@ -116,6 +262,12 @@ export default function Settings() {
       }
       if (data.bankingMetrics) {
         setLocalBankingMetrics(data.bankingMetrics);
+      }
+      if (data.metricsOrder) {
+        setLocalMetricsOrder(data.metricsOrder);
+      }
+      if (data.bankingMetricsOrder) {
+        setLocalBankingMetricsOrder(data.bankingMetricsOrder);
       }
       toast({
         title: "Settings saved",
@@ -137,16 +289,39 @@ export default function Settings() {
   const resetToDefault = () => {
     if (activeTab === "default") {
       setLocalMetrics({ ...DEFAULT_METRICS });
+      setLocalMetricsOrder([...DEFAULT_METRICS_ORDER]);
     } else {
       setLocalBankingMetrics({ ...DEFAULT_BANKING_METRICS });
+      setLocalBankingMetricsOrder([...DEFAULT_BANKING_METRICS_ORDER]);
     }
   };
 
   const handleSave = () => {
     if (activeTab === "default") {
-      saveMutation.mutate({ metrics: localMetrics });
+      saveMutation.mutate({ metrics: localMetrics, metricsOrder: localMetricsOrder });
     } else {
-      saveMutation.mutate({ bankingMetrics: localBankingMetrics });
+      saveMutation.mutate({ bankingMetrics: localBankingMetrics, bankingMetricsOrder: localBankingMetricsOrder });
+    }
+  };
+
+  // Handle drag end for reordering
+  const handleDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+    
+    if (over && active.id !== over.id) {
+      if (activeTab === "default") {
+        setLocalMetricsOrder((items) => {
+          const oldIndex = items.indexOf(active.id as string);
+          const newIndex = items.indexOf(over.id as string);
+          return arrayMove(items, oldIndex, newIndex);
+        });
+      } else {
+        setLocalBankingMetricsOrder((items) => {
+          const oldIndex = items.indexOf(active.id as string);
+          const newIndex = items.indexOf(over.id as string);
+          return arrayMove(items, oldIndex, newIndex);
+        });
+      }
     }
   };
 
@@ -196,21 +371,42 @@ export default function Settings() {
     }
   };
 
-  // Filter metrics based on search term
-  const filteredMetrics = Object.entries(activeTab === "default" ? localMetrics : localBankingMetrics).filter(([metricName]) =>
-    metricName.toLowerCase().includes((activeTab === "default" ? searchTerm : bankingSearchTerm).toLowerCase())
-  );
+  // Get ordered metrics for display
+  const currentOrder = activeTab === "default" ? localMetricsOrder : localBankingMetricsOrder;
+  const currentMetrics = activeTab === "default" ? localMetrics : localBankingMetrics;
+  const currentSearchTerm = activeTab === "default" ? searchTerm : bankingSearchTerm;
+  
+  // Create ordered list of metrics that includes all metrics
+  const orderedMetricsList = useMemo(() => {
+    const metricsInOrder = [...currentOrder];
+    // Add any metrics not in the order array
+    Object.keys(currentMetrics).forEach(metric => {
+      if (!metricsInOrder.includes(metric)) {
+        metricsInOrder.push(metric);
+      }
+    });
+    return metricsInOrder;
+  }, [currentOrder, currentMetrics]);
+  
+  // Filter metrics based on search term while maintaining order
+  const filteredMetrics = useMemo(() => {
+    return orderedMetricsList
+      .filter(metricName => metricName.toLowerCase().includes(currentSearchTerm.toLowerCase()))
+      .map(metricName => [metricName, currentMetrics[metricName] ?? false] as [string, boolean]);
+  }, [orderedMetricsList, currentSearchTerm, currentMetrics]);
 
   const selectedCount = Object.values(activeTab === "default" ? localMetrics : localBankingMetrics).filter(Boolean).length;
   const totalCount = Object.keys(activeTab === "default" ? localMetrics : localBankingMetrics).length;
   
-  // Compare with loaded data or empty object if not loaded yet
+  // Compare with loaded data or empty object if not loaded yet (including order)
   const hasChanges = activeTab === "default"
     ? (metricsData?.metrics 
-        ? JSON.stringify(localMetrics) !== JSON.stringify(metricsData.metrics)
+        ? (JSON.stringify(localMetrics) !== JSON.stringify(metricsData.metrics) ||
+           JSON.stringify(localMetricsOrder) !== JSON.stringify(metricsData.metricsOrder || []))
         : Object.keys(localMetrics).length > 0)
     : (metricsData?.bankingMetrics
-        ? JSON.stringify(localBankingMetrics) !== JSON.stringify(metricsData.bankingMetrics)
+        ? (JSON.stringify(localBankingMetrics) !== JSON.stringify(metricsData.bankingMetrics) ||
+           JSON.stringify(localBankingMetricsOrder) !== JSON.stringify(metricsData.bankingMetricsOrder || []))
         : Object.keys(localBankingMetrics).length > 0);
 
   if (isLoading) {
@@ -290,37 +486,44 @@ export default function Settings() {
                   Reset
                 </Button>
               </div>
+              
+              <Alert>
+                <GripVertical className="h-4 w-4" />
+                <AlertDescription>
+                  Drag and drop metrics to reorder. The order determines how metrics are displayed in quarterly data views and Excel exports.
+                </AlertDescription>
+              </Alert>
 
-              {/* Metrics List */}
+              {/* Metrics List with Drag and Drop */}
               <ScrollArea className="h-[500px] rounded-md border p-4">
-                <div className="space-y-3">
-                  {filteredMetrics.length === 0 ? (
-                    <div className="text-center py-8 text-muted-foreground">
-                      No metrics found matching "{searchTerm}"
+                <DndContext
+                  sensors={sensors}
+                  collisionDetection={closestCenter}
+                  onDragEnd={handleDragEnd}
+                >
+                  <SortableContext
+                    items={filteredMetrics.map(([name]) => name)}
+                    strategy={verticalListSortingStrategy}
+                  >
+                    <div className="space-y-1">
+                      {filteredMetrics.length === 0 ? (
+                        <div className="text-center py-8 text-muted-foreground">
+                          No metrics found matching "{searchTerm}"
+                        </div>
+                      ) : (
+                        filteredMetrics.map(([metricName, isSelected]) => (
+                          <SortableItem
+                            key={metricName}
+                            id={metricName}
+                            metricName={metricName}
+                            isSelected={isSelected}
+                            onToggle={() => handleToggleMetric(metricName)}
+                          />
+                        ))
+                      )}
                     </div>
-                  ) : (
-                    filteredMetrics.map(([metricName, isSelected]) => (
-                      <div key={metricName} className="flex items-center space-x-2 p-2 rounded-md hover:bg-muted/50">
-                        <Checkbox
-                          id={metricName}
-                          checked={isSelected}
-                          onCheckedChange={() => handleToggleMetric(metricName)}
-                        />
-                        <Label
-                          htmlFor={metricName}
-                          className="flex-1 cursor-pointer text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
-                        >
-                          {metricName}
-                        </Label>
-                        {isSelected && (
-                          <Badge variant="secondary" className="text-xs">
-                            Default
-                          </Badge>
-                        )}
-                      </div>
-                    ))
-                  )}
-                </div>
+                  </SortableContext>
+                </DndContext>
               </ScrollArea>
             </TabsContent>
 
@@ -347,37 +550,45 @@ export default function Settings() {
                   Reset
                 </Button>
               </div>
+              
+              <Alert>
+                <GripVertical className="h-4 w-4" />
+                <AlertDescription>
+                  Drag and drop metrics to reorder. The order determines how metrics are displayed in quarterly data views and Excel exports for banking companies.
+                </AlertDescription>
+              </Alert>
 
-              {/* Banking Metrics List */}
+              {/* Banking Metrics List with Drag and Drop */}
               <ScrollArea className="h-[500px] rounded-md border p-4">
-                <div className="space-y-3">
-                  {filteredMetrics.length === 0 ? (
-                    <div className="text-center py-8 text-muted-foreground">
-                      No metrics found matching "{bankingSearchTerm}"
+                <DndContext
+                  sensors={sensors}
+                  collisionDetection={closestCenter}
+                  onDragEnd={handleDragEnd}
+                >
+                  <SortableContext
+                    items={filteredMetrics.map(([name]) => name)}
+                    strategy={verticalListSortingStrategy}
+                  >
+                    <div className="space-y-1">
+                      {filteredMetrics.length === 0 ? (
+                        <div className="text-center py-8 text-muted-foreground">
+                          No metrics found matching "{bankingSearchTerm}"
+                        </div>
+                      ) : (
+                        filteredMetrics.map(([metricName, isSelected]) => (
+                          <SortableItem
+                            key={metricName}
+                            id={metricName}
+                            metricName={metricName}
+                            isSelected={isSelected}
+                            onToggle={() => handleToggleMetric(metricName)}
+                            isBanking
+                          />
+                        ))
+                      )}
                     </div>
-                  ) : (
-                    filteredMetrics.map(([metricName, isSelected]) => (
-                      <div key={metricName} className="flex items-center space-x-2 p-2 rounded-md hover:bg-muted/50">
-                        <Checkbox
-                          id={`banking-${metricName}`}
-                          checked={isSelected}
-                          onCheckedChange={() => handleToggleMetric(metricName)}
-                        />
-                        <Label
-                          htmlFor={`banking-${metricName}`}
-                          className="flex-1 cursor-pointer text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
-                        >
-                          {metricName}
-                        </Label>
-                        {isSelected && (
-                          <Badge variant="secondary" className="text-xs">
-                            Default
-                          </Badge>
-                        )}
-                      </div>
-                    ))
-                  )}
-                </div>
+                  </SortableContext>
+                </DndContext>
               </ScrollArea>
             </TabsContent>
           </Tabs>

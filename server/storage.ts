@@ -495,12 +495,18 @@ export class DbStorage implements IStorage {
     }
 
     // Check if it's a global (main) formula
+    // Note: "deprecated" scope is used for formulas that have been replaced and can now be deleted
     if (formula.scope === "global") {
       return { 
         canDelete: false, 
         isMainFormula: true, 
         message: "This is the main (global) formula and cannot be deleted directly. Please replace it with another formula first." 
       };
+    }
+
+    // Deprecated formulas (after replacement) can always be deleted
+    if (formula.scope === "deprecated") {
+      return { canDelete: true, isMainFormula: false };
     }
 
     // For non-global formulas, check if any companies or sectors are assigned to it
@@ -557,8 +563,21 @@ export class DbStorage implements IStorage {
       .where(eq(sectors.assignedFormulaId, oldFormulaId))
       .returning({ id: sectors.id });
 
-    // Note: Companies/sectors without explicit assignments will automatically use the new global formula
-    // through the scope-based matching logic, so no additional updates needed
+    // If the new formula is not global, make it global so it becomes the main formula
+    if (newFormula.scope !== "global") {
+      await db.update(formulas).set({ 
+        scope: "global", 
+        scopeValue: null,
+        updatedAt: new Date() 
+      }).where(eq(formulas.id, newFormulaId));
+    }
+
+    // Change the old formula's scope to "deprecated" so it can be deleted
+    // This allows the checkFormulaCanDelete to succeed
+    await db.update(formulas).set({ 
+      scope: "deprecated", 
+      updatedAt: new Date() 
+    }).where(eq(formulas.id, oldFormulaId));
 
     return {
       companiesAffected: companiesResult.length,
@@ -713,11 +732,21 @@ export class DbStorage implements IStorage {
   }
 
   async getSignalDistribution(): Promise<{ signal: string; count: number }[]> {
+    // Import companies table
+    const { companies } = await import("@shared/schema");
+    
+    // Get total number of companies
+    const totalCompaniesResult = await db
+      .select({ count: sql<number>`count(*)` })
+      .from(companies);
+    const totalCompanies = Number(totalCompaniesResult[0]?.count || 0);
+    
     // Group signals by their exact value, ignoring blank strings
     // Only count latest signal per company (one signal per company)
     const allLatestSignals = await db
       .select({
         signal: signals.signal,
+        companyId: signals.companyId,
       })
       .from(signals)
       .where(
@@ -730,14 +759,44 @@ export class DbStorage implements IStorage {
     
     // Group by signal type in JavaScript
     const distributionMap = new Map<string, number>();
+    const companiesWithSignals = new Set<string>();
+    
     allLatestSignals.forEach(s => {
       const currentCount = distributionMap.get(s.signal) || 0;
       distributionMap.set(s.signal, currentCount + 1);
+      companiesWithSignals.add(s.companyId);
     });
+    
+    // Calculate companies with no signal
+    const companiesWithNoSignal = totalCompanies - companiesWithSignals.size;
+    
+    // Add "No Signal" to distribution if there are companies without signals
+    if (companiesWithNoSignal > 0) {
+      distributionMap.set("No Signal", companiesWithNoSignal);
+    }
+    
+    // Define priority order for main signals
+    const signalPriority: Record<string, number> = {
+      "BUY": 1,
+      "SELL": 2,
+      "HOLD": 3,
+      "No Signal": 4,
+    };
     
     return Array.from(distributionMap.entries())
       .map(([signal, count]) => ({ signal, count }))
-      .sort((a, b) => b.count - a.count || b.signal.localeCompare(a.signal));
+      .sort((a, b) => {
+        // Sort by priority first (if both have priority), then by count, then alphabetically
+        const priorityA = signalPriority[a.signal] || 999;
+        const priorityB = signalPriority[b.signal] || 999;
+        
+        if (priorityA !== priorityB) {
+          return priorityA - priorityB;
+        }
+        
+        // Same priority level - sort by count descending, then alphabetically
+        return b.count - a.count || a.signal.localeCompare(b.signal);
+      });
   }
 
   // OTP operations

@@ -49,6 +49,40 @@ export const DEFAULT_BANKING_METRICS: Record<string, boolean> = {
   "Gross NPA %": true
 };
 
+// Default metric order (the order in which metrics should be displayed)
+export const DEFAULT_METRICS_ORDER: string[] = [
+  "Sales",
+  "Sales Growth(YoY) %",
+  "Sales Growth(QoQ) %",
+  "Expenses",
+  "Operating Profit",
+  "OPM %",
+  "Financing Profit",
+  "Financing Margin %",
+  "Other Income",
+  "Interest",
+  "Depreciation",
+  "Profit before tax",
+  "Tax %",
+  "Net Profit",
+  "EPS in Rs",
+  "EPS Growth(YoY) %",
+  "EPS Growth(QoQ) %",
+  "Gross NPA %"
+];
+
+// Default banking metric order
+export const DEFAULT_BANKING_METRICS_ORDER: string[] = [
+  "Sales Growth(YoY) %",
+  "Sales Growth(QoQ) %",
+  "Financing Profit",
+  "Financing Margin %",
+  "EPS in Rs",
+  "EPS Growth(YoY) %",
+  "EPS Growth(QoQ) %",
+  "Gross NPA %"
+];
+
 /**
  * Ensure config directory exists
  */
@@ -224,5 +258,147 @@ export async function getVisibleBankingMetrics(): Promise<string[]> {
   return Object.entries(bankingMetrics)
     .filter(([_, isVisible]) => isVisible)
     .map(([metric, _]) => metric);
+}
+
+/**
+ * Load metrics order from database
+ */
+export async function loadMetricsOrder(): Promise<string[]> {
+  try {
+    const storage = await getDbStorage();
+    const setting = await storage.getAppSetting("metrics_order");
+    
+    if (setting && setting.value && Array.isArray(setting.value)) {
+      const order = setting.value as string[];
+      if (order.length > 0) {
+        return order;
+      }
+    }
+    
+    // If not in database, initialize with defaults
+    await saveMetricsOrder(DEFAULT_METRICS_ORDER);
+    return DEFAULT_METRICS_ORDER;
+  } catch (error: any) {
+    console.error("Error loading metrics order from database:", error);
+    return DEFAULT_METRICS_ORDER;
+  }
+}
+
+/**
+ * Save metrics order to database
+ */
+export async function saveMetricsOrder(order: string[]): Promise<boolean> {
+  try {
+    const storage = await getDbStorage();
+    await storage.setAppSetting(
+      "metrics_order",
+      order,
+      "Display order for default metrics"
+    );
+    return true;
+  } catch (error: any) {
+    console.error("Error saving metrics order to database:", error);
+    return false;
+  }
+}
+
+/**
+ * Load banking metrics order from database
+ */
+export async function loadBankingMetricsOrder(): Promise<string[]> {
+  try {
+    const storage = await getDbStorage();
+    const setting = await storage.getAppSetting("banking_metrics_order");
+    
+    if (setting && setting.value && Array.isArray(setting.value)) {
+      const order = setting.value as string[];
+      if (order.length > 0) {
+        return order;
+      }
+    }
+    
+    // If not in database, initialize with defaults
+    await saveBankingMetricsOrder(DEFAULT_BANKING_METRICS_ORDER);
+    return DEFAULT_BANKING_METRICS_ORDER;
+  } catch (error: any) {
+    console.error("Error loading banking metrics order from database:", error);
+    return DEFAULT_BANKING_METRICS_ORDER;
+  }
+}
+
+/**
+ * Save banking metrics order to database
+ */
+export async function saveBankingMetricsOrder(order: string[]): Promise<boolean> {
+  try {
+    const storage = await getDbStorage();
+    await storage.setAppSetting(
+      "banking_metrics_order",
+      order,
+      "Display order for banking metrics"
+    );
+    return true;
+  } catch (error: any) {
+    console.error("Error saving banking metrics order to database:", error);
+    return false;
+  }
+}
+
+/**
+ * Get ordered list of visible metrics (respects both visibility and order)
+ */
+export async function getOrderedVisibleMetrics(): Promise<string[]> {
+  const [visibleMetrics, order] = await Promise.all([
+    loadVisibleMetrics(),
+    loadMetricsOrder()
+  ]);
+  
+  // Filter to only visible metrics, maintaining the order
+  const visibleSet = new Set(
+    Object.entries(visibleMetrics)
+      .filter(([_, isVisible]) => isVisible)
+      .map(([metric]) => metric)
+  );
+  
+  // Return metrics in order, only including visible ones
+  const orderedVisible = order.filter(metric => visibleSet.has(metric));
+  
+  // Add any visible metrics that aren't in the order array (at the end)
+  visibleSet.forEach(metric => {
+    if (!orderedVisible.includes(metric)) {
+      orderedVisible.push(metric);
+    }
+  });
+  
+  return orderedVisible;
+}
+
+/**
+ * Get ordered list of visible banking metrics (respects both visibility and order)
+ */
+export async function getOrderedVisibleBankingMetrics(): Promise<string[]> {
+  const [bankingMetrics, order] = await Promise.all([
+    loadBankingMetrics(),
+    loadBankingMetricsOrder()
+  ]);
+  
+  // Filter to only visible metrics, maintaining the order
+  const visibleSet = new Set(
+    Object.entries(bankingMetrics)
+      .filter(([_, isVisible]) => isVisible)
+      .map(([metric]) => metric)
+  );
+  
+  // Return metrics in order, only including visible ones
+  const orderedVisible = order.filter(metric => visibleSet.has(metric));
+  
+  // Add any visible metrics that aren't in the order array (at the end)
+  visibleSet.forEach(metric => {
+    if (!orderedVisible.includes(metric)) {
+      orderedVisible.push(metric);
+    }
+  });
+  
+  return orderedVisible;
 }
 

@@ -93,6 +93,11 @@ export default function CompanyDetail() {
   const [isValidatingUpdateTicker, setIsValidatingUpdateTicker] = useState(false);
   const [updateTickerValidationResult, setUpdateTickerValidationResult] = useState<{ valid: boolean; companyName?: string; error?: string } | null>(null);
 
+  // Metrics editor dialog state
+  const [showMetricsEditorDialog, setShowMetricsEditorDialog] = useState(false);
+  const [pastedMetricsText, setPastedMetricsText] = useState<string>("");
+  const [parsedMetrics, setParsedMetrics] = useState<Record<string, number | null>>({});
+
   // Fetch company by ID or ticker
   const { data: company, isLoading: companyLoading, error: companyError } = useQuery<Company>({
     queryKey: companyId
@@ -229,12 +234,16 @@ export default function CompanyDetail() {
     return Array.from(metricSet).sort();
   }, [sortedQuarterlyData]);
 
-  // Fetch default metrics from settings
+  // Fetch default metrics from settings (includes order information)
   const { data: defaultMetricsData } = useQuery<{
     metrics: Record<string, boolean>;
     visibleMetrics: string[];
     bankingMetrics?: Record<string, boolean>;
     visibleBankingMetrics?: string[];
+    metricsOrder?: string[];
+    bankingMetricsOrder?: string[];
+    orderedVisibleMetrics?: string[];
+    orderedVisibleBankingMetrics?: string[];
   }>({
     queryKey: ["/api/settings/default-metrics"],
     retry: 1, // Retry once if it fails
@@ -316,12 +325,17 @@ export default function CompanyDetail() {
   // Filter metrics based on settings - use banking metrics for banking companies, default for others
   const filteredMetrics = useMemo(() => {
     // Use banking metrics if this is a banking company, otherwise use default metrics
+    // Prefer ordered visible metrics (respects display order from settings)
     if (isBankingCompany) {
-      if (defaultMetricsData?.visibleBankingMetrics && defaultMetricsData.visibleBankingMetrics.length > 0) {
+      if (defaultMetricsData?.orderedVisibleBankingMetrics && defaultMetricsData.orderedVisibleBankingMetrics.length > 0) {
+        return defaultMetricsData.orderedVisibleBankingMetrics;
+      } else if (defaultMetricsData?.visibleBankingMetrics && defaultMetricsData.visibleBankingMetrics.length > 0) {
         return defaultMetricsData.visibleBankingMetrics;
       }
     } else {
-      if (defaultMetricsData?.visibleMetrics && defaultMetricsData.visibleMetrics.length > 0) {
+      if (defaultMetricsData?.orderedVisibleMetrics && defaultMetricsData.orderedVisibleMetrics.length > 0) {
+        return defaultMetricsData.orderedVisibleMetrics;
+      } else if (defaultMetricsData?.visibleMetrics && defaultMetricsData.visibleMetrics.length > 0) {
         return defaultMetricsData.visibleMetrics;
       }
     }
@@ -911,6 +925,204 @@ export default function CompanyDetail() {
     });
   };
 
+  // Parse metrics from pasted text
+  const parseMetricsFromText = (text: string): Record<string, number | null> => {
+    const metrics: Record<string, number | null> = {};
+    const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+    
+    // Metric name to key mapping
+    const metricMap: Record<string, string> = {
+      'Market Cap': 'marketCap',
+      'Current Price': 'currentPrice',
+      'High / Low': 'highPrice',
+      'High/Low': 'highPrice',
+      'Stock P/E': 'pe',
+      'Stock P/E Ratio': 'pe',
+      'P/E': 'pe',
+      'Book Value': 'bookValue',
+      'Dividend Yield': 'dividendYield',
+      'ROCE': 'roce',
+      'ROE': 'roe',
+      'Face Value': 'faceValue',
+    };
+
+    let i = 0;
+    while (i < lines.length) {
+      const line = lines[i];
+      
+      // Check if this line is a metric name
+      for (const [metricName, key] of Object.entries(metricMap)) {
+        if (line.toLowerCase().includes(metricName.toLowerCase())) {
+          // Look for value in current or next line
+          let valueLine = lines[i];
+          if (!valueLine.match(/[\d.,₹%]/)) {
+            // If current line doesn't have numbers, check next line
+            if (i + 1 < lines.length) {
+              valueLine = lines[i + 1];
+              i++; // Skip next line since we're using it
+            }
+          }
+          
+          // Extract value
+          let value: number | null = null;
+          
+          // Handle Market Cap (e.g., "₹ 976 Cr." or "976 Cr")
+          if (key === 'marketCap') {
+            const match = valueLine.match(/₹?\s*([\d,.]+)\s*Cr\.?/i);
+            if (match) {
+              value = parseFloat(match[1].replace(/,/g, '')) * 10000000; // Convert crores to actual value
+            }
+          }
+          // Handle High / Low (e.g., "₹ 33.5 / 22.0")
+          else if (key === 'highPrice') {
+            const match = valueLine.match(/₹?\s*([\d,.]+)\s*\/\s*₹?\s*([\d,.]+)/i);
+            if (match) {
+              metrics.highPrice = parseFloat(match[1].replace(/,/g, ''));
+              metrics.lowPrice = parseFloat(match[2].replace(/,/g, ''));
+              value = metrics.highPrice; // Set value for highPrice key
+              // Don't break here, continue to set the value
+            }
+          }
+          // Handle percentage metrics (ROCE, ROE, Dividend Yield)
+          else if (key === 'roce' || key === 'roe' || key === 'dividendYield') {
+            const match = valueLine.match(/([\d,.]+)\s*%/i);
+            if (match) {
+              value = parseFloat(match[1].replace(/,/g, ''));
+            }
+          }
+          // Handle currency metrics (Current Price, Book Value, Face Value)
+          else if (key === 'currentPrice' || key === 'bookValue' || key === 'faceValue') {
+            const match = valueLine.match(/₹?\s*([\d,.]+)/i);
+            if (match) {
+              value = parseFloat(match[1].replace(/,/g, ''));
+            }
+          }
+          // Handle Stock P/E (just a number)
+          else if (key === 'pe') {
+            const match = valueLine.match(/([\d,.]+)/);
+            if (match) {
+              value = parseFloat(match[1].replace(/,/g, ''));
+            }
+          }
+          
+          if (value !== null) {
+            metrics[key] = value;
+          }
+          break;
+        }
+      }
+      i++;
+    }
+    
+    return metrics;
+  };
+
+  // Update metrics mutation
+  const updateMetricsMutation = useMutation({
+    mutationFn: async (metrics: Record<string, number | null>) => {
+      if (!company?.id) throw new Error("Company ID not available");
+      
+      // Get current financial data
+      const currentFinancialData = (company.financialData as Record<string, any>) || {};
+      
+      // Merge new metrics with existing data (remove null values)
+      const updatedFinancialData: Record<string, any> = { ...currentFinancialData };
+      Object.entries(metrics).forEach(([key, value]) => {
+        if (value !== null) {
+          updatedFinancialData[key] = value;
+        } else {
+          // Remove null values
+          delete updatedFinancialData[key];
+        }
+      });
+      
+      // Also update marketCap if it's in the metrics
+      const marketCap = metrics.marketCap !== null && metrics.marketCap !== undefined 
+        ? metrics.marketCap.toString() 
+        : company.marketCap;
+      
+      const res = await apiRequest("PUT", `/api/companies/${company.id}`, {
+        financialData: updatedFinancialData,
+        marketCap: marketCap
+      });
+      return res.json();
+    },
+    onSuccess: async () => {
+      toast({
+        title: "Metrics updated successfully",
+        description: "Key financial metrics have been updated"
+      });
+      
+      // Invalidate queries to refresh company data
+      await queryClient.invalidateQueries({ queryKey: ["/api/companies", company?.id] });
+      await queryClient.invalidateQueries({ queryKey: ["/api/companies/ticker", companyTicker] });
+      await queryClient.refetchQueries({ queryKey: ["/api/companies", company?.id] });
+      
+      // Close dialog and reset
+      setShowMetricsEditorDialog(false);
+      setPastedMetricsText("");
+      setParsedMetrics({});
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Failed to update metrics",
+        description: error.message,
+        variant: "destructive"
+      });
+    },
+  });
+
+  // Handle paste and parse metrics
+  const handlePasteMetrics = (text: string) => {
+    setPastedMetricsText(text);
+    const parsed = parseMetricsFromText(text);
+    setParsedMetrics(parsed);
+  };
+
+  // Pre-populate metrics text when dialog opens
+  useEffect(() => {
+    if (showMetricsEditorDialog && company) {
+      const currentData = company.financialData as Record<string, any> || {};
+      const formatText = [
+        `Market Cap`,
+        currentData.marketCap ? `₹ ${(Number(currentData.marketCap) / 10000000).toFixed(2)} Cr.` : '',
+        '',
+        `Current Price`,
+        currentData.currentPrice ? `₹ ${Number(currentData.currentPrice).toFixed(2)}` : '',
+        '',
+        `High / Low`,
+        currentData.highPrice && currentData.lowPrice 
+          ? `₹ ${Number(currentData.highPrice).toFixed(2)} / ${Number(currentData.lowPrice).toFixed(2)}`
+          : '',
+        '',
+        `Stock P/E`,
+        currentData.pe ? `${Number(currentData.pe).toFixed(2)}` : '',
+        '',
+        `Book Value`,
+        currentData.bookValue ? `₹ ${Number(currentData.bookValue).toFixed(2)}` : '',
+        '',
+        `Dividend Yield`,
+        currentData.dividendYield ? `${Number(currentData.dividendYield).toFixed(2)} %` : '',
+        '',
+        `ROCE`,
+        currentData.roce ? `${Number(currentData.roce).toFixed(2)} %` : '',
+        '',
+        `ROE`,
+        currentData.roe ? `${Number(currentData.roe).toFixed(2)} %` : '',
+        '',
+        `Face Value`,
+        currentData.faceValue ? `₹ ${Number(currentData.faceValue).toFixed(2)}` : '',
+      ].filter(Boolean).join('\n');
+      setPastedMetricsText(formatText);
+      handlePasteMetrics(formatText);
+    } else if (!showMetricsEditorDialog) {
+      // Reset when dialog closes
+      setPastedMetricsText("");
+      setParsedMetrics({});
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showMetricsEditorDialog, company?.id]);
+
   // Handle update company details
   const handleUpdateCompanyDetails = () => {
     if (!company?.id) return;
@@ -1100,45 +1312,54 @@ export default function CompanyDetail() {
                 </div>
               </div>
             </div>
-            {lastScrape && (
-              <div className="flex items-center gap-3">
+            <div className="flex items-center gap-3 flex-wrap">
+              {lastScrape && (
                 <div className="flex items-center gap-2 text-xs sm:text-sm text-muted-foreground shrink-0">
                   <Clock className="h-3 w-3 sm:h-4 sm:w-4" />
                   <span className="hidden sm:inline">Last scraped: {formatDate(lastScrape.lastScrape)}</span>
                   <span className="sm:hidden">{formatDate(lastScrape.lastScrape)}</span>
                 </div>
-                <div className="flex gap-2 shrink-0">
-                  <Button
-                    onClick={() => fetchLatestDataMutation.mutate()}
-                    disabled={fetchLatestDataMutation.isPending || !companyTicker}
-                    size="sm"
-                    variant="outline"
-                  >
-                    {fetchLatestDataMutation.isPending ? (
-                      <>
-                        <RefreshCw className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-2 animate-spin" />
-                        <span className="hidden sm:inline">Fetching...</span>
-                      </>
-                    ) : (
-                      <>
-                        <RefreshCw className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-2" />
-                        <span className="hidden sm:inline">Fetch Latest Data</span>
-                        <span className="sm:hidden">Fetch</span>
-                      </>
-                    )}
-                  </Button>
-                  <Button
-                    onClick={() => setShowUpdateCompanyDialog(true)}
-                    size="sm"
-                    variant="outline"
-                  >
-                    <Edit className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-2" />
-                    <span className="hidden sm:inline">Update Details</span>
-                    <span className="sm:hidden">Update</span>
-                  </Button>
-                </div>
+              )}
+              <div className="flex gap-2 shrink-0">
+                <Button
+                  onClick={() => fetchLatestDataMutation.mutate()}
+                  disabled={fetchLatestDataMutation.isPending || !companyTicker}
+                  size="sm"
+                  variant="outline"
+                >
+                  {fetchLatestDataMutation.isPending ? (
+                    <>
+                      <RefreshCw className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-2 animate-spin" />
+                      <span className="hidden sm:inline">Fetching...</span>
+                    </>
+                  ) : (
+                    <>
+                      <RefreshCw className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-2" />
+                      <span className="hidden sm:inline">Fetch Latest Data</span>
+                      <span className="sm:hidden">Fetch</span>
+                    </>
+                  )}
+                </Button>
+                <Button
+                  onClick={() => setShowUpdateCompanyDialog(true)}
+                  size="sm"
+                  variant="outline"
+                >
+                  <Edit className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-2" />
+                  <span className="hidden sm:inline">Update Details</span>
+                  <span className="sm:hidden">Update</span>
+                </Button>
+                <Button
+                  onClick={() => setShowMetricsEditorDialog(true)}
+                  size="sm"
+                  variant="outline"
+                >
+                  <Edit className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-2" />
+                  <span className="hidden sm:inline">Edit Metrics</span>
+                  <span className="sm:hidden">Metrics</span>
+                </Button>
               </div>
-            )}
+            </div>
           </div>
         </div>
       </div>
@@ -1638,127 +1859,6 @@ export default function CompanyDetail() {
                     </DialogContent>
                   </Dialog>
 
-                  {/* Update Company Details Dialog */}
-                  <Dialog open={showUpdateCompanyDialog} onOpenChange={(open) => {
-                    if (!open && !updateCompanyDetailsMutation.isPending) {
-                      setShowUpdateCompanyDialog(false);
-                      setUpdateTickerValidationResult(null);
-                    }
-                  }}>
-                    <DialogContent className="max-w-md">
-                      <DialogHeader>
-                        <DialogTitle>Update Company Details</DialogTitle>
-                        <DialogDescription>
-                          Update the company ticker and/or sector. If ticker is changed, latest data will be fetched automatically.
-                        </DialogDescription>
-                      </DialogHeader>
-                      <div className="space-y-4 py-4">
-                        <div className="space-y-2">
-                          <Label htmlFor="update-ticker">Ticker</Label>
-                          <div className="flex gap-2">
-                            <Input
-                              id="update-ticker"
-                              value={updateTicker}
-                              onChange={(e) => {
-                                setUpdateTicker(e.target.value.toUpperCase());
-                                setUpdateTickerValidationResult(null); // Clear validation when user types
-                              }}
-                              placeholder="Enter ticker (e.g., TCS)"
-                              className="font-mono flex-1"
-                            />
-                            <Button
-                              onClick={handleValidateUpdateTicker}
-                              disabled={!updateTicker.trim() || isValidatingUpdateTicker}
-                              variant="outline"
-                              size="sm"
-                            >
-                              {isValidatingUpdateTicker ? (
-                                <>
-                                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                                  Validating
-                                </>
-                              ) : (
-                                "Validate"
-                              )}
-                            </Button>
-                          </div>
-                          {updateTickerValidationResult && (
-                            <div className={`p-2 rounded-md text-xs ${updateTickerValidationResult.valid
-                              ? "bg-green-50 dark:bg-green-950/20 border border-green-200 dark:border-green-800"
-                              : "bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-800"
-                              }`}>
-                              {updateTickerValidationResult.valid ? (
-                                <div className="flex items-center gap-2">
-                                  <CheckCircle2 className="h-3 w-3 text-green-600 dark:text-green-400" />
-                                  <span className="text-green-900 dark:text-green-100">
-                                    Valid: {updateTickerValidationResult.companyName}
-                                  </span>
-                                </div>
-                              ) : (
-                                <div className="flex items-center gap-2">
-                                  <XCircle className="h-3 w-3 text-red-600 dark:text-red-400" />
-                                  <span className="text-red-900 dark:text-red-100">
-                                    {updateTickerValidationResult.error}
-                                  </span>
-                                </div>
-                              )}
-                            </div>
-                          )}
-                        </div>
-
-                        <div className="space-y-2">
-                          <Label htmlFor="update-sector">Sector</Label>
-                          <Select
-                            value={updateSectorId || undefined}
-                            onValueChange={(value) => setUpdateSectorId(value === "none" ? "" : value)}
-                          >
-                            <SelectTrigger id="update-sector">
-                              <SelectValue placeholder="Select sector" />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="none">None</SelectItem>
-                              {sectors?.map((sector) => (
-                                <SelectItem key={sector.id} value={sector.id}>
-                                  {sector.name}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        </div>
-
-                        <div className="flex gap-2 pt-2">
-                          <Button
-                            variant="outline"
-                            onClick={() => {
-                              setShowUpdateCompanyDialog(false);
-                              setUpdateTickerValidationResult(null);
-                            }}
-                            disabled={updateCompanyDetailsMutation.isPending}
-                            className="flex-1"
-                          >
-                            Cancel
-                          </Button>
-                          <Button
-                            onClick={handleUpdateCompanyDetails}
-                            disabled={
-                              updateCompanyDetailsMutation.isPending ||
-                              (updateTicker.trim().toUpperCase() !== company?.ticker && !updateTickerValidationResult?.valid)
-                            }
-                            className="flex-1"
-                          >
-                            {updateCompanyDetailsMutation.isPending ? (
-                              <>
-                                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                                Updating...
-                              </>
-                            ) : (
-                              "Update Company"
-                            )}
-                          </Button>
-                        </div>
-                      </div>
-                    </DialogContent>
-                  </Dialog>
                 </div>
               </div>
             </CardHeader>
@@ -2178,6 +2278,229 @@ export default function CompanyDetail() {
           onOpenChange={setShowTraceModal}
         />
       )}
+
+      {/* Update Company Details Dialog - Placed at component level so it works from any tab */}
+      <Dialog open={showUpdateCompanyDialog} onOpenChange={(open) => {
+        if (!open && !updateCompanyDetailsMutation.isPending) {
+          setShowUpdateCompanyDialog(false);
+          setUpdateTickerValidationResult(null);
+        }
+      }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Update Company Details</DialogTitle>
+            <DialogDescription>
+              Update the company ticker and/or sector. If ticker is changed, latest data will be fetched automatically.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label htmlFor="update-ticker">Ticker</Label>
+              <div className="flex gap-2">
+                <Input
+                  id="update-ticker"
+                  value={updateTicker}
+                  onChange={(e) => {
+                    setUpdateTicker(e.target.value.toUpperCase());
+                    setUpdateTickerValidationResult(null); // Clear validation when user types
+                  }}
+                  placeholder="Enter ticker (e.g., TCS)"
+                  className="font-mono flex-1"
+                />
+                <Button
+                  onClick={handleValidateUpdateTicker}
+                  disabled={!updateTicker.trim() || isValidatingUpdateTicker}
+                  variant="outline"
+                  size="sm"
+                >
+                  {isValidatingUpdateTicker ? (
+                    <>
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      Validating
+                    </>
+                  ) : (
+                    "Validate"
+                  )}
+                </Button>
+              </div>
+              {updateTickerValidationResult && (
+                <div className={`p-2 rounded-md text-xs ${updateTickerValidationResult.valid
+                  ? "bg-green-50 dark:bg-green-950/20 border border-green-200 dark:border-green-800"
+                  : "bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-800"
+                  }`}>
+                  {updateTickerValidationResult.valid ? (
+                    <div className="flex items-center gap-2">
+                      <CheckCircle2 className="h-3 w-3 text-green-600 dark:text-green-400" />
+                      <span className="text-green-900 dark:text-green-100">
+                        Valid: {updateTickerValidationResult.companyName}
+                      </span>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-2">
+                      <XCircle className="h-3 w-3 text-red-600 dark:text-red-400" />
+                      <span className="text-red-900 dark:text-red-100">
+                        {updateTickerValidationResult.error}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="update-sector">Sector</Label>
+              <Select
+                value={updateSectorId || undefined}
+                onValueChange={(value) => setUpdateSectorId(value === "none" ? "" : value)}
+              >
+                <SelectTrigger id="update-sector">
+                  <SelectValue placeholder="Select sector" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">None</SelectItem>
+                  {sectors?.map((sector) => (
+                    <SelectItem key={sector.id} value={sector.id}>
+                      {sector.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="flex gap-2 pt-2">
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setShowUpdateCompanyDialog(false);
+                  setUpdateTickerValidationResult(null);
+                }}
+                disabled={updateCompanyDetailsMutation.isPending}
+                className="flex-1"
+              >
+                Cancel
+              </Button>
+              <Button
+                onClick={handleUpdateCompanyDetails}
+                disabled={
+                  updateCompanyDetailsMutation.isPending ||
+                  (updateTicker.trim().toUpperCase() !== company?.ticker && !updateTickerValidationResult?.valid)
+                }
+                className="flex-1"
+              >
+                {updateCompanyDetailsMutation.isPending ? (
+                  <>
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    Updating...
+                  </>
+                ) : (
+                  "Update Company"
+                )}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Metrics Editor Dialog - Placed at component level so it works from any tab */}
+      <Dialog open={showMetricsEditorDialog} onOpenChange={(open) => {
+        if (!open && !updateMetricsMutation.isPending) {
+          setShowMetricsEditorDialog(false);
+          setPastedMetricsText("");
+          setParsedMetrics({});
+        }
+      }}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Edit Key Financial Metrics</DialogTitle>
+            <DialogDescription>
+              Paste the metrics from Screener.in or edit them manually. The format should be:
+              <br />
+              <code className="text-xs bg-muted p-1 rounded">
+                Market Cap<br />
+                ₹ 976 Cr.<br />
+                Current Price<br />
+                ₹ 24.7<br />
+                ...
+              </code>
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label htmlFor="metrics-text">Metrics (paste or edit)</Label>
+              <Textarea
+                id="metrics-text"
+                value={pastedMetricsText}
+                onChange={(e) => handlePasteMetrics(e.target.value)}
+                placeholder="Market Cap&#10;₹ 976 Cr.&#10;&#10;Current Price&#10;₹ 24.7&#10;&#10;High / Low&#10;₹ 33.5 / 22.0&#10;&#10;Stock P/E&#10;11.6&#10;&#10;Book Value&#10;₹ 35.9&#10;&#10;Dividend Yield&#10;0.00 %&#10;&#10;ROCE&#10;5.47 %&#10;&#10;ROE&#10;5.48 %&#10;&#10;Face Value&#10;₹ 10.0"
+                className="font-mono text-sm min-h-[300px]"
+              />
+            </div>
+
+            {/* Show parsed metrics preview */}
+            {Object.keys(parsedMetrics).length > 0 && (
+              <div className="space-y-2">
+                <Label>Parsed Metrics Preview</Label>
+                <div className="bg-muted p-3 rounded-md space-y-1 text-sm">
+                  {Object.entries(parsedMetrics).map(([key, value]) => (
+                    <div key={key} className="flex justify-between">
+                      <span className="font-medium capitalize">{key.replace(/([A-Z])/g, ' $1').trim()}:</span>
+                      <span className="font-mono">
+                        {value !== null ? (
+                          key === 'marketCap' ? formatIndianCurrency(value) :
+                          key === 'currentPrice' || key === 'bookValue' || key === 'faceValue' ? `₹${value.toFixed(2)}` :
+                          key === 'highPrice' || key === 'lowPrice' ? `₹${value.toFixed(2)}` :
+                          key === 'pe' ? value.toFixed(2) :
+                          `${value.toFixed(2)}%`
+                        ) : (
+                          <span className="text-muted-foreground">Not found</span>
+                        )}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div className="flex justify-end gap-2">
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setShowMetricsEditorDialog(false);
+                  setPastedMetricsText("");
+                  setParsedMetrics({});
+                }}
+                disabled={updateMetricsMutation.isPending}
+              >
+                Cancel
+              </Button>
+              <Button
+                onClick={() => {
+                  if (Object.keys(parsedMetrics).length === 0) {
+                    toast({
+                      title: "No metrics found",
+                      description: "Please paste metrics in the correct format",
+                      variant: "destructive"
+                    });
+                    return;
+                  }
+                  updateMetricsMutation.mutate(parsedMetrics);
+                }}
+                disabled={updateMetricsMutation.isPending || Object.keys(parsedMetrics).length === 0}
+                className="flex-1"
+              >
+                {updateMetricsMutation.isPending ? (
+                  <>
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    Updating...
+                  </>
+                ) : (
+                  "Update Metrics"
+                )}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div >
   );
 }
