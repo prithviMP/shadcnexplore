@@ -389,6 +389,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.delete("/api/users/:id", requireAuth, requireRole("admin"), async (req, res) => {
     try {
+      // Check if user exists and prevent deletion of super admin users
+      const user = await storage.getUser(req.params.id);
+      if (!user) {
+        return res.status(404).json({ error: "User not found" });
+      }
+      if (user.role === "super_admin") {
+        return res.status(400).json({ error: "Cannot delete super admin user" });
+      }
       await storage.deleteUser(req.params.id);
       res.json({ success: true });
     } catch (error: any) {
@@ -466,6 +474,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const role = await storage.getRole(req.params.id);
       if (!role) {
         return res.status(404).json({ error: "Role not found" });
+      }
+      // Prevent deletion of super_admin role specifically
+      if (role.name === "super_admin") {
+        return res.status(400).json({ error: "Cannot delete super_admin role" });
       }
       // Prevent deletion of system roles
       if (role.isSystem) {

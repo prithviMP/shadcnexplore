@@ -138,7 +138,15 @@ export default function UserManagement() {
     updateEnabledMutation.mutate({ userId, enabled });
   };
 
-  const handleDelete = (userId: string) => {
+  const handleDelete = (userId: string, userRole: string) => {
+    if (userRole === "super_admin") {
+      toast({
+        title: "Cannot delete super admin",
+        description: "Super admin users cannot be deleted.",
+        variant: "destructive",
+      });
+      return;
+    }
     if (confirm("Are you sure you want to delete this user?")) {
       deleteMutation.mutate(userId);
     }
@@ -344,9 +352,10 @@ export default function UserManagement() {
                             size="icon" 
                             variant="ghost" 
                             className="h-8 w-8 text-red-600 hover:text-red-700" 
-                            onClick={() => handleDelete(user.id)} 
-                            disabled={deleteMutation.isPending}
+                            onClick={() => handleDelete(user.id, user.role)} 
+                            disabled={deleteMutation.isPending || user.role === "super_admin"}
                             data-testid={`button-delete-${user.id}`}
+                            title={user.role === "super_admin" ? "Cannot delete super admin user" : "Delete user"}
                           >
                             <Trash2 className="h-4 w-4" />
                           </Button>

@@ -161,20 +161,43 @@ export default function Dashboard() {
     staleSignals: signalStatus?.staleSignals || 0,
   };
 
-  // Get sector overview with signal counts
+  // Get sector overview with signal counts (supports custom signals)
   const sectorOverview = sectors?.map(sector => {
     const sectorCompanies = companies?.filter(c => c.sectorId === sector.id) || [];
     const sectorSignals = allSignals?.filter(signal =>
       sectorCompanies.some(c => c.id === signal.companyId)
     ) || [];
 
+    // Count signals by category (supports custom signals with BUY/SELL/HOLD keywords)
+    let buyCount = 0;
+    let sellCount = 0;
+    let holdCount = 0;
+    const otherSignals: Record<string, number> = {};
+
+    sectorSignals.forEach(s => {
+      const signalUpper = (s.signal || "").toUpperCase();
+      if (signalUpper === "BUY" || (signalUpper.includes("BUY") && !signalUpper.includes("SELL"))) {
+        buyCount++;
+      } else if (signalUpper === "SELL" || signalUpper.includes("SELL")) {
+        sellCount++;
+      } else if (signalUpper === "HOLD") {
+        holdCount++;
+      } else {
+        // Track other custom signals
+        const signalName = s.signal || "Unknown";
+        otherSignals[signalName] = (otherSignals[signalName] || 0) + 1;
+      }
+    });
+
     return {
       id: sector.id,
       name: sector.name,
       companies: sectorCompanies.length,
-      buySignals: sectorSignals.filter(s => s.signal === "BUY").length,
-      sellSignals: sectorSignals.filter(s => s.signal === "SELL").length,
-      holdSignals: sectorSignals.filter(s => s.signal === "HOLD").length,
+      buySignals: buyCount,
+      sellSignals: sellCount,
+      holdSignals: holdCount,
+      otherSignals, // Custom signals not matching BUY/SELL/HOLD
+      totalSignals: sectorSignals.length,
     };
   }) || [];
 
@@ -976,7 +999,7 @@ export default function Dashboard() {
         </Card>
       </div>
 
-      {/* Sector Signal Distribution */}
+      {/* Sector Signal Distribution - Commented out as per request
       <Card className="w-full min-w-0 overflow-hidden">
         <CardHeader>
           <CardTitle>Sector Signal Distribution</CardTitle>
@@ -1012,6 +1035,7 @@ export default function Dashboard() {
           )}
         </CardContent>
       </Card>
+      */}
 
       {/* Companies List Section with Search, Filters, and View Toggle */}
       <Card>
@@ -1429,21 +1453,45 @@ export default function Dashboard() {
                     <div className="group p-4 rounded-lg border hover-elevate cursor-pointer" data-testid={`card-sector-${sector.id}`}>
                       <div className="flex items-center justify-between mb-3">
                         <h4 className="font-semibold text-lg">{sector.name}</h4>
-                        <span className="text-sm text-muted-foreground">{sector.companies} companies</span>
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm text-muted-foreground">{sector.companies} companies</span>
+                          {sector.totalSignals > 0 && (
+                            <span className="text-xs bg-muted px-2 py-0.5 rounded-full">
+                              {sector.totalSignals} signals
+                            </span>
+                          )}
+                        </div>
                       </div>
-                      <div className="flex gap-3">
-                        <div className="flex items-center gap-1.5">
-                          <SignalBadge signal="BUY" showIcon={false} />
-                          <span className="text-sm font-medium text-muted-foreground">{sector.buySignals}</span>
-                        </div>
-                        <div className="flex items-center gap-1.5">
-                          <SignalBadge signal="SELL" showIcon={false} />
-                          <span className="text-sm font-medium text-muted-foreground">{sector.sellSignals}</span>
-                        </div>
-                        <div className="flex items-center gap-1.5">
-                          <SignalBadge signal="HOLD" showIcon={false} />
-                          <span className="text-sm font-medium text-muted-foreground">{sector.holdSignals}</span>
-                        </div>
+                      <div className="flex flex-wrap gap-2">
+                        {sector.buySignals > 0 && (
+                          <div className="flex items-center gap-1.5">
+                            <SignalBadge signal="BUY" showIcon={false} />
+                            <span className="text-sm font-medium text-muted-foreground">{sector.buySignals}</span>
+                          </div>
+                        )}
+                        {sector.sellSignals > 0 && (
+                          <div className="flex items-center gap-1.5">
+                            <SignalBadge signal="SELL" showIcon={false} />
+                            <span className="text-sm font-medium text-muted-foreground">{sector.sellSignals}</span>
+                          </div>
+                        )}
+                        {sector.holdSignals > 0 && (
+                          <div className="flex items-center gap-1.5">
+                            <SignalBadge signal="HOLD" showIcon={false} />
+                            <span className="text-sm font-medium text-muted-foreground">{sector.holdSignals}</span>
+                          </div>
+                        )}
+                        {/* Show other custom signals */}
+                        {Object.entries(sector.otherSignals).map(([signalName, count]) => (
+                          <div key={signalName} className="flex items-center gap-1.5">
+                            <SignalBadge signal={signalName} showIcon={false} />
+                            <span className="text-sm font-medium text-muted-foreground">{count}</span>
+                          </div>
+                        ))}
+                        {/* Show message if no signals */}
+                        {sector.totalSignals === 0 && (
+                          <span className="text-sm text-muted-foreground italic">No signals generated</span>
+                        )}
                       </div>
                     </div>
                   </Link>

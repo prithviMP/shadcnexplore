@@ -255,6 +255,14 @@ export class DbStorage implements IStorage {
   }
 
   async deleteUser(id: string): Promise<void> {
+    // Prevent deletion of super admin users
+    const user = await this.getUser(id);
+    if (!user) {
+      throw new Error("User not found");
+    }
+    if (user.role === "super_admin") {
+      throw new Error("Cannot delete super admin user");
+    }
     await db.delete(users).where(eq(users.id, id));
   }
 
@@ -880,6 +888,17 @@ export class DbStorage implements IStorage {
   }
 
   async deleteRole(id: string): Promise<void> {
+    // Prevent deletion of super_admin role
+    const role = await this.getRole(id);
+    if (!role) {
+      throw new Error("Role not found");
+    }
+    if (role.name === "super_admin") {
+      throw new Error("Cannot delete super_admin role");
+    }
+    if (role.isSystem) {
+      throw new Error("Cannot delete system roles");
+    }
     await db.delete(roles).where(eq(roles.id, id));
   }
 

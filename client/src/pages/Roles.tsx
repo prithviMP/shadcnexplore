@@ -164,6 +164,16 @@ export default function Roles() {
   };
 
   const handleDeleteRole = (role: Role) => {
+    // Prevent deletion of super_admin role specifically
+    if (role.name === "super_admin") {
+      toast({
+        title: "Cannot delete super_admin role",
+        description: "The super_admin role cannot be deleted.",
+        variant: "destructive",
+      });
+      return;
+    }
+
     if (role.isSystem) {
       toast({
         title: "Cannot delete system role",
@@ -287,7 +297,7 @@ export default function Roles() {
                           >
                             <Pencil className="h-4 w-4" />
                           </Button>
-                          {!role.isSystem && (
+                          {!role.isSystem && role.name !== "super_admin" && (
                             <Button
                               variant="ghost"
                               size="icon"
