@@ -98,6 +98,10 @@ export default function CompanyDetail() {
   const [pastedMetricsText, setPastedMetricsText] = useState<string>("");
   const [parsedMetrics, setParsedMetrics] = useState<Record<string, number | null>>({});
 
+  // Fetch data type dialog state
+  const [showFetchDataDialog, setShowFetchDataDialog] = useState(false);
+  const [selectedDataType, setSelectedDataType] = useState<'consolidated' | 'standalone'>('consolidated');
+
   // Fetch company by ID or ticker
   const { data: company, isLoading: companyLoading, error: companyError } = useQuery<Company>({
     queryKey: companyId
@@ -517,11 +521,12 @@ export default function CompanyDetail() {
 
   // Mutation for fetching latest data
   const fetchLatestDataMutation = useMutation({
-    mutationFn: async () => {
+    mutationFn: async (dataType: 'consolidated' | 'standalone' = 'consolidated') => {
       if (!companyTicker) throw new Error("No ticker available");
       const res = await apiRequest("POST", "/api/v1/scraper/scrape/single", {
         ticker: companyTicker,
-        sectorId: company?.sectorId
+        sectorId: company?.sectorId,
+        dataType
       });
       const data = await res.json();
       // Only throw error if it's a ticker error (ticker doesn't exist)
@@ -532,8 +537,22 @@ export default function CompanyDetail() {
       return data;
     },
     onSuccess: (data) => {
+      // Close the fetch data dialog
+      setShowFetchDataDialog(false);
+
       // Check if fetch failed
       if (data.success === false) {
+        // Check if no data was found from the selected source
+        if (data.noDataFromSource) {
+          const dataTypeName = data.dataType === 'standalone' ? 'Standalone' : 'Consolidated';
+          toast({
+            title: `No ${dataTypeName} Data Found`,
+            description: `${dataTypeName} data returned no results for ${companyTicker}. Database was NOT updated. Try the other data type.`,
+            variant: "destructive"
+          });
+          return;
+        }
+
         // Check if it's a ticker error (ticker doesn't exist)
         if (isTickerError(null, data)) {
           setNewTicker(companyTicker || "");
@@ -573,9 +592,10 @@ export default function CompanyDetail() {
       }
 
       // Success case
+      const dataTypeName = data.dataType === 'standalone' ? 'Standalone' : 'Consolidated';
       toast({
         title: "Data fetched successfully",
-        description: `Scraped ${data.quartersScraped || 0} quarters and ${data.metricsScraped || 0} metrics`
+        description: `Scraped ${data.quartersScraped || 0} quarters and ${data.metricsScraped || 0} metrics from ${dataTypeName} source`
       });
       // Invalidate all related queries to refresh the page
       queryClient.invalidateQueries({ queryKey: ["/api/v1/companies", companyTicker, "data"] });
@@ -1322,7 +1342,7 @@ export default function CompanyDetail() {
               )}
               <div className="flex gap-2 shrink-0">
                 <Button
-                  onClick={() => fetchLatestDataMutation.mutate()}
+                  onClick={() => setShowFetchDataDialog(true)}
                   disabled={fetchLatestDataMutation.isPending || !companyTicker}
                   size="sm"
                   variant="outline"
@@ -2495,6 +2515,86 @@ export default function CompanyDetail() {
                   </>
                 ) : (
                   "Update Metrics"
+                )}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Fetch Data Type Dialog */}
+      <Dialog open={showFetchDataDialog} onOpenChange={(open) => {
+        if (!open && !fetchLatestDataMutation.isPending) {
+          setShowFetchDataDialog(false);
+        }
+      }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Fetch Latest Data</DialogTitle>
+            <DialogDescription>
+              Choose which data source to fetch from Screener.in
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-3">
+              <Label className="text-sm font-medium">Data Source</Label>
+              <div className="grid grid-cols-2 gap-3">
+                <Button
+                  variant={selectedDataType === 'consolidated' ? 'default' : 'outline'}
+                  className="w-full"
+                  onClick={() => setSelectedDataType('consolidated')}
+                  disabled={fetchLatestDataMutation.isPending}
+                >
+                  Consolidated
+                </Button>
+                <Button
+                  variant={selectedDataType === 'standalone' ? 'default' : 'outline'}
+                  className="w-full"
+                  onClick={() => setSelectedDataType('standalone')}
+                  disabled={fetchLatestDataMutation.isPending}
+                >
+                  Standalone
+                </Button>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                {selectedDataType === 'consolidated' 
+                  ? 'Consolidated data includes subsidiaries and group companies.'
+                  : 'Standalone data shows only the parent company\'s financials.'}
+              </p>
+            </div>
+
+            <Alert>
+              <AlertCircle className="h-4 w-4" />
+              <AlertDescription className="text-xs">
+                If no data is found from the selected source, the database will <strong>NOT</strong> be updated. 
+                You'll be notified and can try the other source.
+              </AlertDescription>
+            </Alert>
+
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                onClick={() => setShowFetchDataDialog(false)}
+                disabled={fetchLatestDataMutation.isPending}
+                className="flex-1"
+              >
+                Cancel
+              </Button>
+              <Button
+                onClick={() => fetchLatestDataMutation.mutate(selectedDataType)}
+                disabled={fetchLatestDataMutation.isPending}
+                className="flex-1"
+              >
+                {fetchLatestDataMutation.isPending ? (
+                  <>
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    Fetching...
+                  </>
+                ) : (
+                  <>
+                    <RefreshCw className="h-4 w-4 mr-2" />
+                    Fetch Data
+                  </>
                 )}
               </Button>
             </div>

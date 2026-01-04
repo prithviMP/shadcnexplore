@@ -16,6 +16,8 @@ interface ScrapeResult {
   quartersScraped: number;
   metricsScraped: number;
   error?: string;
+  quarterlyDataSource?: 'primary' | 'fallback' | 'none'; // Which source was used
+  dataType?: 'consolidated' | 'standalone' | 'both'; // Which type was requested
 }
 
 interface ScrapeStatus {
@@ -303,17 +305,23 @@ class ScreenerScraper {
    * @param dataType - 'consolidated' (default), 'standalone', or 'both' to merge data from both sources
    */
   async scrapeCompany(ticker: string, companyId?: string, sectorOverride?: string, userId?: string, dataType: 'consolidated' | 'standalone' | 'both' = 'consolidated'): Promise<ScrapeResult> {
-    // Primary URL: consolidated quarterly data (preferred)
-    let url = `https://www.screener.in/company/${ticker}/consolidated/#quarters`;
-    const fallbackUrl = `https://www.screener.in/company/${ticker}/#quarters`;
+    // Determine primary and fallback URLs based on dataType
+    // When dataType is 'standalone', use standalone URL as primary
+    const consolidatedUrl = `https://www.screener.in/company/${ticker}/consolidated/#quarters`;
+    const standaloneUrl = `https://www.screener.in/company/${ticker}/#quarters`;
+    
+    // Set primary URL based on dataType
+    let url = dataType === 'standalone' ? standaloneUrl : consolidatedUrl;
+    const fallbackUrl = dataType === 'standalone' ? consolidatedUrl : standaloneUrl;
+    
     // Track where we finally loaded quarterly data from for better observability
     let quarterlyDataSource: 'primary' | 'fallback' | 'none' = 'none';
     const startedAt = new Date();
     let logId: string | null = null;
 
-      console.log(`[SCRAPER] Starting scrape for ticker: ${ticker.toUpperCase()}`);
-      console.log(`[SCRAPER] Primary URL: ${url}`);
-      console.log(`[SCRAPER] Fallback URL: ${fallbackUrl}`);
+    console.log(`[SCRAPER] Starting scrape for ticker: ${ticker.toUpperCase()}, dataType: ${dataType}`);
+    console.log(`[SCRAPER] Primary URL (${dataType === 'standalone' ? 'standalone' : 'consolidated'}): ${url}`);
+    console.log(`[SCRAPER] Fallback URL: ${fallbackUrl}`);
     console.log(`[SCRAPER] Parameters: companyId=${companyId || 'none'}, sectorOverride=${sectorOverride || 'none'}, userId=${userId || 'none'}`);
 
     try {
@@ -505,116 +513,69 @@ class ScreenerScraper {
       }
 
       // Extract quarterly data based on dataType preference
-      let consolidatedData: InsertQuarterlyData[] = [];
-      let standaloneData: InsertQuarterlyData[] = [];
+      // Primary page is already fetched based on dataType (consolidated or standalone URL)
       let quarterlyData: InsertQuarterlyData[] = [];
+      const primaryType = dataType === 'standalone' ? 'standalone' : 'consolidated';
+      const fallbackType = dataType === 'standalone' ? 'consolidated' : 'standalone';
 
-      // Try consolidated data if requested
-      if (dataType === 'consolidated' || dataType === 'both') {
-        console.log(`[SCRAPER] Extracting quarterly data from primary page (consolidated)...`);
-        const extractStartTime = Date.now();
-        consolidatedData = this.extractQuarterlyData($, ticker, finalCompanyId || undefined);
-        const extractDuration = Date.now() - extractStartTime;
-        console.log(`[SCRAPER] Extracted ${consolidatedData.length} quarterly data rows from consolidated page in ${extractDuration}ms`);
-        if (consolidatedData.length > 0) {
-          quarterlyDataSource = 'primary';
-          if (dataType === 'consolidated') {
-            quarterlyData = consolidatedData;
-          }
-        }
+      // Extract data from the primary page we already fetched
+      console.log(`[SCRAPER] Extracting quarterly data from primary page (${primaryType})...`);
+      const extractStartTime = Date.now();
+      const primaryData = this.extractQuarterlyData($, ticker, finalCompanyId || undefined);
+      const extractDuration = Date.now() - extractStartTime;
+      console.log(`[SCRAPER] Extracted ${primaryData.length} quarterly data rows from ${primaryType} page in ${extractDuration}ms`);
+      
+      if (primaryData.length > 0) {
+        quarterlyDataSource = 'primary';
+        quarterlyData = primaryData;
       }
 
-      // Try standalone data if requested (and consolidated didn't work or both is requested)
-      if ((dataType === 'standalone' || dataType === 'both') && (quarterlyData.length === 0 || dataType === 'both')) {
+      // For 'both' mode, also fetch the other source and merge
+      if (dataType === 'both' && primaryData.length > 0) {
         try {
-          if (dataType === 'both' && consolidatedData.length > 0) {
-            console.log(`[SCRAPER] Fetching standalone data to merge with consolidated data...`);
-          } else {
-            console.log(`[SCRAPER] Trying standalone URL...`);
-          }
+          console.log(`[SCRAPER] Fetching ${fallbackType} data to merge...`);
           const fallbackDelayMs = Math.random() * 2000 + 1000;
-          console.log(`[SCRAPER] Waiting ${Math.round(fallbackDelayMs)}ms before fetching standalone page to avoid rate limiting...`);
+          console.log(`[SCRAPER] Waiting ${Math.round(fallbackDelayMs)}ms before fetching ${fallbackType} page...`);
           await this.delay(fallbackDelayMs);
 
-          const standaloneUrl = fallbackUrl;
-          console.log(`[SCRAPER] Fetching standalone company page URL: ${standaloneUrl}`);
+          console.log(`[SCRAPER] Fetching ${fallbackType} company page URL: ${fallbackUrl}`);
           const fallbackFetchStart = Date.now();
-          const fallbackResponse = await this.fetchWithRetry(standaloneUrl);
+          const fallbackResponse = await this.fetchWithRetry(fallbackUrl);
           const fallbackFetchDuration = Date.now() - fallbackFetchStart;
-          console.log(`[SCRAPER] Standalone HTTP Response: ${fallbackResponse.status} ${fallbackResponse.statusText} (took ${fallbackFetchDuration}ms)`);
+          console.log(`[SCRAPER] ${fallbackType} HTTP Response: ${fallbackResponse.status} ${fallbackResponse.statusText} (took ${fallbackFetchDuration}ms)`);
 
           if (fallbackResponse.ok) {
-            const fallbackHtmlStart = Date.now();
             const fallbackHtml = await fallbackResponse.text();
-            const fallbackHtmlDuration = Date.now() - fallbackHtmlStart;
-            console.log(`[SCRAPER] Received standalone HTML (${fallbackHtml.length} bytes) in ${fallbackHtmlDuration}ms`);
-
-            const fallbackParseStart = Date.now();
             const fallback$ = load(fallbackHtml);
-            const fallbackParseDuration = Date.now() - fallbackParseStart;
-            console.log(`[SCRAPER] Parsed standalone HTML with Cheerio in ${fallbackParseDuration}ms`);
-
-            console.log(`[SCRAPER] Extracting quarterly data from standalone page...`);
-            const fallbackExtractStart = Date.now();
-            standaloneData = this.extractQuarterlyData(fallback$, ticker, finalCompanyId || undefined);
-            const standaloneExtractDuration = Date.now() - fallbackExtractStart;
-            console.log(`[SCRAPER] Extracted ${standaloneData.length} quarterly data rows from standalone page in ${standaloneExtractDuration}ms`);
+            const secondaryData = this.extractQuarterlyData(fallback$, ticker, finalCompanyId || undefined);
+            console.log(`[SCRAPER] Extracted ${secondaryData.length} quarterly data rows from ${fallbackType} page`);
             
-            if (standaloneData.length > 0) {
-              if (dataType === 'both' && consolidatedData.length > 0) {
-                // Merge data: consolidated takes precedence, standalone fills gaps
-                console.log(`[SCRAPER] Merging consolidated and standalone data...`);
-                quarterlyData = this.mergeQuarterlyData(consolidatedData, standaloneData);
-                quarterlyDataSource = 'primary'; // Mark as primary since we have consolidated
-                console.log(`[SCRAPER] Merged data: ${quarterlyData.length} total rows (${consolidatedData.length} consolidated + ${standaloneData.length} standalone, with deduplication)`);
-              } else {
-                quarterlyData = standaloneData;
-                quarterlyDataSource = 'fallback';
-              }
+            if (secondaryData.length > 0) {
+              // Merge data: primary takes precedence, secondary fills gaps
+              console.log(`[SCRAPER] Merging ${primaryType} and ${fallbackType} data...`);
+              quarterlyData = this.mergeQuarterlyData(primaryData, secondaryData);
+              console.log(`[SCRAPER] Merged data: ${quarterlyData.length} total rows`);
             }
-          } else {
-            console.warn(`[SCRAPER] Standalone URL returned non-OK status: ${fallbackResponse.status} ${fallbackResponse.statusText}`);
           }
         } catch (fallbackError) {
-          console.error(`[SCRAPER] Error while trying standalone URL for ${ticker}:`, fallbackError);
-          // If both mode and we have consolidated data, use it
-          if (dataType === 'both' && consolidatedData.length > 0) {
-            quarterlyData = consolidatedData;
-            quarterlyDataSource = 'primary';
-            console.log(`[SCRAPER] Using consolidated data only (standalone fetch failed)`);
-          }
+          console.error(`[SCRAPER] Error while fetching ${fallbackType} data for merge:`, fallbackError);
+          // Continue with primary data only
         }
       }
 
-      // If we still don't have data and only tried one type, try the other as fallback
-      if (quarterlyData.length === 0 && dataType !== 'both') {
-        console.log(`[SCRAPER] No data found with ${dataType} type, trying fallback...`);
-        // Fallback logic: if consolidated failed, try standalone; if standalone failed, try consolidated
-        try {
-          const fallbackUrlToUse = dataType === 'consolidated' ? fallbackUrl : url;
-          const fallbackType = dataType === 'consolidated' ? 'standalone' : 'consolidated';
-          console.log(`[SCRAPER] Trying ${fallbackType} as fallback...`);
-          const fallbackDelayMs = Math.random() * 2000 + 1000;
-          await this.delay(fallbackDelayMs);
-          const fallbackResponse = await this.fetchWithRetry(fallbackUrlToUse);
-          if (fallbackResponse.ok) {
-            const fallbackHtml = await fallbackResponse.text();
-            const fallback$ = load(fallbackHtml);
-            quarterlyData = this.extractQuarterlyData(fallback$, ticker, finalCompanyId || undefined);
-            if (quarterlyData.length > 0) {
-              quarterlyDataSource = fallbackType === 'standalone' ? 'fallback' : 'primary';
-              console.log(`[SCRAPER] Successfully fetched ${quarterlyData.length} rows from ${fallbackType} fallback`);
-            }
-          }
-        } catch (fallbackError) {
-          console.error(`[SCRAPER] Fallback also failed:`, fallbackError);
-        }
+      // If primary source returned no data, DO NOT automatically try fallback
+      // User explicitly chose a data source, so we should respect that choice
+      if (quarterlyData.length === 0) {
+        console.warn(`[SCRAPER] No quarterly data found for ticker: ${ticker} from ${primaryType} source`);
+        console.warn(`[SCRAPER] User selected ${dataType} - not auto-falling back to preserve user choice`);
+        // Don't try fallback - user explicitly chose this data type
       }
 
       if (quarterlyData.length === 0) {
-        console.warn(`[SCRAPER] No quarterly data found for ticker: ${ticker} on either primary or fallback URLs`);
+        console.warn(`[SCRAPER] No quarterly data found for ticker: ${ticker} from ${primaryType} source`);
         console.warn(`[SCRAPER] Company name: ${companyName || 'NOT FOUND'}`);
         console.warn(`[SCRAPER] Sector: ${sectorName || 'NOT FOUND'}`);
+        console.warn(`[SCRAPER] Requested dataType: ${dataType}`);
         return {
           success: false,
           ticker,
@@ -622,7 +583,9 @@ class ScreenerScraper {
           sector: sectorName,
           quartersScraped: 0,
           metricsScraped: 0,
-          error: "No quarterly data found",
+          error: `No quarterly data found from ${primaryType} source`,
+          quarterlyDataSource: 'none',
+          dataType,
         };
       }
 
@@ -634,7 +597,15 @@ class ScreenerScraper {
       console.log(`[SCRAPER] Metrics found (first 20):`, Array.from(uniqueMetricsBefore).slice(0, 20).join(', '));
       console.log(`[SCRAPER] Quarterly data source for ${ticker}: ${quarterlyDataSource.toUpperCase()}`);
 
-      // Store in database
+      // Delete old quarterly data before inserting new data
+      // This ensures clean replacement when user explicitly selects a data source
+      console.log(`[SCRAPER] Deleting old quarterly data for ${ticker} before inserting fresh ${dataType} data...`);
+      const deleteStartTime = Date.now();
+      await storage.deleteQuarterlyDataByTicker(ticker);
+      const deleteDuration = Date.now() - deleteStartTime;
+      console.log(`[SCRAPER] Deleted old quarterly data in ${deleteDuration}ms`);
+
+      // Store new data in database
       console.log(`[SCRAPER] Storing ${quarterlyData.length} quarterly data rows in database...`);
       const storeStartTime = Date.now();
       await storage.bulkCreateQuarterlyData(quarterlyData);
@@ -729,7 +700,7 @@ class ScreenerScraper {
 
       const totalDuration = Date.now() - startedAt.getTime();
       console.log(`[SCRAPER] ✅ Scrape completed successfully for ${ticker} in ${totalDuration}ms`);
-      console.log(`[SCRAPER] Summary: ${uniqueQuarters.size} quarters, ${uniqueMetrics.size} metrics, Company: ${companyName}, Sector: ${sectorName}`);
+      console.log(`[SCRAPER] Summary: ${uniqueQuarters.size} quarters, ${uniqueMetrics.size} metrics, Company: ${companyName}, Sector: ${sectorName}, DataType: ${dataType}, Source: ${quarterlyDataSource}`);
 
       return {
         success: true,
@@ -738,6 +709,8 @@ class ScreenerScraper {
         sector: sectorName,
         quartersScraped: uniqueQuarters.size,
         metricsScraped: uniqueMetrics.size,
+        quarterlyDataSource,
+        dataType,
       };
     } catch (error: any) {
       const errorDuration = Date.now() - startedAt.getTime();

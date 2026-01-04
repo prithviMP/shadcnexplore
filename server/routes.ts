@@ -2106,8 +2106,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const schema = z.object({
         ticker: z.string().min(1),
         sectorId: z.string().optional(),
+        dataType: z.enum(['consolidated', 'standalone', 'both']).optional().default('consolidated'),
+        dryRun: z.boolean().optional().default(false), // If true, don't save to database
       });
-      const { ticker, sectorId } = schema.parse(req.body);
+      const { ticker, sectorId, dataType, dryRun } = schema.parse(req.body);
 
       // Get user ID from authenticated request
       const userId = req.user?.id;
@@ -2121,9 +2123,29 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       }
 
-      const result = await scraper.scrapeCompany(ticker, undefined, sectorOverride, userId);
+      const result = await scraper.scrapeCompany(ticker, undefined, sectorOverride, userId, dataType);
 
-      res.json(result);
+      // Check if data was actually retrieved
+      const hasQuarterlyData = result.quartersScraped && result.quartersScraped > 0;
+      const dataSource = dataType === 'both' ? 'consolidated or standalone' : dataType;
+
+      if (!hasQuarterlyData) {
+        // Return info about null data but don't save
+        return res.json({
+          success: false,
+          error: `No quarterly data found from ${dataSource} source for ${ticker}. Database was not updated.`,
+          dataType,
+          quartersScraped: 0,
+          metricsScraped: 0,
+          noDataFromSource: true,
+        });
+      }
+
+      res.json({
+        ...result,
+        dataType,
+        dataSource: result.quarterlyDataSource || dataSource,
+      });
     } catch (error: any) {
       res.status(400).json({ error: error.message });
     }
