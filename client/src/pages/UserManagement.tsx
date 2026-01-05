@@ -314,35 +314,42 @@ export default function UserManagement() {
                       </TableCell>
                       <TableCell className="text-muted-foreground">{user.email}</TableCell>
                       <TableCell>
-                        <Select
-                          value={user.role}
-                          onValueChange={(value) => handleRoleChange(user.id, value)}
-                          disabled={updateRoleMutation.isPending}
-                        >
-                          <SelectTrigger className="w-[140px] h-9 border-0 focus:ring-0" data-testid={`select-role-${user.id}`}>
-                            <Badge variant="outline" className={`${getRoleBadgeColor(user.role)} capitalize font-medium`}>
-                              {user.role}
-                            </Badge>
-                          </SelectTrigger>
-                          <SelectContent>
-                            {assignableRoles.map((role) => (
-                              <SelectItem key={role} value={role}>
-                                {role}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
+                        {user.role === "super_admin" ? (
+                          <Badge variant="outline" className={`${getRoleBadgeColor(user.role)} capitalize font-medium`} title="Super admin role cannot be changed">
+                            {user.role}
+                          </Badge>
+                        ) : (
+                          <Select
+                            value={user.role}
+                            onValueChange={(value) => handleRoleChange(user.id, value)}
+                            disabled={updateRoleMutation.isPending}
+                          >
+                            <SelectTrigger className="w-[140px] h-9 border-0 focus:ring-0" data-testid={`select-role-${user.id}`}>
+                              <Badge variant="outline" className={`${getRoleBadgeColor(user.role)} capitalize font-medium`}>
+                                {user.role}
+                              </Badge>
+                            </SelectTrigger>
+                            <SelectContent>
+                              {assignableRoles.map((role) => (
+                                <SelectItem key={role} value={role}>
+                                  {role}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        )}
                       </TableCell>
                       <TableCell>
                         <div className="flex items-center gap-2">
                           <Switch
                             checked={user.enabled ?? true}
                             onCheckedChange={(checked) => handleEnabledChange(user.id, checked)}
-                            disabled={updateEnabledMutation.isPending}
+                            disabled={updateEnabledMutation.isPending || user.role === "super_admin"}
                             data-testid={`switch-enabled-${user.id}`}
+                            title={user.role === "super_admin" ? "Super admin users cannot be disabled" : undefined}
                           />
                           <span className="text-sm text-muted-foreground">
-                            {user.enabled ?? true ? "Enabled" : "Disabled"}
+                            {user.role === "super_admin" ? "Always Enabled" : (user.enabled ?? true ? "Enabled" : "Disabled")}
                           </span>
                         </div>
                       </TableCell>
