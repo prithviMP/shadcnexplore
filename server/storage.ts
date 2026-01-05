@@ -133,7 +133,7 @@ export interface IStorage {
   createFormula(formula: InsertFormula): Promise<Formula>;
   updateFormula(id: string, data: Partial<InsertFormula>): Promise<Formula | undefined>;
   deleteFormula(id: string): Promise<void>;
-  replaceMainFormula(oldFormulaId: string, newFormulaId: string): Promise<{ companiesAffected: number; sectorsAffected: number }>;
+  replaceMainFormula(oldFormulaId: string, newFormulaId: string): Promise<{ companiesAffected: number; sectorsAffected: number; signalsAffected: number }>;
   checkFormulaCanDelete(id: string): Promise<{ canDelete: boolean; isMainFormula: boolean; message?: string }>;
 
   // Query operations
@@ -541,7 +541,7 @@ export class DbStorage implements IStorage {
     return { canDelete: true, isMainFormula: false };
   }
 
-  async replaceMainFormula(oldFormulaId: string, newFormulaId: string): Promise<{ companiesAffected: number; sectorsAffected: number }> {
+  async replaceMainFormula(oldFormulaId: string, newFormulaId: string): Promise<{ companiesAffected: number; sectorsAffected: number; signalsAffected: number }> {
     // Verify old formula is global
     const oldFormula = await this.getFormula(oldFormulaId);
     if (!oldFormula || oldFormula.scope !== "global") {
@@ -571,6 +571,13 @@ export class DbStorage implements IStorage {
       .where(eq(sectors.assignedFormulaId, oldFormulaId))
       .returning({ id: sectors.id });
 
+    // Update all signals that reference the old formula
+    const signalsResult = await db
+      .update(signals)
+      .set({ formulaId: newFormulaId })
+      .where(eq(signals.formulaId, oldFormulaId))
+      .returning({ id: signals.id });
+
     // If the new formula is not global, make it global so it becomes the main formula
     if (newFormula.scope !== "global") {
       await db.update(formulas).set({ 
@@ -589,7 +596,8 @@ export class DbStorage implements IStorage {
 
     return {
       companiesAffected: companiesResult.length,
-      sectorsAffected: sectorsResult.length
+      sectorsAffected: sectorsResult.length,
+      signalsAffected: signalsResult.length
     };
   }
 

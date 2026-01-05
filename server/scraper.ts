@@ -321,7 +321,7 @@ class ScreenerScraper {
 
     console.log(`[SCRAPER] Starting scrape for ticker: ${ticker.toUpperCase()}, dataType: ${dataType}`);
     console.log(`[SCRAPER] Primary URL (${dataType === 'standalone' ? 'standalone' : 'consolidated'}): ${url}`);
-    console.log(`[SCRAPER] Fallback URL: ${fallbackUrl}`);
+      console.log(`[SCRAPER] Fallback URL: ${fallbackUrl}`);
     console.log(`[SCRAPER] Parameters: companyId=${companyId || 'none'}, sectorOverride=${sectorOverride || 'none'}, userId=${userId || 'none'}`);
 
     try {
@@ -520,13 +520,13 @@ class ScreenerScraper {
 
       // Extract data from the primary page we already fetched
       console.log(`[SCRAPER] Extracting quarterly data from primary page (${primaryType})...`);
-      const extractStartTime = Date.now();
+        const extractStartTime = Date.now();
       const primaryData = this.extractQuarterlyData($, ticker, finalCompanyId || undefined);
-      const extractDuration = Date.now() - extractStartTime;
+        const extractDuration = Date.now() - extractStartTime;
       console.log(`[SCRAPER] Extracted ${primaryData.length} quarterly data rows from ${primaryType} page in ${extractDuration}ms`);
       
       if (primaryData.length > 0) {
-        quarterlyDataSource = 'primary';
+          quarterlyDataSource = 'primary';
         quarterlyData = primaryData;
       }
 
@@ -1459,10 +1459,10 @@ class ScreenerScraper {
       // Extract Market Cap - handle comma-separated numbers like "5,715" or "1,14,718" (Indian numbering)
       // Also handle "Cr." with period
       if (!metrics.marketCap) {
-        const marketCapMatch = pageText.match(/Market Cap\s+₹\s*([\d,.]+)\s*Cr\.?/i);
-        if (marketCapMatch) {
-          const value = parseNumber(marketCapMatch[1]) * 10000000; // Convert crores to actual value
-          metrics.marketCap = value;
+      const marketCapMatch = pageText.match(/Market Cap\s+₹\s*([\d,.]+)\s*Cr\.?/i);
+      if (marketCapMatch) {
+        const value = parseNumber(marketCapMatch[1]) * 10000000; // Convert crores to actual value
+        metrics.marketCap = value;
           metricsFoundInMethod2++;
           console.log(`[SCRAPER] [extractKeyMetrics] ✓ Found Market Cap (Method 2 - Regex): ₹${marketCapMatch[1]} Cr → ${value}`);
         } else {
@@ -1474,9 +1474,9 @@ class ScreenerScraper {
 
       // Extract Current Price - handle comma-separated numbers
       if (!metrics.currentPrice) {
-        const currentPriceMatch = pageText.match(/Current Price\s+₹\s*([\d,.]+)/i);
-        if (currentPriceMatch) {
-          metrics.currentPrice = parseNumber(currentPriceMatch[1]);
+      const currentPriceMatch = pageText.match(/Current Price\s+₹\s*([\d,.]+)/i);
+      if (currentPriceMatch) {
+        metrics.currentPrice = parseNumber(currentPriceMatch[1]);
           metricsFoundInMethod2++;
           console.log(`[SCRAPER] [extractKeyMetrics] ✓ Found Current Price (Method 2 - Regex): ₹${currentPriceMatch[1]}`);
         } else {
@@ -1489,10 +1489,10 @@ class ScreenerScraper {
       // Extract High/Low - handle "High / Low ₹ 2,012 / 1,303" format
       // Second number may or may not have ₹ symbol
       if (!metrics.highPrice) {
-        const highLowMatch = pageText.match(/High\s*\/\s*Low\s+₹\s*([\d,.]+)\s*\/\s*₹?\s*([\d,.]+)/i);
-        if (highLowMatch) {
-          metrics.highPrice = parseNumber(highLowMatch[1]);
-          metrics.lowPrice = parseNumber(highLowMatch[2]);
+      const highLowMatch = pageText.match(/High\s*\/\s*Low\s+₹\s*([\d,.]+)\s*\/\s*₹?\s*([\d,.]+)/i);
+      if (highLowMatch) {
+        metrics.highPrice = parseNumber(highLowMatch[1]);
+        metrics.lowPrice = parseNumber(highLowMatch[2]);
           metricsFoundInMethod2++;
           console.log(`[SCRAPER] [extractKeyMetrics] ✓ Found High/Low (Method 2 - Regex): ₹${highLowMatch[1]} / ₹${highLowMatch[2]}`);
         } else {
@@ -1504,9 +1504,9 @@ class ScreenerScraper {
 
       // Extract Stock P/E
       if (!metrics.pe) {
-        const peMatch = pageText.match(/Stock P\/E\s+([\d,.]+)/i) || pageText.match(/P\/E\s+([\d,.]+)/i);
-        if (peMatch) {
-          metrics.pe = parseNumber(peMatch[1]);
+      const peMatch = pageText.match(/Stock P\/E\s+([\d,.]+)/i) || pageText.match(/P\/E\s+([\d,.]+)/i);
+      if (peMatch) {
+        metrics.pe = parseNumber(peMatch[1]);
           metricsFoundInMethod2++;
           console.log(`[SCRAPER] [extractKeyMetrics] ✓ Found Stock P/E (Method 2 - Regex): ${peMatch[1]}`);
         } else {
@@ -1518,9 +1518,9 @@ class ScreenerScraper {
 
       // Extract Book Value - handle comma-separated numbers
       if (!metrics.bookValue) {
-        const bookValueMatch = pageText.match(/Book Value\s+₹\s*([\d,.]+)/i);
-        if (bookValueMatch) {
-          metrics.bookValue = parseNumber(bookValueMatch[1]);
+      const bookValueMatch = pageText.match(/Book Value\s+₹\s*([\d,.]+)/i);
+      if (bookValueMatch) {
+        metrics.bookValue = parseNumber(bookValueMatch[1]);
           metricsFoundInMethod2++;
           console.log(`[SCRAPER] [extractKeyMetrics] ✓ Found Book Value (Method 2 - Regex): ₹${bookValueMatch[1]}`);
         } else {
@@ -1532,9 +1532,9 @@ class ScreenerScraper {
 
       // Extract Dividend Yield
       if (!metrics.dividendYield) {
-        const dividendYieldMatch = pageText.match(/Dividend Yield\s+([\d,.]+)\s*%/i);
-        if (dividendYieldMatch) {
-          metrics.dividendYield = parseNumber(dividendYieldMatch[1]);
+      const dividendYieldMatch = pageText.match(/Dividend Yield\s+([\d,.]+)\s*%/i);
+      if (dividendYieldMatch) {
+        metrics.dividendYield = parseNumber(dividendYieldMatch[1]);
           metricsFoundInMethod2++;
           console.log(`[SCRAPER] [extractKeyMetrics] ✓ Found Dividend Yield (Method 2 - Regex): ${dividendYieldMatch[1]}%`);
         } else {
@@ -1550,7 +1550,7 @@ class ScreenerScraper {
       console.log(`[SCRAPER] [extractKeyMetrics] Method 3: Targeted DOM traversal for ROCE/ROE (fallback for missing metrics)...`);
       const metricsBeforeMethod3 = Object.keys(metrics).length;
       let metricsFoundInMethod3 = 0;
-      
+
       // Extract ROCE - use targeted DOM traversal after main loop
       if (!metrics.roce) {
         console.log(`[SCRAPER] [extractKeyMetrics] Searching for ROCE using Method 3...`);
@@ -1677,9 +1677,9 @@ class ScreenerScraper {
 
       // Extract Face Value - handle comma-separated numbers
       if (!metrics.faceValue) {
-        const faceValueMatch = pageText.match(/Face Value\s+₹\s*([\d,.]+)/i);
-        if (faceValueMatch) {
-          metrics.faceValue = parseNumber(faceValueMatch[1]);
+      const faceValueMatch = pageText.match(/Face Value\s+₹\s*([\d,.]+)/i);
+      if (faceValueMatch) {
+        metrics.faceValue = parseNumber(faceValueMatch[1]);
           metricsFoundInMethod3++;
           console.log(`[SCRAPER] [extractKeyMetrics] ✓ Found Face Value (Method 3 - Regex): ₹${faceValueMatch[1]}`);
         } else {

@@ -486,7 +486,7 @@ export default function Settings() {
                   Reset
                 </Button>
               </div>
-              
+
               <Alert>
                 <GripVertical className="h-4 w-4" />
                 <AlertDescription>
@@ -506,22 +506,22 @@ export default function Settings() {
                     strategy={verticalListSortingStrategy}
                   >
                     <div className="space-y-1">
-                      {filteredMetrics.length === 0 ? (
-                        <div className="text-center py-8 text-muted-foreground">
-                          No metrics found matching "{searchTerm}"
-                        </div>
-                      ) : (
-                        filteredMetrics.map(([metricName, isSelected]) => (
+                  {filteredMetrics.length === 0 ? (
+                    <div className="text-center py-8 text-muted-foreground">
+                      No metrics found matching "{searchTerm}"
+                    </div>
+                  ) : (
+                    filteredMetrics.map(([metricName, isSelected]) => (
                           <SortableItem
                             key={metricName}
-                            id={metricName}
+                          id={metricName}
                             metricName={metricName}
                             isSelected={isSelected}
                             onToggle={() => handleToggleMetric(metricName)}
-                          />
-                        ))
-                      )}
-                    </div>
+                        />
+                    ))
+                  )}
+                </div>
                   </SortableContext>
                 </DndContext>
               </ScrollArea>
@@ -550,7 +550,7 @@ export default function Settings() {
                   Reset
                 </Button>
               </div>
-              
+
               <Alert>
                 <GripVertical className="h-4 w-4" />
                 <AlertDescription>
@@ -570,12 +570,12 @@ export default function Settings() {
                     strategy={verticalListSortingStrategy}
                   >
                     <div className="space-y-1">
-                      {filteredMetrics.length === 0 ? (
-                        <div className="text-center py-8 text-muted-foreground">
-                          No metrics found matching "{bankingSearchTerm}"
-                        </div>
-                      ) : (
-                        filteredMetrics.map(([metricName, isSelected]) => (
+                  {filteredMetrics.length === 0 ? (
+                    <div className="text-center py-8 text-muted-foreground">
+                      No metrics found matching "{bankingSearchTerm}"
+                    </div>
+                  ) : (
+                    filteredMetrics.map(([metricName, isSelected]) => (
                           <SortableItem
                             key={metricName}
                             id={metricName}
@@ -584,9 +584,9 @@ export default function Settings() {
                             onToggle={() => handleToggleMetric(metricName)}
                             isBanking
                           />
-                        ))
-                      )}
-                    </div>
+                    ))
+                  )}
+                </div>
                   </SortableContext>
                 </DndContext>
               </ScrollArea>

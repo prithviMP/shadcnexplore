@@ -1454,32 +1454,32 @@ export default function Dashboard() {
                       <div className="flex items-center justify-between mb-3">
                         <h4 className="font-semibold text-lg">{sector.name}</h4>
                         <div className="flex items-center gap-2">
-                          <span className="text-sm text-muted-foreground">{sector.companies} companies</span>
+                        <span className="text-sm text-muted-foreground">{sector.companies} companies</span>
                           {sector.totalSignals > 0 && (
                             <span className="text-xs bg-muted px-2 py-0.5 rounded-full">
                               {sector.totalSignals} signals
                             </span>
                           )}
-                        </div>
+                      </div>
                       </div>
                       <div className="flex flex-wrap gap-2">
                         {sector.buySignals > 0 && (
-                          <div className="flex items-center gap-1.5">
-                            <SignalBadge signal="BUY" showIcon={false} />
-                            <span className="text-sm font-medium text-muted-foreground">{sector.buySignals}</span>
-                          </div>
+                        <div className="flex items-center gap-1.5">
+                          <SignalBadge signal="BUY" showIcon={false} />
+                          <span className="text-sm font-medium text-muted-foreground">{sector.buySignals}</span>
+                        </div>
                         )}
                         {sector.sellSignals > 0 && (
-                          <div className="flex items-center gap-1.5">
-                            <SignalBadge signal="SELL" showIcon={false} />
-                            <span className="text-sm font-medium text-muted-foreground">{sector.sellSignals}</span>
-                          </div>
+                        <div className="flex items-center gap-1.5">
+                          <SignalBadge signal="SELL" showIcon={false} />
+                          <span className="text-sm font-medium text-muted-foreground">{sector.sellSignals}</span>
+                        </div>
                         )}
                         {sector.holdSignals > 0 && (
-                          <div className="flex items-center gap-1.5">
-                            <SignalBadge signal="HOLD" showIcon={false} />
-                            <span className="text-sm font-medium text-muted-foreground">{sector.holdSignals}</span>
-                          </div>
+                        <div className="flex items-center gap-1.5">
+                          <SignalBadge signal="HOLD" showIcon={false} />
+                          <span className="text-sm font-medium text-muted-foreground">{sector.holdSignals}</span>
+                        </div>
                         )}
                         {/* Show other custom signals */}
                         {Object.entries(sector.otherSignals).map(([signalName, count]) => (

@@ -305,6 +305,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
 
       const data = updateSchema.parse(req.body);
+      
+      // Get the user being updated to check their role
+      const existingUser = await storage.getUser(req.params.id);
+      if (!existingUser) {
+        return res.status(404).json({ error: "User not found" });
+      }
+
+      // Prevent disabling super_admin users
+      if (data.enabled === false && existingUser.role === "super_admin") {
+        return res.status(400).json({ error: "Cannot disable super admin users" });
+      }
+
+      // Prevent changing super_admin role to something else
+      if (data.role && data.role !== "super_admin" && existingUser.role === "super_admin") {
+        return res.status(400).json({ error: "Cannot change role of super admin users" });
+      }
+
       const updateData: any = {};
 
       if (data.email) updateData.email = data.email;
@@ -1748,7 +1765,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const result = await storage.replaceMainFormula(req.params.id, newFormulaId);
       res.json({
         success: true,
-        message: `Main formula replaced successfully. ${result.companiesAffected} companies and ${result.sectorsAffected} sectors updated.`,
+        message: `Main formula replaced successfully. ${result.companiesAffected} companies, ${result.sectorsAffected} sectors, and ${result.signalsAffected} signals updated.`,
         ...result
       });
     } catch (error: any) {

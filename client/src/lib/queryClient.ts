@@ -3,6 +3,29 @@ import { QueryClient, QueryFunction } from "@tanstack/react-query";
 async function throwIfResNotOk(res: Response) {
   if (!res.ok) {
     const text = (await res.text()) || res.statusText;
+    
+    // Try to parse JSON error response for user-friendly message
+    try {
+      const json = JSON.parse(text);
+      if (json.error) {
+        // Handle duplicate key errors with user-friendly message
+        if (json.error.includes('duplicate key') || json.error.includes('unique constraint')) {
+          // Extract field name if possible (e.g., "formulas_name_unique" -> "name")
+          const match = json.error.match(/(\w+)_(\w+)_unique/);
+          if (match) {
+            throw new Error(`A record with this ${match[2]} already exists. Please choose a different ${match[2]}.`);
+          }
+          throw new Error("A record with this name already exists. Please choose a different name.");
+        }
+        throw new Error(json.error);
+      }
+    } catch (e) {
+      // If JSON parsing fails or no error field, use original text
+      if (e instanceof Error && e.message !== text && !e.message.includes(res.status.toString())) {
+        throw e;
+      }
+    }
+    
     throw new Error(`${res.status}: ${text}`);
   }
 }

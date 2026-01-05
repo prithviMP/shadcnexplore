@@ -1333,42 +1333,42 @@ export default function CompanyDetail() {
               </div>
             </div>
             <div className="flex items-center gap-3 flex-wrap">
-              {lastScrape && (
+            {lastScrape && (
                 <div className="flex items-center gap-2 text-xs sm:text-sm text-muted-foreground shrink-0">
                   <Clock className="h-3 w-3 sm:h-4 sm:w-4" />
                   <span className="hidden sm:inline">Last scraped: {formatDate(lastScrape.lastScrape)}</span>
                   <span className="sm:hidden">{formatDate(lastScrape.lastScrape)}</span>
                 </div>
               )}
-              <div className="flex gap-2 shrink-0">
-                <Button
+                <div className="flex gap-2 shrink-0">
+                  <Button
                   onClick={() => setShowFetchDataDialog(true)}
-                  disabled={fetchLatestDataMutation.isPending || !companyTicker}
-                  size="sm"
-                  variant="outline"
-                >
-                  {fetchLatestDataMutation.isPending ? (
-                    <>
-                      <RefreshCw className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-2 animate-spin" />
-                      <span className="hidden sm:inline">Fetching...</span>
-                    </>
-                  ) : (
-                    <>
-                      <RefreshCw className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-2" />
-                      <span className="hidden sm:inline">Fetch Latest Data</span>
-                      <span className="sm:hidden">Fetch</span>
-                    </>
-                  )}
-                </Button>
-                <Button
-                  onClick={() => setShowUpdateCompanyDialog(true)}
-                  size="sm"
-                  variant="outline"
-                >
-                  <Edit className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-2" />
-                  <span className="hidden sm:inline">Update Details</span>
-                  <span className="sm:hidden">Update</span>
-                </Button>
+                    disabled={fetchLatestDataMutation.isPending || !companyTicker}
+                    size="sm"
+                    variant="outline"
+                  >
+                    {fetchLatestDataMutation.isPending ? (
+                      <>
+                        <RefreshCw className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-2 animate-spin" />
+                        <span className="hidden sm:inline">Fetching...</span>
+                      </>
+                    ) : (
+                      <>
+                        <RefreshCw className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-2" />
+                        <span className="hidden sm:inline">Fetch Latest Data</span>
+                        <span className="sm:hidden">Fetch</span>
+                      </>
+                    )}
+                  </Button>
+                  <Button
+                    onClick={() => setShowUpdateCompanyDialog(true)}
+                    size="sm"
+                    variant="outline"
+                  >
+                    <Edit className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-2" />
+                    <span className="hidden sm:inline">Update Details</span>
+                    <span className="sm:hidden">Update</span>
+                  </Button>
                 <Button
                   onClick={() => setShowMetricsEditorDialog(true)}
                   size="sm"
@@ -1378,8 +1378,8 @@ export default function CompanyDetail() {
                   <span className="hidden sm:inline">Edit Metrics</span>
                   <span className="sm:hidden">Metrics</span>
                 </Button>
+                </div>
               </div>
-            </div>
           </div>
         </div>
       </div>
