@@ -611,14 +611,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Get all companies in this sector
       const companies = await storage.getCompaniesBySector(req.params.id);
       
+      // IMPORTANT: Clear any company-level formula assignments so they inherit the sector formula
+      // This ensures all companies in the sector use the newly assigned sector formula
+      let companiesCleared = 0;
+      for (const company of companies) {
+        if (company.assignedFormulaId) {
+          await storage.assignFormulaToCompany(company.id, null);
+          companiesCleared++;
+        }
+      }
+      console.log(`[Sector Formula] Cleared ${companiesCleared} company-level formula assignments to inherit sector formula`);
+      
+      // Refresh the companies list after clearing assignments
+      const updatedCompanies = await storage.getCompaniesBySector(req.params.id);
+      
       // Immediately recalculate signals for all companies in the sector
       const results: Array<{ ticker: string; signal: string }> = [];
       
-      if (companies.length > 0) {
+      if (updatedCompanies.length > 0) {
         const { FormulaEvaluator } = await import("./formulaEvaluator");
         const allFormulas = await storage.getAllFormulas();
         
-        for (const company of companies) {
+        for (const company of updatedCompanies) {
           try {
             // Generate signal using the new formula assignment
             const result = await FormulaEvaluator.generateSignalForCompany(company, allFormulas);
@@ -659,11 +673,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
         success: true,
         sector,
         assignedFormula: assignedFormula || null,
-        companiesAffected: companies.length,
+        companiesAffected: updatedCompanies.length,
+        companiesCleared,
         results,
         message: formulaId 
-          ? `Formula "${assignedFormula?.name}" assigned to sector, recalculated ${companies.length} companies` 
-          : `Formula assignment cleared, recalculated ${companies.length} companies with default`
+          ? `Formula "${assignedFormula?.name}" assigned to sector, recalculated ${updatedCompanies.length} companies (${companiesCleared} overrides cleared)` 
+          : `Formula assignment cleared, recalculated ${updatedCompanies.length} companies with default`
       });
     } catch (error: any) {
       res.status(400).json({ error: error.message });
