@@ -58,6 +58,7 @@ export const companies = pgTable("companies", {
   assignedFormulaId: varchar("assigned_formula_id"), // Reference to formulas.id - overrides sector/global formula for this company
   marketCap: decimal("market_cap", { precision: 20, scale: 2 }),
   financialData: jsonb("financial_data"),
+  preferredDataSource: text("preferred_data_source").default("consolidated"), // 'consolidated' or 'standalone' - user's preferred data source for quarterly data
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 }, (table) => ({

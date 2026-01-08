@@ -2173,6 +2173,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
+      // Save the user's preferred data source to the company record
+      // This ensures the preference is remembered for future scrapes and sector views
+      if (dataType !== 'both') {
+        const company = await storage.getCompanyByTicker(ticker);
+        if (company) {
+          await storage.updateCompany(company.id, {
+            preferredDataSource: dataType,
+          });
+          console.log(`[Routes] Updated preferredDataSource for ${ticker} to ${dataType}`);
+        }
+      }
+
       res.json({
         ...result,
         dataType,

@@ -2043,7 +2043,12 @@ class ScreenerScraper {
         }
       }
 
-      const result = await this.scrapeCompany(ticker, companyId, sectorOverride, undefined);
+      // Use the company's preferred data source if set, otherwise default to 'consolidated'
+      // This ensures we respect the user's choice when they manually selected standalone/consolidated
+      const dataType = (company?.preferredDataSource as 'consolidated' | 'standalone') || 'consolidated';
+      console.log(`[SCRAPER] Using dataType '${dataType}' for ${ticker} (preferredDataSource: ${company?.preferredDataSource || 'not set'})`);
+
+      const result = await this.scrapeCompany(ticker, companyId, sectorOverride, undefined, dataType);
       results.push(result);
 
       this.status.completedTickers = (this.status.completedTickers || 0) + 1;

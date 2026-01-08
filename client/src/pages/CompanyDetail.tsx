@@ -17,7 +17,7 @@ import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Tabs as SettingsTabs, TabsContent as SettingsTabsContent, TabsList as SettingsTabsList, TabsTrigger as SettingsTabsTrigger } from "@/components/ui/tabs";
 import SignalBadge from "@/components/SignalBadge";
-import { ArrowLeft, AlertCircle, TrendingUp, BarChart3 } from "lucide-react";
+import { ArrowLeft, AlertCircle, TrendingUp, BarChart3, Info } from "lucide-react";
 import { Link, useRoute } from "wouter";
 import type { Company, Sector, Signal, Formula } from "@shared/schema";
 import { format } from "date-fns";
@@ -1333,6 +1333,11 @@ export default function CompanyDetail() {
               </div>
             </div>
             <div className="flex items-center gap-3 flex-wrap">
+            {company?.preferredDataSource && (
+                <Badge variant="outline" className="text-xs shrink-0 capitalize">
+                  {company.preferredDataSource} Data
+                </Badge>
+              )}
             {lastScrape && (
                 <div className="flex items-center gap-2 text-xs sm:text-sm text-muted-foreground shrink-0">
                   <Clock className="h-3 w-3 sm:h-4 sm:w-4" />
@@ -1342,7 +1347,12 @@ export default function CompanyDetail() {
               )}
                 <div className="flex gap-2 shrink-0">
                   <Button
-                  onClick={() => setShowFetchDataDialog(true)}
+                  onClick={() => {
+                    // Pre-select the company's preferred data source when opening the dialog
+                    const preferred = (company?.preferredDataSource as 'consolidated' | 'standalone') || 'consolidated';
+                    setSelectedDataType(preferred);
+                    setShowFetchDataDialog(true);
+                  }}
                     disabled={fetchLatestDataMutation.isPending || !companyTicker}
                     size="sm"
                     variant="outline"
@@ -2536,6 +2546,15 @@ export default function CompanyDetail() {
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
+            {company?.preferredDataSource && (
+              <Alert className="bg-muted/50">
+                <Info className="h-4 w-4" />
+                <AlertDescription className="text-xs">
+                  Current preference: <strong className="capitalize">{company.preferredDataSource}</strong>. 
+                  This will be remembered for future sector scrapes.
+                </AlertDescription>
+              </Alert>
+            )}
             <div className="space-y-3">
               <Label className="text-sm font-medium">Data Source</Label>
               <div className="grid grid-cols-2 gap-3">
@@ -2546,6 +2565,9 @@ export default function CompanyDetail() {
                   disabled={fetchLatestDataMutation.isPending}
                 >
                   Consolidated
+                  {company?.preferredDataSource === 'consolidated' && (
+                    <Badge variant="secondary" className="ml-1 text-[10px] px-1">Current</Badge>
+                  )}
                 </Button>
                 <Button
                   variant={selectedDataType === 'standalone' ? 'default' : 'outline'}
@@ -2554,6 +2576,9 @@ export default function CompanyDetail() {
                   disabled={fetchLatestDataMutation.isPending}
                 >
                   Standalone
+                  {company?.preferredDataSource === 'standalone' && (
+                    <Badge variant="secondary" className="ml-1 text-[10px] px-1">Current</Badge>
+                  )}
                 </Button>
               </div>
               <p className="text-xs text-muted-foreground">
