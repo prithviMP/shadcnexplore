@@ -457,3 +457,86 @@ You can view detailed results in the Scheduler page.
   await sendEmail(adminEmail, `${hasErrors ? '⚠️ ' : '✅ '}All Sectors Update Completed - ${successfulSectors}/${totalSectors} Successful`, html, text);
 }
 
+/**
+ * Send password reset email with reset link
+ */
+export async function sendPasswordResetEmail(
+  userEmail: string,
+  userName: string,
+  resetLink: string
+): Promise<void> {
+  const html = `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <style>
+        body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+        .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+        .header { background-color: #2563eb; color: white; padding: 20px; text-align: center; border-radius: 5px 5px 0 0; }
+        .content { background-color: #f9fafb; padding: 30px; border-radius: 0 0 5px 5px; }
+        .button { display: inline-block; padding: 12px 24px; background-color: #2563eb; color: white; text-decoration: none; border-radius: 5px; margin: 20px 0; }
+        .warning { background-color: #fef3c7; padding: 15px; border-radius: 5px; margin: 20px 0; border-left: 4px solid #f59e0b; }
+        .footer { text-align: center; margin-top: 30px; color: #666; font-size: 12px; }
+        .link { word-break: break-all; color: #2563eb; }
+      </style>
+    </head>
+    <body>
+      <div class="container">
+        <div class="header">
+          <h1>Password Reset Request</h1>
+        </div>
+        <div class="content">
+          <p>Hello ${userName},</p>
+          <p>You requested to reset your password for your FinAnalytics account. Click the button below to reset your password:</p>
+          
+          <div style="text-align: center;">
+            <a href="${resetLink}" class="button">Reset Password</a>
+          </div>
+
+          <p>Or copy and paste this link into your browser:</p>
+          <p class="link">${resetLink}</p>
+
+          <div class="warning">
+            <strong>⚠️ Security Notice:</strong>
+            <ul style="margin: 10px 0; padding-left: 20px;">
+              <li>This link will expire in 1 hour</li>
+              <li>If you didn't request this password reset, please ignore this email</li>
+              <li>Never share this link with anyone</li>
+              <li>Your password will remain unchanged if you don't click the link</li>
+            </ul>
+          </div>
+
+          <p>If you didn't request a password reset, you can safely ignore this email.</p>
+
+          <div class="footer">
+            <p>This is an automated email from FinAnalytics. Please do not reply to this email.</p>
+          </div>
+        </div>
+      </div>
+    </body>
+    </html>
+  `;
+
+  const text = `
+Password Reset Request
+
+Hello ${userName},
+
+You requested to reset your password for your FinAnalytics account. Click the link below to reset your password:
+
+${resetLink}
+
+⚠️ Security Notice:
+- This link will expire in 1 hour
+- If you didn't request this password reset, please ignore this email
+- Never share this link with anyone
+- Your password will remain unchanged if you don't click the link
+
+If you didn't request a password reset, you can safely ignore this email.
+
+This is an automated email from FinAnalytics. Please do not reply to this email.
+  `;
+
+  await sendEmail(userEmail, "Reset Your FinAnalytics Password", html, text);
+}
+

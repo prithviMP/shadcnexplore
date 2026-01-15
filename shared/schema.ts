@@ -42,6 +42,15 @@ export const otpCodes = pgTable("otp_codes", {
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
+export const passwordResetTokens = pgTable("password_reset_tokens", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  token: text("token").notNull().unique(),
+  expiresAt: timestamp("expires_at").notNull(),
+  used: boolean("used").notNull().default(false),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
 export const sectors = pgTable("sectors", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   name: text("name").notNull().unique(),
@@ -259,6 +268,9 @@ export type InsertCustomTable = typeof customTables.$inferInsert;
 
 export type OtpCode = typeof otpCodes.$inferSelect;
 export type InsertOtpCode = typeof otpCodes.$inferInsert;
+
+export type PasswordResetToken = typeof passwordResetTokens.$inferSelect;
+export type InsertPasswordResetToken = typeof passwordResetTokens.$inferInsert;
 
 export type RolePermission = typeof rolePermissions.$inferSelect;
 export type InsertRolePermission = typeof rolePermissions.$inferInsert;

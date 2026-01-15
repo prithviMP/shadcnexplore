@@ -9,6 +9,7 @@ import {
   signals,
   sessions,
   otpCodes,
+  passwordResetTokens,
   rolePermissions,
   quarterlyData,
   customTables,
@@ -35,6 +36,8 @@ import {
   type Session,
   type OtpCode,
   type InsertOtpCode,
+  type PasswordResetToken,
+  type InsertPasswordResetToken,
   type RolePermission,
   type InsertRolePermission,
   type QuarterlyData,
@@ -83,6 +86,12 @@ export interface IStorage {
   getOtpCode(email: string, code: string): Promise<OtpCode | undefined>;
   markOtpCodeAsUsed(id: string): Promise<void>;
   deleteExpiredOtpCodes(): Promise<void>;
+
+  // Password Reset Token operations
+  createPasswordResetToken(token: InsertPasswordResetToken): Promise<PasswordResetToken>;
+  getPasswordResetToken(token: string): Promise<PasswordResetToken | undefined>;
+  markPasswordResetTokenAsUsed(token: string): Promise<void>;
+  deleteExpiredPasswordResetTokens(): Promise<void>;
 
   // Role Permissions operations
   getRolePermissions(role: string): Promise<RolePermission | undefined>;
@@ -835,7 +844,30 @@ export class DbStorage implements IStorage {
   }
 
   async deleteExpiredOtpCodes(): Promise<void> {
-    await db.delete(otpCodes).where(eq(otpCodes.expiresAt, new Date()));
+    await db.delete(otpCodes).where(lt(otpCodes.expiresAt, new Date()));
+  }
+
+  // Password Reset Token operations
+  async createPasswordResetToken(token: InsertPasswordResetToken): Promise<PasswordResetToken> {
+    const result = await db.insert(passwordResetTokens).values(token).returning();
+    return result[0];
+  }
+
+  async getPasswordResetToken(token: string): Promise<PasswordResetToken | undefined> {
+    const result = await db
+      .select()
+      .from(passwordResetTokens)
+      .where(and(eq(passwordResetTokens.token, token), eq(passwordResetTokens.used, false)))
+      .limit(1);
+    return result[0];
+  }
+
+  async markPasswordResetTokenAsUsed(token: string): Promise<void> {
+    await db.update(passwordResetTokens).set({ used: true }).where(eq(passwordResetTokens.token, token));
+  }
+
+  async deleteExpiredPasswordResetTokens(): Promise<void> {
+    await db.delete(passwordResetTokens).where(lt(passwordResetTokens.expiresAt, new Date()));
   }
 
   // Role Permissions operations

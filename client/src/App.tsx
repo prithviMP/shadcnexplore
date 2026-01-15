@@ -1,4 +1,4 @@
-import { Switch, Route } from "wouter";
+import { Switch, Route, useLocation } from "wouter";
 import { queryClient } from "@/lib/queryClient";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
@@ -12,6 +12,8 @@ import ProtectedRoute from "@/components/ProtectedRoute";
 import { AuthProvider, useAuth } from "@/contexts/AuthContext";
 import NotFound from "@/pages/not-found";
 import LoginPage from "@/pages/LoginPage";
+import ForgotPasswordPage from "@/pages/ForgotPasswordPage";
+import ResetPasswordPage from "@/pages/ResetPasswordPage";
 import Dashboard from "@/pages/Dashboard";
 import SectorsList from "@/pages/SectorsList";
 import SchedulerSettings from "@/pages/SchedulerSettings";
@@ -139,9 +141,6 @@ function AuthenticatedLayout() {
                     <Settings />
                   </ProtectedRoute>
                 </Route>
-                <Route path="/login">
-                  <LoginPage />
-                </Route>
                 <Route component={NotFound} />
               </Switch>
             </div>
@@ -154,6 +153,7 @@ function AuthenticatedLayout() {
 
 function Router() {
   const { user, loading } = useAuth();
+  const [location] = useLocation();
 
   if (loading) {
     return (
@@ -163,6 +163,20 @@ function Router() {
     );
   }
 
+  // Render login, forgot-password, and reset-password pages without layout
+  if (location === "/login") {
+    return <LoginPage />;
+  }
+
+  if (location === "/forgot-password") {
+    return <ForgotPasswordPage />;
+  }
+
+  if (location === "/reset-password") {
+    return <ResetPasswordPage />;
+  }
+
+  // If not authenticated and not on a public page, redirect to login
   if (!user) {
     return <LoginPage />;
   }

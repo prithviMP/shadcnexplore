@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useLocation } from "wouter";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
@@ -21,6 +22,7 @@ export default function LoginPage() {
   const [name, setName] = useState("");
   const { login, register, loginWithOTP, requestOTP } = useAuth();
   const { toast } = useToast();
+  const [, setLocation] = useLocation();
 
   const handleEmailLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -152,7 +154,7 @@ export default function LoginPage() {
                       data-testid="input-password"
                     />
                   </div>
-                  <Button 
+                    <Button 
                     type="submit" 
                     className="w-full h-11 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white font-medium shadow-lg" 
                     data-testid="button-email-login"
@@ -167,6 +169,16 @@ export default function LoginPage() {
                         "Sign In"
                       )}
                     </Button>
+                    <div className="text-center mt-2">
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        className="text-sm text-muted-foreground hover:text-foreground h-auto p-0"
+                        onClick={() => setLocation("/forgot-password")}
+                      >
+                        Forgot Password?
+                      </Button>
+                    </div>
                   </form>
                 ) : (
                   <form onSubmit={async (e) => {

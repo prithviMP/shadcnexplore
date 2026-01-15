@@ -35,7 +35,8 @@ import { queryExecutor, type QueryCondition } from "./queryExecutor";
 import { FormulaEvaluator } from "./formulaEvaluator";
 import { scraper } from "./scraper";
 import { excelQueryParser } from "./excelQueryParser";
-import { sendWelcomeEmail, sendAdminNotificationEmail } from "./email";
+import { sendWelcomeEmail, sendAdminNotificationEmail, sendPasswordResetEmail } from "./email";
+import { randomBytes } from "crypto";
 import { taskManager } from "./taskManager";
 import { evaluateMainSignalForCompany } from "./mainSignalEvaluator";
 import { evaluateExcelFormulaForCompany, ExcelFormulaEvaluator } from "./excelFormulaEvaluator";
@@ -131,6 +132,160 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.get("/api/auth/me", requireAuth, async (req: AuthRequest, res) => {
     res.json({ user: sanitizeUser(req.user!) });
+  });
+
+  // Password Reset Routes
+  app.post("/api/auth/forgot-password", async (req, res) => {
+    try {
+      const { email } = req.body;
+
+      if (!email || typeof email !== "string") {
+        return res.status(400).json({ error: "Email is required" });
+      }
+
+      // Validate email format
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!emailRegex.test(email)) {
+        // Still return success to prevent email enumeration
+        return res.json({ success: true, message: "If an account exists with this email, a password reset link has been sent." });
+      }
+
+      // Check if user exists (don't reveal if user doesn't exist for security)
+      const user = await storage.getUserByEmail(email);
+      
+      // Always return success to prevent email enumeration
+      // Only send email if user actually exists
+      if (user) {
+        // Generate secure random token (64 characters)
+        const token = randomBytes(32).toString('hex');
+        
+        // Set expiration to 1 hour from now
+        const expiresAt = new Date();
+        expiresAt.setHours(expiresAt.getHours() + 1);
+
+        // Create reset token record
+        await storage.createPasswordResetToken({
+          userId: user.id,
+          token,
+          expiresAt,
+          used: false,
+        });
+
+        // Build reset link
+        const appUrl = process.env.APP_URL || "http://localhost:5000";
+        const resetLink = `${appUrl}/reset-password?token=${token}`;
+
+        // Send email asynchronously (don't block response if email fails)
+        (async () => {
+          try {
+            await sendPasswordResetEmail(user.email, user.name, resetLink);
+          } catch (emailError) {
+            console.error("Error sending password reset email:", emailError);
+            // Don't fail the request if email fails
+          }
+        })();
+      }
+
+      // Always return success to prevent email enumeration
+      res.json({ 
+        success: true, 
+        message: "If an account exists with this email, a password reset link has been sent." 
+      });
+    } catch (error: any) {
+      console.error("Error in forgot-password:", error);
+      // Still return success to prevent information leakage
+      res.json({ 
+        success: true, 
+        message: "If an account exists with this email, a password reset link has been sent." 
+      });
+    }
+  });
+
+  app.get("/api/auth/reset-password", async (req, res) => {
+    try {
+      const { token } = req.query;
+
+      if (!token || typeof token !== "string") {
+        return res.status(400).json({ error: "Token is required", valid: false });
+      }
+
+      // Find token in database
+      const resetToken = await storage.getPasswordResetToken(token);
+
+      if (!resetToken) {
+        return res.json({ valid: false, error: "Invalid or expired reset token" });
+      }
+
+      // Check if expired
+      if (new Date() > resetToken.expiresAt) {
+        return res.json({ valid: false, error: "Reset token has expired" });
+      }
+
+      // Check if already used
+      if (resetToken.used) {
+        return res.json({ valid: false, error: "Reset token has already been used" });
+      }
+
+      // Token is valid
+      res.json({ valid: true });
+    } catch (error: any) {
+      console.error("Error validating reset token:", error);
+      res.status(500).json({ valid: false, error: "Error validating reset token" });
+    }
+  });
+
+  app.post("/api/auth/reset-password", async (req, res) => {
+    try {
+      const { token, password } = req.body;
+
+      if (!token || typeof token !== "string") {
+        return res.status(400).json({ error: "Token is required" });
+      }
+
+      if (!password || typeof password !== "string") {
+        return res.status(400).json({ error: "Password is required" });
+      }
+
+      // Validate password strength (minimum 6 characters)
+      if (password.length < 6) {
+        return res.status(400).json({ error: "Password must be at least 6 characters long" });
+      }
+
+      // Find and validate token
+      const resetToken = await storage.getPasswordResetToken(token);
+
+      if (!resetToken) {
+        return res.status(400).json({ error: "Invalid or expired reset token" });
+      }
+
+      // Check if expired
+      if (new Date() > resetToken.expiresAt) {
+        return res.status(400).json({ error: "Reset token has expired" });
+      }
+
+      // Check if already used
+      if (resetToken.used) {
+        return res.status(400).json({ error: "Reset token has already been used" });
+      }
+
+      // Hash new password
+      const hashedPassword = await hashPassword(password);
+
+      // Update user password
+      await storage.updateUser(resetToken.userId, { password: hashedPassword });
+
+      // Mark token as used
+      await storage.markPasswordResetTokenAsUsed(token);
+
+      // Optionally invalidate all user sessions for security
+      // This would require getting all sessions for the user and deleting them
+      // For now, we'll just mark the token as used
+
+      res.json({ success: true, message: "Password has been reset successfully" });
+    } catch (error: any) {
+      console.error("Error resetting password:", error);
+      res.status(500).json({ error: error.message || "Error resetting password" });
+    }
   });
 
   app.post("/api/auth/otp/setup", requireAuth, async (req: AuthRequest, res) => {
