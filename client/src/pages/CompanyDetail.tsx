@@ -593,9 +593,15 @@ export default function CompanyDetail() {
 
       // Success case
       const dataTypeName = data.dataType === 'standalone' ? 'Standalone' : 'Consolidated';
+      const actualSource = data.quarterlyDataSource === 'fallback' 
+        ? (data.dataType === 'standalone' ? 'Consolidated' : 'Standalone')
+        : dataTypeName;
+      const fallbackNote = data.quarterlyDataSource === 'fallback' 
+        ? ` (automatically used ${actualSource} as ${dataTypeName} was not available)`
+        : '';
       toast({
         title: "Data fetched successfully",
-        description: `Scraped ${data.quartersScraped || 0} quarters and ${data.metricsScraped || 0} metrics from ${dataTypeName} source`
+        description: `Scraped ${data.quartersScraped || 0} quarters and ${data.metricsScraped || 0} metrics from ${actualSource} source${fallbackNote}`
       });
       // Invalidate all related queries to refresh the page
       queryClient.invalidateQueries({ queryKey: ["/api/v1/companies", companyTicker, "data"] });
@@ -1279,7 +1285,7 @@ export default function CompanyDetail() {
         </Button>
         <div className="flex-1 min-w-0">
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-            <div className="min-w-0">
+            <div className="min-w-0 flex-1">
               <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
                 <h1 className="text-2xl sm:text-3xl font-bold font-mono truncate" data-testid="text-ticker">
                   {company.ticker}
@@ -1302,22 +1308,32 @@ export default function CompanyDetail() {
                     <SelectTrigger className="h-7 w-auto min-w-[160px] text-xs border-dashed">
                       <SelectValue>
                         <span className="flex items-center gap-1.5">
-                          {signalsData?.effectiveFormula?.name || activeFormulaForPage?.name || "Default"}
-                          <Badge variant="outline" className="text-[10px] px-1 py-0 ml-1">
-                            {signalsData?.formulaSource === "company" 
-                              ? "Company" 
-                              : signalsData?.formulaSource === "sector" 
-                                ? "Sector" 
-                                : "Global"}
-                          </Badge>
+                          {(() => {
+                            // Get the assigned formula name from formulas list if assignedFormulaId exists
+                            const assignedFormula = signalsData?.assignedFormulaId 
+                              ? formulas?.find(f => f.id === signalsData.assignedFormulaId)
+                              : null;
+                            const displayFormulaName = assignedFormula?.name || signalsData?.effectiveFormula?.name || activeFormulaForPage?.name || "Default";
+                            const displayFormulaSource = assignedFormula ? "company" : (signalsData?.formulaSource || "global");
+                            return (
+                              <>
+                                {displayFormulaName}
+                                <Badge variant="outline" className="text-[10px] px-1 py-0 ml-1">
+                                  {displayFormulaSource === "company" 
+                                    ? "Company" 
+                                    : displayFormulaSource === "sector" 
+                                      ? "Sector" 
+                                      : "Global"}
+                                </Badge>
+                              </>
+                            );
+                          })()}
                         </span>
                       </SelectValue>
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="default">
-                        <span className="flex items-center gap-2">
-                          Use Default (Global/Sector)
-                        </span>
+                      <SelectItem value="default" className="hidden">
+                        Use Default (Global/Sector)
                       </SelectItem>
                       {formulas?.filter(f => f.enabled).map((formula) => (
                         <SelectItem key={formula.id} value={formula.id}>
@@ -1331,54 +1347,41 @@ export default function CompanyDetail() {
                   )}
                 </div>
               </div>
-            </div>
-            <div className="flex items-center gap-3 flex-wrap">
-            {company?.preferredDataSource && (
-                <Badge variant="outline" className="text-xs shrink-0 capitalize">
-                  {company.preferredDataSource} Data
-                </Badge>
-              )}
-            {lastScrape && (
-                <div className="flex items-center gap-2 text-xs sm:text-sm text-muted-foreground shrink-0">
-                  <Clock className="h-3 w-3 sm:h-4 sm:w-4" />
-                  <span className="hidden sm:inline">Last scraped: {formatDate(lastScrape.lastScrape)}</span>
-                  <span className="sm:hidden">{formatDate(lastScrape.lastScrape)}</span>
-                </div>
-              )}
-                <div className="flex gap-2 shrink-0">
-                  <Button
+              {/* Action buttons - positioned under company info on the left */}
+              <div className="flex gap-2 mt-2">
+                <Button
                   onClick={() => {
                     // Pre-select the company's preferred data source when opening the dialog
                     const preferred = (company?.preferredDataSource as 'consolidated' | 'standalone') || 'consolidated';
                     setSelectedDataType(preferred);
                     setShowFetchDataDialog(true);
                   }}
-                    disabled={fetchLatestDataMutation.isPending || !companyTicker}
-                    size="sm"
-                    variant="outline"
-                  >
-                    {fetchLatestDataMutation.isPending ? (
-                      <>
-                        <RefreshCw className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-2 animate-spin" />
-                        <span className="hidden sm:inline">Fetching...</span>
-                      </>
-                    ) : (
-                      <>
-                        <RefreshCw className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-2" />
-                        <span className="hidden sm:inline">Fetch Latest Data</span>
-                        <span className="sm:hidden">Fetch</span>
-                      </>
-                    )}
-                  </Button>
-                  <Button
-                    onClick={() => setShowUpdateCompanyDialog(true)}
-                    size="sm"
-                    variant="outline"
-                  >
-                    <Edit className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-2" />
-                    <span className="hidden sm:inline">Update Details</span>
-                    <span className="sm:hidden">Update</span>
-                  </Button>
+                  disabled={fetchLatestDataMutation.isPending || !companyTicker}
+                  size="sm"
+                  variant="outline"
+                >
+                  {fetchLatestDataMutation.isPending ? (
+                    <>
+                      <RefreshCw className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-2 animate-spin" />
+                      <span className="hidden sm:inline">Fetching...</span>
+                    </>
+                  ) : (
+                    <>
+                      <RefreshCw className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-2" />
+                      <span className="hidden sm:inline">Fetch Latest Data</span>
+                      <span className="sm:hidden">Fetch</span>
+                    </>
+                  )}
+                </Button>
+                <Button
+                  onClick={() => setShowUpdateCompanyDialog(true)}
+                  size="sm"
+                  variant="outline"
+                >
+                  <Edit className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-2" />
+                  <span className="hidden sm:inline">Update Details</span>
+                  <span className="sm:hidden">Update</span>
+                </Button>
                 <Button
                   onClick={() => setShowMetricsEditorDialog(true)}
                   size="sm"
@@ -1388,8 +1391,23 @@ export default function CompanyDetail() {
                   <span className="hidden sm:inline">Edit Metrics</span>
                   <span className="sm:hidden">Metrics</span>
                 </Button>
-                </div>
               </div>
+            </div>
+            {/* Status info - positioned on the right */}
+            <div className="flex flex-col items-end gap-2 shrink-0">
+              {company?.preferredDataSource && (
+                <Badge variant="outline" className="text-xs capitalize">
+                  {company.preferredDataSource} Data
+                </Badge>
+              )}
+              {lastScrape && (
+                <div className="flex items-center gap-2 text-xs sm:text-sm text-muted-foreground">
+                  <Clock className="h-3 w-3 sm:h-4 sm:w-4" />
+                  <span className="hidden sm:inline">Last scraped: {formatDate(lastScrape.lastScrape)}</span>
+                  <span className="sm:hidden">{formatDate(lastScrape.lastScrape)}</span>
+                </div>
+              )}
+            </div>
           </div>
         </div>
       </div>

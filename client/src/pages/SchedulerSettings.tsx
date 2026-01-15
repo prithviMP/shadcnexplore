@@ -215,7 +215,6 @@ function SchedulerSettingsEditor() {
   const getJobDisplayName = (jobType: string): string => {
     const names: Record<string, string> = {
       "daily-scraping": "Daily Scraping",
-      "signal-incremental": "Incremental Signal Refresh",
       "signal-full": "Full Signal Refresh",
     };
     return names[jobType] || jobType;
@@ -237,7 +236,7 @@ function SchedulerSettingsEditor() {
 
   return (
     <div className="space-y-4">
-      {settings.map((setting) => (
+      {settings.filter(setting => setting.jobType !== "signal-incremental").map((setting) => (
         <div key={setting.id} className="flex items-center justify-between p-4 border rounded-lg">
           <div className="flex-1">
             <div className="font-medium">{getJobDisplayName(setting.jobType)}</div>

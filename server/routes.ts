@@ -471,16 +471,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.put("/api/roles/:id", requireAuth, requirePermission("users:manage_roles"), async (req, res) => {
     try {
-      const data = insertRoleSchema.partial().parse(req.body);
-      const role = await storage.updateRole(req.params.id, data);
+      const role = await storage.getRole(req.params.id);
       if (!role) {
+        return res.status(404).json({ error: "Role not found" });
+      }
+      // Prevent modification of super_admin role
+      if (role.name === "super_admin") {
+        return res.status(400).json({ error: "Cannot modify super_admin role" });
+      }
+      const data = insertRoleSchema.partial().parse(req.body);
+      const updatedRole = await storage.updateRole(req.params.id, data);
+      if (!updatedRole) {
         return res.status(404).json({ error: "Role not found" });
       }
       // Also update role_permissions entry if permissions were updated
       if (data.permissions !== undefined) {
-        await storage.upsertRolePermissions(role.name, role.permissions);
+        await storage.upsertRolePermissions(updatedRole.name, updatedRole.permissions);
       }
-      res.json(role);
+      res.json(updatedRole);
     } catch (error: any) {
       res.status(400).json({ error: error.message });
     }

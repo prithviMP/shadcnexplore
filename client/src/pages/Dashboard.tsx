@@ -403,6 +403,38 @@ export default function Dashboard() {
     return isNaN(numValue) ? null : numValue;
   };
 
+  // Helper function to format quarters for display (e.g., "DEC '25, Sept '25")
+  const formatQuarters = (quarters: string[] | null | undefined): string => {
+    if (!quarters || quarters.length === 0) return "—";
+    
+    // Take the last 2 quarters (most recent)
+    const recentQuarters = quarters.slice(0, 2);
+    
+    return recentQuarters.map(quarter => {
+      // Parse quarter string (e.g., "2025-12-31" or "Dec 2025" or "Q3 2025")
+      try {
+        // Try parsing as date first
+        const date = new Date(quarter);
+        if (!isNaN(date.getTime())) {
+          const month = date.toLocaleDateString('en-US', { month: 'short' }).toUpperCase();
+          const year = date.getFullYear().toString().slice(-2);
+          return `${month} '${year}`;
+        }
+        // Try parsing formats like "Dec 2025" or "Q3 2025"
+        const match = quarter.match(/(\w+)\s+(\d{4})/);
+        if (match) {
+          const month = match[1].substring(0, 3).toUpperCase();
+          const year = match[2].slice(-2);
+          return `${month} '${year}`;
+        }
+        // Fallback: return first 8 chars
+        return quarter.substring(0, 8);
+      } catch {
+        return quarter.substring(0, 8);
+      }
+    }).join(", ");
+  };
+
   // Get latest signal for each company
   const companiesWithSignals = useMemo(() => {
     if (!companies || !allSignals) return [];
@@ -416,11 +448,18 @@ export default function Dashboard() {
       }
     });
 
-    return companies.map(company => ({
-      ...company,
-      latestSignal: signalsByCompany.get(company.id)?.signal as string | undefined,
-      signalId: signalsByCompany.get(company.id)?.id,
-    }));
+    return companies.map(company => {
+      const signal = signalsByCompany.get(company.id);
+      const metadata = signal?.metadata as { usedQuarters?: string[] } | null | undefined;
+      const usedQuarters = metadata?.usedQuarters;
+      
+      return {
+        ...company,
+        latestSignal: signal?.signal as string | undefined,
+        signalId: signal?.id,
+        usedQuarters: usedQuarters || null,
+      };
+    });
   }, [companies, allSignals]);
 
   // Filter companies based on search and filters
@@ -1292,11 +1331,9 @@ export default function Dashboard() {
                         </TableHead>
                         <TableHead 
                           className="text-right cursor-pointer hover:bg-muted/50 select-none"
-                          onClick={() => handleSort("updatedAt")}
                         >
                           <div className="flex items-center justify-end">
-                            Last Updated
-                            <SortIcon field="updatedAt" />
+                            Quarters Used
                           </div>
                         </TableHead>
                       </TableRow>
@@ -1328,7 +1365,7 @@ export default function Dashboard() {
                           )}
                         </TableCell>
                         <TableCell className="text-right text-xs text-muted-foreground">
-                          {formatDistanceToNow(new Date(company.updatedAt), { addSuffix: true })}
+                          {company.usedQuarters ? formatQuarters(company.usedQuarters) : "—"}
                         </TableCell>
                       </TableRow>
                     ))}
@@ -1365,6 +1402,11 @@ export default function Dashboard() {
                           <span className="text-muted-foreground">ROE:</span>
                           <div className="font-mono font-semibold">{getFinancialValue(company, "roe")}</div>
                         </div>
+                        {company.usedQuarters && (
+                          <div className="col-span-2 mt-1">
+                            <span className="text-muted-foreground">Quarters:</span> {formatQuarters(company.usedQuarters)}
+                          </div>
+                        )}
                         <div>
                           <span className="text-muted-foreground">P/E:</span>
                           <div className="font-mono font-semibold">{getFinancialValue(company, "pe")}</div>

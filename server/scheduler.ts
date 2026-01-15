@@ -52,14 +52,6 @@ class ScrapingScheduler {
 
     console.log(`[Scheduler] Daily scraping setting: enabled=${dailyScrapingSetting.enabled}, schedule=${dailyScrapingSetting.schedule}`);
 
-    const signalIncrementalSetting = await storage.getSchedulerSetting("signal-incremental") ||
-      await storage.upsertSchedulerSetting({
-        jobType: "signal-incremental",
-        schedule: "0 2 * * *",
-        enabled: true,
-        description: "Daily incremental signal refresh"
-      });
-
     const signalFullSetting = await storage.getSchedulerSetting("signal-full") ||
       await storage.upsertSchedulerSetting({
         jobType: "signal-full",
@@ -73,10 +65,6 @@ class ScrapingScheduler {
       this.scheduleDailyScraping(dailyScrapingSetting.schedule);
     } else {
       console.log("[Scheduler] Daily scraping is disabled, skipping scheduling");
-    }
-
-    if (signalIncrementalSetting.enabled) {
-      this.scheduleSignalRefreshIncremental(signalIncrementalSetting.schedule);
     }
 
     if (signalFullSetting.enabled) {
@@ -346,35 +334,6 @@ class ScrapingScheduler {
     });
     
     return jobs;
-  }
-
-  /**
-   * Schedule incremental signal refresh
-   */
-  private scheduleSignalRefreshIncremental(schedule: string = "0 2 * * *") {
-    // Stop existing job if it exists
-    const existingJob = this.jobs.get("signal-refresh-incremental");
-    if (existingJob) {
-      existingJob.stop();
-      this.jobs.delete("signal-refresh-incremental");
-    }
-
-    const incrementalTask = cronSchedule(schedule, async () => {
-      console.log(`[Scheduler] Starting incremental signal refresh at ${new Date().toISOString()}`);
-      
-      try {
-        const { signalProcessor } = await import("./signalProcessor");
-        const jobId = await signalProcessor.enqueueJob("incremental", undefined, 50);
-        console.log(`[Scheduler] Enqueued incremental signal refresh job: ${jobId}`);
-      } catch (error: any) {
-        console.error("[Scheduler] Error scheduling incremental signal refresh:", error);
-      }
-    }, {
-      timezone: "Asia/Kolkata",
-    });
-    
-    this.jobs.set("signal-refresh-incremental", incrementalTask);
-    console.log(`[Scheduler] Scheduled incremental signal refresh: ${schedule}`);
   }
 
   /**

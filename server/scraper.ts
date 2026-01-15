@@ -563,16 +563,46 @@ class ScreenerScraper {
         }
       }
 
-      // If primary source returned no data, DO NOT automatically try fallback
-      // User explicitly chose a data source, so we should respect that choice
-      if (quarterlyData.length === 0) {
+      // If primary source returned no data, automatically try fallback
+      if (quarterlyData.length === 0 && dataType !== 'both') {
         console.warn(`[SCRAPER] No quarterly data found for ticker: ${ticker} from ${primaryType} source`);
-        console.warn(`[SCRAPER] User selected ${dataType} - not auto-falling back to preserve user choice`);
-        // Don't try fallback - user explicitly chose this data type
+        console.warn(`[SCRAPER] Automatically trying fallback source: ${fallbackType}`);
+        
+        try {
+          const fallbackDelayMs = Math.random() * 2000 + 1000;
+          console.log(`[SCRAPER] Waiting ${Math.round(fallbackDelayMs)}ms before fetching ${fallbackType} page...`);
+          await this.delay(fallbackDelayMs);
+
+          console.log(`[SCRAPER] Fetching ${fallbackType} company page URL (fallback): ${fallbackUrl}`);
+          const fallbackFetchStart = Date.now();
+          const fallbackResponse = await this.fetchWithRetry(fallbackUrl);
+          const fallbackFetchDuration = Date.now() - fallbackFetchStart;
+          console.log(`[SCRAPER] ${fallbackType} HTTP Response: ${fallbackResponse.status} ${fallbackResponse.statusText} (took ${fallbackFetchDuration}ms)`);
+
+          if (fallbackResponse.ok) {
+            const fallbackHtml = await fallbackResponse.text();
+            const fallback$ = load(fallbackHtml);
+            const fallbackData = this.extractQuarterlyData(fallback$, ticker, finalCompanyId || undefined);
+            console.log(`[SCRAPER] Extracted ${fallbackData.length} quarterly data rows from ${fallbackType} page (fallback)`);
+            
+            if (fallbackData.length > 0) {
+              quarterlyDataSource = 'fallback';
+              quarterlyData = fallbackData;
+              console.log(`[SCRAPER] ✓ Successfully found data from ${fallbackType} source (fallback)`);
+            } else {
+              console.warn(`[SCRAPER] ✗ No data found in ${fallbackType} source either`);
+            }
+          } else {
+            console.warn(`[SCRAPER] ✗ Fallback ${fallbackType} page returned HTTP ${fallbackResponse.status}`);
+          }
+        } catch (fallbackError: any) {
+          console.error(`[SCRAPER] Error while fetching ${fallbackType} data (fallback):`, fallbackError);
+          // Continue to return error if fallback also fails
+        }
       }
 
       if (quarterlyData.length === 0) {
-        console.warn(`[SCRAPER] No quarterly data found for ticker: ${ticker} from ${primaryType} source`);
+        console.warn(`[SCRAPER] No quarterly data found for ticker: ${ticker} from either ${primaryType} or ${fallbackType} source`);
         console.warn(`[SCRAPER] Company name: ${companyName || 'NOT FOUND'}`);
         console.warn(`[SCRAPER] Sector: ${sectorName || 'NOT FOUND'}`);
         console.warn(`[SCRAPER] Requested dataType: ${dataType}`);
@@ -583,7 +613,7 @@ class ScreenerScraper {
           sector: sectorName,
           quartersScraped: 0,
           metricsScraped: 0,
-          error: `No quarterly data found from ${primaryType} source`,
+          error: `No quarterly data found from ${primaryType} or ${fallbackType} source`,
           quarterlyDataSource: 'none',
           dataType,
         };
@@ -1781,26 +1811,30 @@ class ScreenerScraper {
       const salesQoQ = this.calculateQoQGrowth(metricData['Sales'], quarters);
 
       salesYoY.forEach((value, idx) => {
-        if (value !== null && quarters[idx]) {
+        if (quarters[idx]) {
+          // Store YoY value even if null (will display as "NA" in UI)
+          // This ensures YoY row is always present for quarters where calculation is possible
           results.push({
             ticker,
             companyId: companyId || null,
             quarter: quarters[idx],
             metricName: 'Sales Growth(YoY) %',
-            metricValue: value.toString(),
+            metricValue: value !== null ? value.toString() : null,
             scrapeTimestamp,
           });
         }
       });
 
       salesQoQ.forEach((value, idx) => {
-        if (value !== null && quarters[idx]) {
+        if (quarters[idx]) {
+          // Store QoQ value even if null (will display as "NA" in UI)
+          // This ensures QoQ row is always present for quarters where calculation is possible
           results.push({
             ticker,
             companyId: companyId || null,
             quarter: quarters[idx],
             metricName: 'Sales Growth(QoQ) %',
-            metricValue: value.toString(),
+            metricValue: value !== null ? value.toString() : null,
             scrapeTimestamp,
           });
         }
@@ -1813,26 +1847,30 @@ class ScreenerScraper {
       const epsQoQ = this.calculateQoQGrowth(metricData['EPS in Rs'], quarters);
 
       epsYoY.forEach((value, idx) => {
-        if (value !== null && quarters[idx]) {
+        if (quarters[idx]) {
+          // Store YoY value even if null (will display as "NA" in UI)
+          // This ensures YoY row is always present for quarters where calculation is possible
           results.push({
             ticker,
             companyId: companyId || null,
             quarter: quarters[idx],
             metricName: 'EPS Growth(YoY) %',
-            metricValue: value.toString(),
+            metricValue: value !== null ? value.toString() : null,
             scrapeTimestamp,
           });
         }
       });
 
       epsQoQ.forEach((value, idx) => {
-        if (value !== null && quarters[idx]) {
+        if (quarters[idx]) {
+          // Store QoQ value even if null (will display as "NA" in UI)
+          // This ensures QoQ row is always present for quarters where calculation is possible
           results.push({
             ticker,
             companyId: companyId || null,
             quarter: quarters[idx],
             metricName: 'EPS Growth(QoQ) %',
-            metricValue: value.toString(),
+            metricValue: value !== null ? value.toString() : null,
             scrapeTimestamp,
           });
         }
@@ -1842,26 +1880,87 @@ class ScreenerScraper {
 
   /**
    * Calculate Year-over-Year growth
+   * Matches quarters by month/year rather than array index to handle missing quarters
    */
   private calculateYoYGrowth(values: Record<string, number>, quarters: string[]): (number | null)[] {
     const growth: (number | null)[] = [];
+
+    // Helper to parse quarter string and extract month and year
+    const parseQuarter = (quarterStr: string): { month: string; year: number } | null => {
+      if (!quarterStr || typeof quarterStr !== 'string') return null;
+      
+      const normalized = quarterStr.trim();
+      // Match patterns like "Mar 2024", "Mar'24", "Mar-24", "Mar 24", "30 Mar 2024"
+      // Also handle variations like "Mar23", "Mar 23", "Mar-23"
+      // The normalizeQuarterFormat function produces "Sep 2023" format, so prioritize that
+      const match = normalized.match(/(\d+\s+)?(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec|January|February|March|April|May|June|July|August|September|October|November|December)[\s'-]*(\d{2,4})/i);
+      if (!match) {
+        return null;
+      }
+      
+      // Extract month abbreviation (first 3 chars, case-insensitive)
+      const monthName = match[2].substring(0, 3).toLowerCase();
+      let year = parseInt(match[3]);
+      
+      // Convert 2-digit year to 4-digit (assuming 2000-2099)
+      if (year < 100) {
+        year = year < 50 ? 2000 + year : 1900 + year;
+      }
+      
+      return { month: monthName, year };
+    };
+
+    // Helper to find the same quarter from previous year
+    const findPreviousYearQuarter = (currentQuarter: string, allQuarters: string[]): string | null => {
+      const currentParsed = parseQuarter(currentQuarter);
+      if (!currentParsed) return null;
+
+      const targetYear = currentParsed.year - 1;
+      const targetMonth = currentParsed.month;
+
+      // Find quarter with same month and previous year
+      for (const q of allQuarters) {
+        const parsed = parseQuarter(q);
+        if (parsed && parsed.month === targetMonth && parsed.year === targetYear) {
+          return q;
+        }
+      }
+
+      return null;
+    };
 
     for (let i = 0; i < quarters.length; i++) {
       const currentQuarter = quarters[i];
       const currentValue = values[currentQuarter];
 
-      if (i >= 4 && currentValue !== undefined && currentValue !== null) {
-        // Compare with same quarter previous year (4 quarters ago)
-        const previousYearQuarter = quarters[i - 4];
-        const previousYearValue = values[previousYearQuarter];
+      // Only calculate if we have a current value
+      if (currentValue === undefined || currentValue === null || isNaN(currentValue)) {
+        growth.push(null);
+        continue;
+      }
 
-        if (previousYearValue !== undefined && previousYearValue !== null && previousYearValue !== 0) {
-          const growthPercent = ((currentValue - previousYearValue) / previousYearValue) * 100;
-          growth.push(parseFloat(growthPercent.toFixed(2)));
+      // Find the same quarter from previous year
+      const previousYearQuarter = findPreviousYearQuarter(currentQuarter, quarters);
+      
+      if (previousYearQuarter) {
+        const previousYearValue = values[previousYearQuarter];
+        
+        // Calculate growth if previous year value exists and is not null/undefined
+        // Note: 0 is a valid value for comparison (can calculate growth from 0)
+        if (previousYearValue !== undefined && previousYearValue !== null && !isNaN(previousYearValue)) {
+          // Handle division by zero case - if previous year was 0, growth is undefined
+          if (previousYearValue === 0) {
+            growth.push(null);
+          } else {
+            const growthPercent = ((currentValue - previousYearValue) / previousYearValue) * 100;
+            growth.push(parseFloat(growthPercent.toFixed(2)));
+          }
         } else {
+          // Previous year quarter exists but value is missing
           growth.push(null);
         }
       } else {
+        // Previous year quarter doesn't exist
         growth.push(null);
       }
     }
@@ -1871,26 +1970,89 @@ class ScreenerScraper {
 
   /**
    * Calculate Quarter-over-Quarter growth
+   * Finds the chronologically previous quarter rather than relying on array index
    */
   private calculateQoQGrowth(values: Record<string, number>, quarters: string[]): (number | null)[] {
     const growth: (number | null)[] = [];
+
+    // Helper to parse quarter string and extract date for sorting
+    const parseQuarterDate = (quarterStr: string): Date | null => {
+      if (!quarterStr || typeof quarterStr !== 'string') return null;
+      
+      const normalized = quarterStr.trim();
+      const match = normalized.match(/(\d+\s+)?(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec|January|February|March|April|May|June|July|August|September|October|November|December)[\s'-]*(\d{2,4})/i);
+      if (!match) return null;
+      
+      const monthName = match[2].substring(0, 3).toLowerCase();
+      const months: Record<string, number> = {
+        'jan': 0, 'feb': 1, 'mar': 2, 'apr': 3, 'may': 4, 'jun': 5,
+        'jul': 6, 'aug': 7, 'sep': 8, 'oct': 9, 'nov': 10, 'dec': 11
+      };
+      
+      const month = months[monthName];
+      if (month === undefined) return null;
+      
+      let year = parseInt(match[3]);
+      if (year < 100) {
+        year = year < 50 ? 2000 + year : 1900 + year;
+      }
+      
+      return new Date(year, month, 1);
+    };
+
+    // Helper to find the chronologically previous quarter
+    const findPreviousQuarter = (currentQuarter: string, allQuarters: string[]): string | null => {
+      const currentDate = parseQuarterDate(currentQuarter);
+      if (!currentDate) return null;
+
+      let previousQuarter: string | null = null;
+      let previousDate: Date | null = null;
+
+      // Find the quarter with the latest date that is still before the current quarter
+      for (const q of allQuarters) {
+        const qDate = parseQuarterDate(q);
+        if (qDate && qDate < currentDate) {
+          if (!previousDate || qDate > previousDate) {
+            previousDate = qDate;
+            previousQuarter = q;
+          }
+        }
+      }
+
+      return previousQuarter;
+    };
 
     for (let i = 0; i < quarters.length; i++) {
       const currentQuarter = quarters[i];
       const currentValue = values[currentQuarter];
 
-      if (i >= 1 && currentValue !== undefined && currentValue !== null) {
-        // Compare with previous quarter
-        const previousQuarter = quarters[i - 1];
-        const previousValue = values[previousQuarter];
+      // Only calculate if we have a current value
+      if (currentValue === undefined || currentValue === null || isNaN(currentValue)) {
+        growth.push(null);
+        continue;
+      }
 
-        if (previousValue !== undefined && previousValue !== null && previousValue !== 0) {
-          const growthPercent = ((currentValue - previousValue) / previousValue) * 100;
-          growth.push(parseFloat(growthPercent.toFixed(2)));
+      // Find the chronologically previous quarter
+      const previousQuarter = findPreviousQuarter(currentQuarter, quarters);
+      
+      if (previousQuarter) {
+        const previousValue = values[previousQuarter];
+        
+        // Calculate growth if previous quarter value exists and is not null/undefined
+        if (previousValue !== undefined && previousValue !== null && !isNaN(previousValue)) {
+          // Handle division by zero case - if previous quarter was 0, growth is undefined
+          if (previousValue === 0) {
+            growth.push(null);
+          } else {
+            const growthPercent = ((currentValue - previousValue) / previousValue) * 100;
+            growth.push(parseFloat(growthPercent.toFixed(2)));
+          }
         } else {
+          // Previous quarter exists but value is missing
           growth.push(null);
         }
       } else {
+        // No previous quarter found (this is the first quarter or quarters are out of order)
         growth.push(null);
       }
     }

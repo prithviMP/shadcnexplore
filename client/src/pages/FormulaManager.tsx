@@ -15,7 +15,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Switch } from "@/components/ui/switch";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useToast } from "@/hooks/use-toast";
-import { Plus, Pencil, Trash2, Loader2, Play, RotateCcw } from "lucide-react";
+import { Plus, Pencil, Trash2, Loader2, Play, RotateCcw, ArrowUp, ArrowDown, ArrowUpDown } from "lucide-react";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { insertFormulaSchema, type Formula, type Company, type Sector } from "@shared/schema";
 import { z } from "zod";
@@ -70,6 +70,8 @@ export default function FormulaManager() {
   const [selectedReplacementFormulaId, setSelectedReplacementFormulaId] = useState<string>("");
   const [resetToGlobalDialogOpen, setResetToGlobalDialogOpen] = useState(false);
   const [selectedGlobalFormulaId, setSelectedGlobalFormulaId] = useState<string>("");
+  const [sortField, setSortField] = useState<string>("name");
+  const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
   const { toast } = useToast();
 
   const { data: formulas = [], isLoading } = useQuery<Formula[]>({
@@ -94,6 +96,112 @@ export default function FormulaManager() {
     });
     return map;
   }, [sectors]);
+
+  // Determine the active global formula (lowest priority number = highest priority)
+  const activeGlobalFormula = useMemo(() => {
+    const globalFormulas = formulas
+      .filter(f => f.scope === "global" && f.enabled)
+      .sort((a, b) => a.priority - b.priority); // Lower priority number = higher priority
+    
+    return globalFormulas.length > 0 ? globalFormulas[0] : null;
+  }, [formulas]);
+
+  // Count companies using each formula
+  const formulaUsageCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    
+    formulas.forEach(formula => {
+      let count = 0;
+      
+      // Count companies with this formula directly assigned
+      const companiesWithFormula = companies.filter(c => c.assignedFormulaId === formula.id);
+      count += companiesWithFormula.length;
+      
+      // Count companies in sectors with this formula assigned (that don't have their own override)
+      const sectorsWithFormula = sectors.filter(s => s.assignedFormulaId === formula.id);
+      sectorsWithFormula.forEach(sector => {
+        const sectorCompanies = companies.filter(c => 
+          c.sectorId === sector.id && !c.assignedFormulaId
+        );
+        count += sectorCompanies.length;
+      });
+      
+      // For active global formula, count companies/sectors without specific assignments
+      if (formula.scope === "global" && formula.enabled && formula.id === activeGlobalFormula?.id) {
+        // Count companies without any formula assignment
+        const companiesWithoutFormula = companies.filter(c => !c.assignedFormulaId);
+        
+        // For each company without formula, check if its sector also doesn't have a formula
+        companiesWithoutFormula.forEach(company => {
+          const sector = sectors.find(s => s.id === company.sectorId);
+          if (!sector || !sector.assignedFormulaId) {
+            count++;
+          }
+        });
+      }
+      
+      counts[formula.id] = count;
+    });
+    
+    return counts;
+  }, [formulas, companies, sectors, activeGlobalFormula]);
+
+  // Sort formulas
+  const sortedFormulas = useMemo(() => {
+    const sorted = [...formulas];
+    
+    sorted.sort((a, b) => {
+      let aValue: any;
+      let bValue: any;
+      
+      switch (sortField) {
+        case "name":
+          aValue = a.name.toLowerCase();
+          bValue = b.name.toLowerCase();
+          break;
+        case "scope":
+          aValue = formatScopeDisplay(a.scope, a.scopeValue).toLowerCase();
+          bValue = formatScopeDisplay(b.scope, b.scopeValue).toLowerCase();
+          break;
+        case "companies":
+          aValue = formulaUsageCounts[a.id] || 0;
+          bValue = formulaUsageCounts[b.id] || 0;
+          break;
+        case "signal":
+          aValue = (a.signal || "").toLowerCase();
+          bValue = (b.signal || "").toLowerCase();
+          break;
+        case "priority":
+          aValue = a.priority;
+          bValue = b.priority;
+          break;
+        default:
+          return 0;
+      }
+      
+      if (aValue < bValue) return sortDirection === "asc" ? -1 : 1;
+      if (aValue > bValue) return sortDirection === "asc" ? 1 : -1;
+      return 0;
+    });
+    
+    return sorted;
+  }, [formulas, sortField, sortDirection, formulaUsageCounts]);
+
+  const handleSort = (field: string) => {
+    if (sortField === field) {
+      setSortDirection(sortDirection === "asc" ? "desc" : "asc");
+    } else {
+      setSortField(field);
+      setSortDirection("asc");
+    }
+  };
+
+  const SortIcon = ({ field }: { field: string }) => {
+    if (sortField !== field) return <ArrowUpDown className="h-3 w-3 ml-1 opacity-50" />;
+    return sortDirection === "asc" 
+      ? <ArrowUp className="h-3 w-3 ml-1" />
+      : <ArrowDown className="h-3 w-3 ml-1" />;
+  };
 
   // Helper function to format scope display
   const formatScopeDisplay = (scope: string, scopeValue: string | null): string => {
@@ -389,7 +497,15 @@ export default function FormulaManager() {
         </div>
         <div className="flex gap-2 shrink-0">
           <Button
-            onClick={() => setResetToGlobalDialogOpen(true)}
+            onClick={() => {
+              // Pre-select the active global formula
+              if (activeGlobalFormula) {
+                setSelectedGlobalFormulaId(activeGlobalFormula.id);
+              } else {
+                setSelectedGlobalFormulaId("");
+              }
+              setResetToGlobalDialogOpen(true);
+            }}
             variant="outline"
             size="sm"
             className="border-orange-600 text-orange-600 hover:bg-orange-50 dark:hover:bg-orange-950/30"
@@ -451,50 +567,104 @@ export default function FormulaManager() {
               <Table>
                 <TableHeader>
                   <TableRow className="border-slate-200 dark:border-slate-800">
-                    <TableHead className="font-semibold">Name</TableHead>
-                    <TableHead className="font-semibold">Scope</TableHead>
+                    <TableHead 
+                      className="font-semibold cursor-pointer hover:bg-muted/50 select-none"
+                      onClick={() => handleSort("name")}
+                    >
+                      <div className="flex items-center">
+                        Name
+                        <SortIcon field="name" />
+                      </div>
+                    </TableHead>
+                    <TableHead 
+                      className="font-semibold cursor-pointer hover:bg-muted/50 select-none"
+                      onClick={() => handleSort("scope")}
+                    >
+                      <div className="flex items-center">
+                        Scope
+                        <SortIcon field="scope" />
+                      </div>
+                    </TableHead>
                     <TableHead className="font-semibold">Condition</TableHead>
+                    <TableHead 
+                      className="text-center font-semibold cursor-pointer hover:bg-muted/50 select-none"
+                      onClick={() => handleSort("companies")}
+                    >
+                      <div className="flex items-center justify-center">
+                        Companies
+                        <SortIcon field="companies" />
+                      </div>
+                    </TableHead>
+                    <TableHead 
+                      className="font-semibold cursor-pointer hover:bg-muted/50 select-none"
+                      onClick={() => handleSort("signal")}
+                    >
+                      <div className="flex items-center">
+                        Signal
+                        <SortIcon field="signal" />
+                      </div>
+                    </TableHead>
                     <TableHead className="text-center font-semibold">Enabled</TableHead>
                     <TableHead className="text-right font-semibold">Actions</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {formulas.map((formula) => (
-                    <TableRow key={formula.id} className="border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/50" data-testid={`row-formula-${formula.id}`}>
-                      <TableCell className="font-medium">{formula.name}</TableCell>
-                      <TableCell>
-                        <Badge variant="outline" className="text-xs bg-slate-100 dark:bg-slate-800">
-                          {formatScopeDisplay(formula.scope, formula.scopeValue)}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="font-mono text-xs max-w-xs truncate">{formula.condition}</TableCell>
-                      <TableCell className="text-center">
-                        <Switch
-                          checked={formula.enabled}
-                          onCheckedChange={() => handleToggle(formula)}
-                          disabled={updateFormula.isPending}
-                          data-testid={`switch-enable-${formula.id}`}
-                        />
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <div className="flex justify-end gap-2">
-                          <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => handleEdit(formula)} data-testid={`button-edit-${formula.id}`}>
-                            <Pencil className="h-4 w-4" />
-                          </Button>
-                          <Button
-                            size="icon"
-                            variant="ghost"
-                            className="h-8 w-8 text-red-600 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-950/30"
-                            onClick={() => handleDelete(formula)}
-                            disabled={deleteFormula.isPending || replaceAndDeleteFormula.isPending}
-                            data-testid={`button-delete-${formula.id}`}
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  ))}
+                  {sortedFormulas.map((formula) => {
+                    const isActiveGlobal = formula.scope === "global" && formula.id === activeGlobalFormula?.id;
+                    return (
+                      <TableRow key={formula.id} className="border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/50" data-testid={`row-formula-${formula.id}`}>
+                        <TableCell className="font-medium">
+                          <div className="flex items-center gap-2">
+                            {formula.name}
+                            {isActiveGlobal && (
+                              <Badge variant="default" className="text-[10px] px-1.5 py-0 bg-blue-600">
+                                Active Global
+                              </Badge>
+                            )}
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant="outline" className="text-xs bg-slate-100 dark:bg-slate-800">
+                            {formatScopeDisplay(formula.scope, formula.scopeValue)}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="font-mono text-xs max-w-xs truncate">{formula.condition}</TableCell>
+                        <TableCell className="text-center">
+                          {formulaUsageCounts[formula.id] || 0}
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant="outline" className="text-xs">
+                            {formula.signal || "—"}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="text-center">
+                          <Switch
+                            checked={formula.enabled}
+                            onCheckedChange={() => handleToggle(formula)}
+                            disabled={updateFormula.isPending}
+                            data-testid={`switch-enable-${formula.id}`}
+                          />
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <div className="flex justify-end gap-2">
+                            <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => handleEdit(formula)} data-testid={`button-edit-${formula.id}`}>
+                              <Pencil className="h-4 w-4" />
+                            </Button>
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              className="h-8 w-8 text-red-600 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-950/30"
+                              onClick={() => handleDelete(formula)}
+                              disabled={deleteFormula.isPending || replaceAndDeleteFormula.isPending}
+                              data-testid={`button-delete-${formula.id}`}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
                 </TableBody>
               </Table>
             </div>

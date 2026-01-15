@@ -18,7 +18,7 @@ import React, { useState, useMemo, useEffect, useRef } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 import { queryClient } from "@/lib/queryClient";
-import { Search, ArrowLeft, TrendingUp, Play, Loader2, Filter, RefreshCw, Calculator, CheckCircle2, CheckSquare, Square, XCircle, Plus, Trash2, Settings, List, Grid3x3, Building2, ChevronDown, Code2 } from "lucide-react";
+import { Search, ArrowLeft, TrendingUp, Play, Loader2, Filter, RefreshCw, Calculator, CheckCircle2, CheckSquare, Square, XCircle, Plus, Trash2, Settings, List, Grid3x3, Building2, ChevronDown, Code2, ArrowUp, ArrowDown, ArrowUpDown } from "lucide-react";
 import { Link, useRoute } from "wouter";
 import type { Company, Sector, Formula, SectorMapping } from "@shared/schema";
 import { apiRequest } from "@/lib/queryClient";
@@ -105,6 +105,8 @@ export default function SectorsList() {
   const [sectorCompanyCountMin, setSectorCompanyCountMin] = useState<string>("");
   const [sectorCompanyCountMax, setSectorCompanyCountMax] = useState<string>("");
   const [sectorFiltersOpen, setSectorFiltersOpen] = useState(false);
+  const [sectorSortField, setSectorSortField] = useState<"name" | "companyCount" | "buySignals" | "sellSignals" | "holdSignals" | "noSignals">("name");
+  const [sectorSortDirection, setSectorSortDirection] = useState<"asc" | "desc">("asc");
 
   // Sector Management State
   const [createSectorOpen, setCreateSectorOpen] = useState(false);
@@ -917,6 +919,22 @@ export default function SectorsList() {
     return numValue.toFixed(2);
   };
 
+  const handleSectorSort = (field: typeof sectorSortField) => {
+    if (sectorSortField === field) {
+      setSectorSortDirection(sectorSortDirection === "asc" ? "desc" : "asc");
+    } else {
+      setSectorSortField(field);
+      setSectorSortDirection("asc");
+    }
+  };
+
+  const SectorSortIcon = ({ field }: { field: typeof sectorSortField }) => {
+    if (sectorSortField !== field) return <ArrowUpDown className="h-3 w-3 ml-1 opacity-50" />;
+    return sectorSortDirection === "asc"
+      ? <ArrowUp className="h-3 w-3 ml-1" />
+      : <ArrowDown className="h-3 w-3 ml-1" />;
+  };
+
   // Calculate sector stats (company counts and signal distribution)
   const sectorsWithStats = useMemo(() => {
     if (!sectors || !allCompanies || !allSignals) return [];
@@ -983,8 +1001,34 @@ export default function SectorsList() {
       });
     }
 
+    // Sorting
+    filtered = [...filtered].sort((a, b) => {
+      let aValue: any;
+      let bValue: any;
+
+      switch (sectorSortField) {
+        case "companyCount":
+          aValue = a.companyCount; bValue = b.companyCount; break;
+        case "buySignals":
+          aValue = a.buySignals; bValue = b.buySignals; break;
+        case "sellSignals":
+          aValue = a.sellSignals; bValue = b.sellSignals; break;
+        case "holdSignals":
+          aValue = a.holdSignals; bValue = b.holdSignals; break;
+        case "noSignals":
+          aValue = a.noSignals; bValue = b.noSignals; break;
+        case "name":
+        default:
+          aValue = a.name.toLowerCase(); bValue = b.name.toLowerCase(); break;
+      }
+
+      if (aValue < bValue) return sectorSortDirection === "asc" ? -1 : 1;
+      if (aValue > bValue) return sectorSortDirection === "asc" ? 1 : -1;
+      return 0;
+    });
+
     return filtered;
-  }, [sectorsWithStats, sectorSearchTerm, sectorSignalFilter, sectorCompanyCountMin, sectorCompanyCountMax]);
+  }, [sectorsWithStats, sectorSearchTerm, sectorSignalFilter, sectorCompanyCountMin, sectorCompanyCountMax, sectorSortField, sectorSortDirection]);
 
   // If no sector is selected, show sector list
   if (!displaySectorId) {
@@ -1147,13 +1191,61 @@ export default function SectorsList() {
                   <Table>
                     <TableHeader>
                       <TableRow>
-                        <TableHead>Sector</TableHead>
+                        <TableHead
+                          className="cursor-pointer hover:bg-muted/50 select-none"
+                          onClick={() => handleSectorSort("name")}
+                        >
+                          <div className="flex items-center">
+                            Sector
+                            <SectorSortIcon field="name" />
+                          </div>
+                        </TableHead>
                         <TableHead>Description</TableHead>
-                        <TableHead className="text-center">Companies</TableHead>
-                        <TableHead className="text-center">BUY</TableHead>
-                        <TableHead className="text-center">SELL</TableHead>
-                        <TableHead className="text-center">HOLD</TableHead>
-                        <TableHead className="text-center">No Signal</TableHead>
+                        <TableHead
+                          className="text-center cursor-pointer hover:bg-muted/50 select-none"
+                          onClick={() => handleSectorSort("companyCount")}
+                        >
+                          <div className="flex items-center justify-center">
+                            Companies
+                            <SectorSortIcon field="companyCount" />
+                          </div>
+                        </TableHead>
+                        <TableHead
+                          className="text-center cursor-pointer hover:bg-muted/50 select-none"
+                          onClick={() => handleSectorSort("buySignals")}
+                        >
+                          <div className="flex items-center justify-center">
+                            BUY
+                            <SectorSortIcon field="buySignals" />
+                          </div>
+                        </TableHead>
+                        <TableHead
+                          className="text-center cursor-pointer hover:bg-muted/50 select-none"
+                          onClick={() => handleSectorSort("sellSignals")}
+                        >
+                          <div className="flex items-center justify-center">
+                            SELL
+                            <SectorSortIcon field="sellSignals" />
+                          </div>
+                        </TableHead>
+                        <TableHead
+                          className="text-center cursor-pointer hover:bg-muted/50 select-none"
+                          onClick={() => handleSectorSort("holdSignals")}
+                        >
+                          <div className="flex items-center justify-center">
+                            HOLD
+                            <SectorSortIcon field="holdSignals" />
+                          </div>
+                        </TableHead>
+                        <TableHead
+                          className="text-center cursor-pointer hover:bg-muted/50 select-none"
+                          onClick={() => handleSectorSort("noSignals")}
+                        >
+                          <div className="flex items-center justify-center">
+                            No Signal
+                            <SectorSortIcon field="noSignals" />
+                          </div>
+                        </TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -1748,6 +1840,12 @@ export default function SectorsList() {
 
                           const formulaInfo = signalData?.effectiveFormula;
                           const formulaSource = signalData?.formulaSource || "global";
+                          // Get the assigned formula name from formulas list if assignedFormulaId exists
+                          const assignedFormula = signalData?.assignedFormulaId 
+                            ? formulas?.find(f => f.id === signalData.assignedFormulaId)
+                            : null;
+                          const displayFormulaName = assignedFormula?.name || formulaInfo?.name || "Default";
+                          const displayFormulaSource = assignedFormula ? "company" : formulaSource;
 
                           return (
                             <TableRow
@@ -1776,17 +1874,17 @@ export default function SectorsList() {
                                   <SelectTrigger className="w-[180px] h-8 text-xs">
                                     <SelectValue>
                                       <span className="flex items-center gap-1.5">
-                                        {formulaInfo?.name || "Default"}
-                                        {formulaSource !== "company" && (
+                                        {displayFormulaName}
+                                        {displayFormulaSource !== "company" && (
                                           <Badge variant="outline" className="text-[10px] px-1 py-0">
-                                            {formulaSource === "sector" ? "Sector" : "Global"}
+                                            {displayFormulaSource === "sector" ? "Sector" : "Global"}
                                           </Badge>
                                         )}
                                       </span>
                                     </SelectValue>
                                   </SelectTrigger>
                                   <SelectContent>
-                                    <SelectItem value="default">
+                                    <SelectItem value="default" className="hidden">
                                       Use Default (Global/Sector)
                                     </SelectItem>
                                     {formulas?.filter(f => f.enabled).map((formula) => (

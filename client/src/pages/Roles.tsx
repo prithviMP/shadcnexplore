@@ -289,24 +289,31 @@ export default function Roles() {
                       </TableCell>
                       <TableCell className="text-right">
                         <div className="flex justify-end gap-2">
-                          <Button
-                            variant="outline"
-                            size="icon"
-                            className="h-8 w-8"
-                            onClick={() => openEditDialog(role)}
-                          >
-                            <Pencil className="h-4 w-4" />
-                          </Button>
-                          {!role.isSystem && role.name !== "super_admin" && (
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="h-8 w-8 text-red-600 hover:text-red-700"
-                              onClick={() => handleDeleteRole(role)}
-                              disabled={deleteRoleMutation.isPending}
-                            >
-                              <Trash2 className="h-4 w-4" />
-                            </Button>
+                          {role.name !== "super_admin" ? (
+                            <>
+                              <Button
+                                variant="outline"
+                                size="icon"
+                                className="h-8 w-8"
+                                onClick={() => openEditDialog(role)}
+                                disabled={role.isSystem && role.name === "super_admin"}
+                              >
+                                <Pencil className="h-4 w-4" />
+                              </Button>
+                              {!role.isSystem && role.name !== "super_admin" && (
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-8 w-8 text-red-600 hover:text-red-700"
+                                  onClick={() => handleDeleteRole(role)}
+                                  disabled={deleteRoleMutation.isPending}
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                </Button>
+                              )}
+                            </>
+                          ) : (
+                            <span className="text-xs text-muted-foreground">Protected</span>
                           )}
                         </div>
                       </TableCell>
@@ -439,8 +446,16 @@ export default function Roles() {
                   onChange={(e) =>
                     setEditForm({ ...editForm, description: e.target.value })
                   }
+                  disabled={editingRole?.name === "super_admin"}
                 />
               </div>
+              {editingRole?.name === "super_admin" && (
+                <Alert>
+                  <AlertDescription className="text-xs text-amber-600 dark:text-amber-400">
+                    The super_admin role cannot be modified or deleted. It is protected by the system.
+                  </AlertDescription>
+                </Alert>
+              )}
             </div>
             <div className="space-y-4 md:col-span-2">
               <Label>Permissions</Label>
@@ -454,13 +469,15 @@ export default function Roles() {
                       {perms.map((perm) => (
                         <label
                           key={perm}
-                          className="flex items-center gap-2 text-sm cursor-pointer"
+                          className={`flex items-center gap-2 text-sm ${editingRole?.name === "super_admin" ? "cursor-not-allowed opacity-50" : "cursor-pointer"}`}
                         >
                           <Checkbox
                             checked={editForm.permissions.includes(perm)}
                             onCheckedChange={() =>
+                              editingRole?.name !== "super_admin" &&
                               togglePermissionInForm(editForm, setEditForm, perm)
                             }
+                            disabled={editingRole?.name === "super_admin"}
                           />
                           <span className="truncate">{perm}</span>
                         </label>
@@ -483,9 +500,17 @@ export default function Roles() {
             <Button
               onClick={() => {
                 if (!editingRole) return;
+                if (editingRole.name === "super_admin") {
+                  toast({
+                    title: "Cannot modify super_admin",
+                    description: "The super_admin role cannot be modified.",
+                    variant: "destructive",
+                  });
+                  return;
+                }
                 updateRoleMutation.mutate(editForm);
               }}
-              disabled={updateRoleMutation.isPending}
+              disabled={updateRoleMutation.isPending || editingRole?.name === "super_admin"}
             >
               {updateRoleMutation.isPending ? "Saving..." : "Save Changes"}
             </Button>
