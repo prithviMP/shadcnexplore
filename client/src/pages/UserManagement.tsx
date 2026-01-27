@@ -70,10 +70,17 @@ export default function UserManagement() {
 
   const updateEnabledMutation = useMutation({
     mutationFn: async ({ userId, enabled }: { userId: string; enabled: boolean }) => {
-      await apiRequest("PUT", `/api/users/${userId}`, { enabled });
+      const response = await apiRequest("PUT", `/api/users/${userId}`, { enabled });
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ error: response.statusText }));
+        throw new Error(errorData.error || "Failed to update user status");
+      }
+      return response.json();
     },
-    onSuccess: (_, variables) => {
-      queryClient.invalidateQueries({ queryKey: ["/api/users"] });
+    onSuccess: async (_, variables) => {
+      // Invalidate and refetch to ensure UI updates with latest data
+      await queryClient.invalidateQueries({ queryKey: ["/api/users"] });
+      await queryClient.refetchQueries({ queryKey: ["/api/users"] });
       toast({
         title: "Success",
         description: `User ${variables.enabled ? "enabled" : "disabled"} successfully`,

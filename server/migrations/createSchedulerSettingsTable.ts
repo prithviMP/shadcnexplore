@@ -56,7 +56,7 @@ async function migrate() {
       VALUES 
         ('daily-scraping', '0 6 * * *', true, 'Daily scraping for all sectors'),
         ('signal-incremental', '0 2 * * *', true, 'Daily incremental signal refresh'),
-        ('signal-full', '0 3 * * 0', true, 'Weekly full signal refresh (Sundays)')
+        ('signal-full', '0 3 * * *', true, 'Daily full signal refresh')
       ON CONFLICT (job_type) DO NOTHING;
     `);
     console.log('✓ Inserted default scheduler settings');

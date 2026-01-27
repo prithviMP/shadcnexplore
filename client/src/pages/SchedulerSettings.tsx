@@ -286,7 +286,6 @@ function SchedulerSettingsEditor() {
             ) : (
               <div className="mt-1 text-xs text-muted-foreground">
                 Schedule: {setting.schedule} ({parseCronToTime(setting.schedule)})
-                {setting.jobType === "signal-full" && " on Sundays"}
               </div>
             )}
           </div>

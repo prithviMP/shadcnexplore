@@ -118,7 +118,7 @@ async function migrate() {
         VALUES 
           ('daily-scraping', '0 6 * * *', true, 'Daily scraping for all sectors'),
           ('signal-incremental', '0 2 * * *', true, 'Daily incremental signal refresh'),
-          ('signal-full', '0 3 * * 0', true, 'Weekly full signal refresh (Sundays)')
+          ('signal-full', '0 3 * * *', true, 'Daily full signal refresh')
         ON CONFLICT (job_type) DO NOTHING;
       `);
       console.log('  ✓ Inserted default scheduler settings');
@@ -131,10 +131,39 @@ async function migrate() {
         VALUES 
           ('daily-scraping', '0 6 * * *', true, 'Daily scraping for all sectors'),
           ('signal-incremental', '0 2 * * *', true, 'Daily incremental signal refresh'),
-          ('signal-full', '0 3 * * 0', true, 'Weekly full signal refresh (Sundays)')
+          ('signal-full', '0 3 * * *', true, 'Daily full signal refresh')
         ON CONFLICT (job_type) DO NOTHING;
       `);
       console.log('  ✓ Ensured default scheduler settings exist');
+      
+      // Update signal-full to daily schedule and description
+      // Update schedule if it's still set to weekly (Sunday only)
+      await pool.query(`
+        UPDATE scheduler_settings
+        SET schedule = '0 3 * * *',
+            updated_at = NOW()
+        WHERE job_type = 'signal-full' AND schedule = '0 3 * * 0';
+      `);
+      
+      // Update description if it still mentions "Weekly" or "Sundays"
+      await pool.query(`
+        UPDATE scheduler_settings
+        SET description = 'Daily full signal refresh',
+            updated_at = NOW()
+        WHERE job_type = 'signal-full' 
+          AND (description LIKE '%Weekly%' OR description LIKE '%Sundays%' OR description IS NULL);
+      `);
+      
+      const updateResult = await pool.query(`
+        SELECT schedule, description FROM scheduler_settings 
+        WHERE job_type = 'signal-full';
+      `);
+      if (updateResult.rows.length > 0) {
+        const row = updateResult.rows[0];
+        if (row.schedule === '0 3 * * *' && row.description === 'Daily full signal refresh') {
+          console.log('  ✓ Updated signal-full schedule and description to daily');
+        }
+      }
     }
 
     // ============================================

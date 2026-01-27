@@ -6,6 +6,7 @@ export interface SafeUser {
   name: string;
   role: string;
   otpEnabled: boolean;
+  enabled?: boolean;
   createdAt: Date;
 }
 
@@ -16,6 +17,7 @@ export function sanitizeUser(user: User): SafeUser {
     name: user.name,
     role: user.role,
     otpEnabled: user.otpEnabled,
+    enabled: user.enabled,
     createdAt: user.createdAt
   };
 }

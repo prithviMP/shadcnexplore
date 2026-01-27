@@ -52,13 +52,24 @@ class ScrapingScheduler {
 
     console.log(`[Scheduler] Daily scraping setting: enabled=${dailyScrapingSetting.enabled}, schedule=${dailyScrapingSetting.schedule}`);
 
-    const signalFullSetting = await storage.getSchedulerSetting("signal-full") ||
-      await storage.upsertSchedulerSetting({
+    // Get or create signal-full setting, ensuring description is updated
+    let signalFullSetting = await storage.getSchedulerSetting("signal-full");
+    if (!signalFullSetting) {
+      signalFullSetting = await storage.upsertSchedulerSetting({
         jobType: "signal-full",
-        schedule: "0 3 * * 0",
+        schedule: "0 3 * * *",
         enabled: true,
-        description: "Weekly full signal refresh (Sundays)"
+        description: "Daily full signal refresh"
       });
+    } else if (signalFullSetting.description?.includes("Weekly") || signalFullSetting.description?.includes("Sundays")) {
+      // Update description if it still has old text
+      signalFullSetting = await storage.upsertSchedulerSetting({
+        jobType: "signal-full",
+        schedule: signalFullSetting.schedule,
+        enabled: signalFullSetting.enabled,
+        description: "Daily full signal refresh"
+      });
+    }
 
     // Schedule jobs based on settings
     if (dailyScrapingSetting.enabled) {
@@ -339,7 +350,7 @@ class ScrapingScheduler {
   /**
    * Schedule full signal refresh
    */
-  private scheduleSignalRefreshFull(schedule: string = "0 3 * * 0") {
+  private scheduleSignalRefreshFull(schedule: string = "0 3 * * *") {
     // Stop existing job if it exists
     const existingJob = this.jobs.get("signal-refresh-full");
     if (existingJob) {
@@ -348,7 +359,7 @@ class ScrapingScheduler {
     }
 
     const fullRefreshTask = cronSchedule(schedule, async () => {
-      console.log(`[Scheduler] Starting weekly full signal refresh at ${new Date().toISOString()}`);
+      console.log(`[Scheduler] Starting daily full signal refresh at ${new Date().toISOString()}`);
       
       try {
         const { signalProcessor } = await import("./signalProcessor");
