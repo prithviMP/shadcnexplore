@@ -70,13 +70,23 @@ export function getEmailProvider(): EmailProvider {
     case "smtp":
       try {
         emailProvider = new SmtpProvider();
-      } catch (error) {
-        console.warn("SMTP provider failed to initialize, falling back to mock:", error);
+        console.log("[EMAIL] ✓ SMTP provider initialized successfully");
+      } catch (error: any) {
+        console.error("[EMAIL] ✗ SMTP provider failed to initialize:", error.message);
+        console.error("[EMAIL] Falling back to mock provider. Emails will NOT be sent!");
+        console.error("[EMAIL] Please check your SMTP configuration:");
+        console.error("[EMAIL]   - EMAIL_PROVIDER=smtp");
+        console.error("[EMAIL]   - SMTP_HOST");
+        console.error("[EMAIL]   - SMTP_PORT");
+        console.error("[EMAIL]   - SMTP_USER");
+        console.error("[EMAIL]   - SMTP_PASSWORD");
         emailProvider = new MockEmailProvider();
       }
       break;
     case "mock":
     default:
+      console.warn("[EMAIL] ⚠️  Using MOCK email provider. Emails will NOT be sent!");
+      console.warn("[EMAIL] To enable real emails, set EMAIL_PROVIDER=smtp and configure SMTP credentials");
       emailProvider = new MockEmailProvider();
       break;
   }
@@ -86,7 +96,14 @@ export function getEmailProvider(): EmailProvider {
 
 export async function sendEmail(to: string, subject: string, html: string, text?: string): Promise<void> {
   const provider = getEmailProvider();
-  await provider.sendEmail(to, subject, html, text);
+  try {
+    await provider.sendEmail(to, subject, html, text);
+    console.log(`[EMAIL] ✓ Email sent successfully to: ${to}`);
+  } catch (error: any) {
+    console.error(`[EMAIL] ✗ Failed to send email to ${to}:`, error.message);
+    console.error(`[EMAIL] Error details:`, error);
+    throw error; // Re-throw so caller can handle it
+  }
 }
 
 /**

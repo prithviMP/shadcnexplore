@@ -176,14 +176,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const resetLink = `${appUrl}/reset-password?token=${token}`;
 
         // Send email asynchronously (don't block response if email fails)
-        (async () => {
-          try {
-            await sendPasswordResetEmail(user.email, user.name, resetLink);
-          } catch (emailError) {
-            console.error("Error sending password reset email:", emailError);
-            // Don't fail the request if email fails
-          }
-        })();
+        // Use .catch() to handle errors properly and prevent unhandled promise rejections
+        console.log(`[FORGOT-PASSWORD] Attempting to send password reset email to: ${user.email}`);
+        sendPasswordResetEmail(user.email, user.name, resetLink)
+          .then(() => {
+            console.log(`[FORGOT-PASSWORD] ✓ Password reset email sent successfully to: ${user.email}`);
+          })
+          .catch((emailError: any) => {
+            console.error("[FORGOT-PASSWORD] ✗ Error sending password reset email:", emailError.message);
+            console.error("[FORGOT-PASSWORD] Full error:", emailError);
+            console.error("[FORGOT-PASSWORD] Stack trace:", emailError.stack);
+            console.error("[FORGOT-PASSWORD] Check email configuration:");
+            console.error("[FORGOT-PASSWORD]   - EMAIL_PROVIDER should be 'smtp'");
+            console.error("[FORGOT-PASSWORD]   - SMTP credentials must be configured");
+            // Don't fail the request if email fails (security: don't reveal if user exists)
+          });
       }
 
       // Always return success to prevent email enumeration
