@@ -1318,13 +1318,13 @@ export default function CompanyDetail() {
                             return (
                               <>
                                 {displayFormulaName}
-                                <Badge variant="outline" className="text-[10px] px-1 py-0 ml-1">
+                          <Badge variant="outline" className="text-[10px] px-1 py-0 ml-1">
                                   {displayFormulaSource === "company" 
-                                    ? "Company" 
+                              ? "Company" 
                                     : displayFormulaSource === "sector" 
-                                      ? "Sector" 
-                                      : "Global"}
-                                </Badge>
+                                ? "Sector" 
+                                : "Global"}
+                          </Badge>
                               </>
                             );
                           })()}
@@ -1333,7 +1333,7 @@ export default function CompanyDetail() {
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="default" className="hidden">
-                        Use Default (Global/Sector)
+                          Use Default (Global/Sector)
                       </SelectItem>
                       {formulas?.filter(f => f.enabled).map((formula) => (
                         <SelectItem key={formula.id} value={formula.id}>

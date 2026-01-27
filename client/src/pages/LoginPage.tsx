@@ -154,7 +154,7 @@ export default function LoginPage() {
                       data-testid="input-password"
                     />
                   </div>
-                    <Button 
+                  <Button 
                     type="submit" 
                     className="w-full h-11 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white font-medium shadow-lg" 
                     data-testid="button-email-login"
@@ -169,16 +169,6 @@ export default function LoginPage() {
                         "Sign In"
                       )}
                     </Button>
-                    <div className="text-center mt-2">
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        className="text-sm text-muted-foreground hover:text-foreground h-auto p-0"
-                        onClick={() => setLocation("/forgot-password")}
-                      >
-                        Forgot Password?
-                      </Button>
-                    </div>
                   </form>
                 ) : (
                   <form onSubmit={async (e) => {
@@ -258,9 +248,15 @@ export default function LoginPage() {
                 <div className="text-center space-y-2">
                   {!isSignup ? (
                     <>
-                  <a href="#" className="text-sm text-muted-foreground hover:text-foreground transition-colors">
+                      <div className="text-sm text-muted-foreground">
+                        <button
+                          type="button"
+                          onClick={() => setLocation("/forgot-password")}
+                          className="text-muted-foreground hover:text-foreground transition-colors"
+                        >
                     Forgot password?
-                  </a>
+                        </button>
+                      </div>
                       <div className="text-sm text-muted-foreground">
                         Don't have an account?{" "}
                         <button

@@ -39,8 +39,10 @@ export const DEFAULT_VISIBLE_METRICS: Record<string, boolean> = {
 
 // Default banking-specific metrics configuration
 export const DEFAULT_BANKING_METRICS: Record<string, boolean> = {
+  "Sales": true,
   "Sales Growth(YoY) %": true,
   "Sales Growth(QoQ) %": true,
+  "OPM %": true,
   "Financing Profit": true,
   "Financing Margin %": true,
   "EPS in Rs": true,
@@ -73,8 +75,10 @@ export const DEFAULT_METRICS_ORDER: string[] = [
 
 // Default banking metric order
 export const DEFAULT_BANKING_METRICS_ORDER: string[] = [
+  "Sales",
   "Sales Growth(YoY) %",
   "Sales Growth(QoQ) %",
+  "OPM %",
   "Financing Profit",
   "Financing Margin %",
   "EPS in Rs",

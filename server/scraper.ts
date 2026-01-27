@@ -1944,7 +1944,7 @@ class ScreenerScraper {
       
       if (previousYearQuarter) {
         const previousYearValue = values[previousYearQuarter];
-        
+
         // Calculate growth if previous year value exists and is not null/undefined
         // Note: 0 is a valid value for comparison (can calculate growth from 0)
         if (previousYearValue !== undefined && previousYearValue !== null && !isNaN(previousYearValue)) {
@@ -1952,8 +1952,10 @@ class ScreenerScraper {
           if (previousYearValue === 0) {
             growth.push(null);
           } else {
-            const growthPercent = ((currentValue - previousYearValue) / previousYearValue) * 100;
-            growth.push(parseFloat(growthPercent.toFixed(2)));
+          // Use absolute value of denominator to handle negative-to-positive transitions correctly
+          // This ensures that going from -1.65 to 2.0 shows a positive growth percentage
+          const growthPercent = ((currentValue - previousYearValue) / Math.abs(previousYearValue)) * 100;
+          growth.push(parseFloat(growthPercent.toFixed(2)));
           }
         } else {
           // Previous year quarter exists but value is missing
@@ -2037,15 +2039,17 @@ class ScreenerScraper {
       
       if (previousQuarter) {
         const previousValue = values[previousQuarter];
-        
+
         // Calculate growth if previous quarter value exists and is not null/undefined
         if (previousValue !== undefined && previousValue !== null && !isNaN(previousValue)) {
           // Handle division by zero case - if previous quarter was 0, growth is undefined
           if (previousValue === 0) {
             growth.push(null);
           } else {
-            const growthPercent = ((currentValue - previousValue) / previousValue) * 100;
-            growth.push(parseFloat(growthPercent.toFixed(2)));
+          // Use absolute value of denominator to handle negative-to-positive transitions correctly
+          // This ensures that going from -1.65 to 2.0 shows a positive growth percentage
+          const growthPercent = ((currentValue - previousValue) / Math.abs(previousValue)) * 100;
+          growth.push(parseFloat(growthPercent.toFixed(2)));
           }
         } else {
           // Previous quarter exists but value is missing
