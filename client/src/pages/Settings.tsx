@@ -123,13 +123,22 @@ const DEFAULT_METRICS: Record<string, boolean> = {
 };
 
 // Default banking metrics configuration (must match backend)
+// Includes all default metrics plus banking-specific ones
 const DEFAULT_BANKING_METRICS: Record<string, boolean> = {
   "Sales": true,
   "Sales Growth(YoY) %": true,
   "Sales Growth(QoQ) %": true,
+  "Expenses": false,
+  "Operating Profit": false,
   "OPM %": true,
   "Financing Profit": true,
   "Financing Margin %": true,
+  "Other Income": false,
+  "Interest": false,
+  "Depreciation": false,
+  "Profit before tax": false,
+  "Tax %": false,
+  "Net Profit": false,
   "EPS in Rs": true,
   "EPS Growth(YoY) %": true,
   "EPS Growth(QoQ) %": true,
@@ -162,9 +171,17 @@ const DEFAULT_BANKING_METRICS_ORDER: string[] = [
   "Sales",
   "Sales Growth(YoY) %",
   "Sales Growth(QoQ) %",
+  "Expenses",
+  "Operating Profit",
   "OPM %",
   "Financing Profit",
   "Financing Margin %",
+  "Other Income",
+  "Interest",
+  "Depreciation",
+  "Profit before tax",
+  "Tax %",
+  "Net Profit",
   "EPS in Rs",
   "EPS Growth(YoY) %",
   "EPS Growth(QoQ) %",
@@ -350,12 +367,20 @@ export default function Settings() {
         allSelected[key] = true;
       });
       setLocalMetrics(allSelected);
+      toast({
+        title: "All metrics selected",
+        description: `Selected all ${Object.keys(localMetrics).length} metrics`,
+      });
     } else {
       const allSelected: Record<string, boolean> = {};
       Object.keys(localBankingMetrics).forEach((key) => {
         allSelected[key] = true;
       });
       setLocalBankingMetrics(allSelected);
+      toast({
+        title: "All metrics selected",
+        description: `Selected all ${Object.keys(localBankingMetrics).length} banking metrics`,
+      });
     }
   };
 
@@ -366,12 +391,20 @@ export default function Settings() {
         allDeselected[key] = false;
       });
       setLocalMetrics(allDeselected);
+      toast({
+        title: "All metrics deselected",
+        description: `Deselected all ${Object.keys(localMetrics).length} metrics`,
+      });
     } else {
       const allDeselected: Record<string, boolean> = {};
       Object.keys(localBankingMetrics).forEach((key) => {
         allDeselected[key] = false;
       });
       setLocalBankingMetrics(allDeselected);
+      toast({
+        title: "All metrics deselected",
+        description: `Deselected all ${Object.keys(localBankingMetrics).length} banking metrics`,
+      });
     }
   };
 
@@ -479,10 +512,11 @@ export default function Settings() {
                     className="pl-8"
                   />
                 </div>
-                <Button variant="outline" size="sm" onClick={handleSelectAll}>
+                <Button variant="outline" size="sm" onClick={handleSelectAll} className="font-medium">
+                  <CheckCircle2 className="h-4 w-4 mr-1.5" />
                   Select All
                 </Button>
-                <Button variant="outline" size="sm" onClick={handleDeselectAll}>
+                <Button variant="outline" size="sm" onClick={handleDeselectAll} className="font-medium">
                   Deselect All
                 </Button>
                 <Button variant="outline" size="sm" onClick={resetToDefault}>
@@ -543,10 +577,11 @@ export default function Settings() {
                     className="pl-8"
                   />
                 </div>
-                <Button variant="outline" size="sm" onClick={handleSelectAll}>
+                <Button variant="outline" size="sm" onClick={handleSelectAll} className="font-medium">
+                  <CheckCircle2 className="h-4 w-4 mr-1.5" />
                   Select All
                 </Button>
-                <Button variant="outline" size="sm" onClick={handleDeselectAll}>
+                <Button variant="outline" size="sm" onClick={handleDeselectAll} className="font-medium">
                   Deselect All
                 </Button>
                 <Button variant="outline" size="sm" onClick={resetToDefault}>

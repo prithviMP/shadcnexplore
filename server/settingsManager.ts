@@ -38,13 +38,22 @@ export const DEFAULT_VISIBLE_METRICS: Record<string, boolean> = {
 };
 
 // Default banking-specific metrics configuration
+// Includes all default metrics plus banking-specific ones
 export const DEFAULT_BANKING_METRICS: Record<string, boolean> = {
   "Sales": true,
   "Sales Growth(YoY) %": true,
   "Sales Growth(QoQ) %": true,
+  "Expenses": false,
+  "Operating Profit": false,
   "OPM %": true,
   "Financing Profit": true,
   "Financing Margin %": true,
+  "Other Income": false,
+  "Interest": false,
+  "Depreciation": false,
+  "Profit before tax": false,
+  "Tax %": false,
+  "Net Profit": false,
   "EPS in Rs": true,
   "EPS Growth(YoY) %": true,
   "EPS Growth(QoQ) %": true,
@@ -73,14 +82,22 @@ export const DEFAULT_METRICS_ORDER: string[] = [
   "Gross NPA %"
 ];
 
-// Default banking metric order
+// Default banking metric order (same as default metrics order)
 export const DEFAULT_BANKING_METRICS_ORDER: string[] = [
   "Sales",
   "Sales Growth(YoY) %",
   "Sales Growth(QoQ) %",
+  "Expenses",
+  "Operating Profit",
   "OPM %",
   "Financing Profit",
   "Financing Margin %",
+  "Other Income",
+  "Interest",
+  "Depreciation",
+  "Profit before tax",
+  "Tax %",
+  "Net Profit",
   "EPS in Rs",
   "EPS Growth(YoY) %",
   "EPS Growth(QoQ) %",
@@ -218,10 +235,32 @@ export async function loadBankingMetrics(): Promise<Record<string, boolean>> {
     const storage = await getDbStorage();
     const setting = await storage.getAppSetting("default_metrics_banking");
     
+    let bankingMetrics: Record<string, boolean> = DEFAULT_BANKING_METRICS;
+    
     if (setting && setting.value && typeof setting.value === 'object') {
-      const metrics = setting.value as Record<string, boolean>;
-      if (Object.keys(metrics).length > 0) {
-        return metrics;
+      bankingMetrics = setting.value as Record<string, boolean>;
+      
+      // Ensure "Sales" is always included and enabled for banking companies
+      // This fixes existing records that might not have "Sales" enabled
+      if (!bankingMetrics.hasOwnProperty("Sales")) {
+        bankingMetrics["Sales"] = true;
+      } else if (bankingMetrics["Sales"] === false) {
+        // If Sales exists but is disabled, enable it
+        bankingMetrics["Sales"] = true;
+      }
+      
+      // Ensure all default metrics are present (merge with defaults)
+      // This ensures new metrics added to defaults are available
+      const mergedMetrics = { ...DEFAULT_BANKING_METRICS, ...bankingMetrics };
+      
+      // If we had to add Sales or merge metrics, save the updated version
+      if (JSON.stringify(mergedMetrics) !== JSON.stringify(bankingMetrics)) {
+        await saveBankingMetrics(mergedMetrics);
+        return mergedMetrics;
+      }
+      
+      if (Object.keys(bankingMetrics).length > 0) {
+        return bankingMetrics;
       }
     }
     

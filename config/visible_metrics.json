@@ -9,12 +9,12 @@
   "Gross NPA %": false,
   "Depreciation": false,
   "Other Income": false,
-  "Financing Profit": false,
+  "Financing Profit": true,
   "Operating Profit": false,
   "EPS Growth(QoQ) %": true,
   "EPS Growth(YoY) %": true,
   "Profit before tax": false,
-  "Financing Margin %": false,
+  "Financing Margin %": true,
   "Sales Growth(QoQ) %": true,
   "Sales Growth(YoY) %": true
 }
