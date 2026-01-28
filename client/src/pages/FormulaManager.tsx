@@ -319,11 +319,14 @@ export default function FormulaManager() {
       
       return replaceData;
     },
-    onSuccess: (data: { companiesAffected: number; sectorsAffected: number; message: string }) => {
+    onSuccess: async (data: { companiesAffected: number; sectorsAffected: number; message: string }) => {
+      // Invalidate and refetch to ensure UI updates immediately
       queryClient.invalidateQueries({ queryKey: ["/api/formulas"] });
       queryClient.invalidateQueries({ queryKey: ["/api/sectors"] });
       queryClient.invalidateQueries({ queryKey: ["/api/companies"] });
       queryClient.invalidateQueries({ queryKey: ["/api/signals"] });
+      // Refetch formulas to get updated priorities
+      await queryClient.refetchQueries({ queryKey: ["/api/formulas"] });
       toast({
         title: "Main formula replaced and deleted",
         description: data.message,
@@ -391,11 +394,14 @@ export default function FormulaManager() {
       const res = await apiRequest("POST", "/api/formulas/reset-all-to-global", { formulaId: formulaId || null });
       return res.json();
     },
-    onSuccess: (data: { companiesAffected: number; sectorsAffected: number; message: string }) => {
+    onSuccess: async (data: { companiesAffected: number; sectorsAffected: number; message: string }) => {
+      // Invalidate and refetch to ensure UI updates immediately
       queryClient.invalidateQueries({ queryKey: ["/api/formulas"] });
       queryClient.invalidateQueries({ queryKey: ["/api/sectors"] });
       queryClient.invalidateQueries({ queryKey: ["/api/companies"] });
       queryClient.invalidateQueries({ queryKey: ["/api/signals"] });
+      // Refetch formulas to get updated priorities
+      await queryClient.refetchQueries({ queryKey: ["/api/formulas"] });
       setResetToGlobalDialogOpen(false);
       setSelectedGlobalFormulaId("");
       toast({

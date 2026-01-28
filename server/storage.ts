@@ -62,7 +62,7 @@ import {
   sectorSchedules,
   type AppSettings
 } from "@shared/schema";
-import { eq, and, inArray, desc, sql, gte, lte, lt, or, isNull, max } from "drizzle-orm";
+import { eq, and, inArray, desc, sql, gte, lte, lt, or, isNull, max, ne } from "drizzle-orm";
 import { randomBytes } from "crypto";
 
 export interface IStorage {
@@ -588,10 +588,18 @@ export class DbStorage implements IStorage {
       .returning({ id: signals.id });
 
     // If the new formula is not global, make it global so it becomes the main formula
+    // Also transfer the old formula's priority to make it the active global formula
     if (newFormula.scope !== "global") {
       await db.update(formulas).set({ 
         scope: "global", 
         scopeValue: null,
+        priority: oldFormula.priority, // Transfer priority to make it the active global formula
+        updatedAt: new Date() 
+      }).where(eq(formulas.id, newFormulaId));
+    } else {
+      // If already global, update priority to match old formula's priority
+      await db.update(formulas).set({ 
+        priority: oldFormula.priority, // Transfer priority to make it the active global formula
         updatedAt: new Date() 
       }).where(eq(formulas.id, newFormulaId));
     }
@@ -1465,6 +1473,39 @@ export class DbStorage implements IStorage {
       // If formulaId is provided, assign it to all companies/sectors
       // Otherwise, clear all assignments (set to null to use global formula)
       const assignedFormulaId = formulaId || null;
+
+      // If a specific formula is provided, ensure it's global and has the lowest priority
+      if (assignedFormulaId) {
+        const formula = await this.getFormula(assignedFormulaId);
+        if (formula) {
+          // Get the current lowest priority among global formulas (excluding the one we're updating)
+          const allGlobalFormulas = await db
+            .select()
+            .from(formulas)
+            .where(and(
+              eq(formulas.scope, "global"), 
+              eq(formulas.enabled, true),
+              ne(formulas.id, assignedFormulaId) // Exclude the formula we're updating
+            ));
+          
+          const lowestPriority = allGlobalFormulas.length > 0
+            ? Math.min(...allGlobalFormulas.map(f => f.priority))
+            : 0;
+
+          // Ensure the selected formula is global and has the lowest priority (or lower)
+          const updates: any = { updatedAt: new Date() };
+          if (formula.scope !== "global") {
+            updates.scope = "global";
+            updates.scopeValue = null;
+          }
+          // Set priority to be lower than the current lowest (or 0 if it's the first)
+          updates.priority = lowestPriority > 0 ? lowestPriority - 1 : 0;
+
+          await db.update(formulas)
+            .set(updates)
+            .where(eq(formulas.id, assignedFormulaId));
+        }
+      }
 
       // Update all companies (those with assignments and those without, to ensure consistency)
       const companiesResult = await db
