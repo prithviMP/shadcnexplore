@@ -2014,12 +2014,18 @@ export default function SectorsList() {
                     <div className="flex items-center gap-2">
                       <span className="text-xs text-muted-foreground">Sector Formula:</span>
                       <Select
-                        value={sectors?.find(s => s.id === displaySectorId)?.assignedFormulaId || "default"}
+                        value={(() => {
+                          const sector = sectors?.find(s => s.id === displaySectorId);
+                          // If there's an assigned formula, use it; otherwise use the effective formula's ID (so it matches an item)
+                          return sector?.assignedFormulaId || activeSectorFormula?.id || "";
+                        })()}
                         onValueChange={(value) => {
-                          const formulaId = value === "default" ? null : value;
+                          const sector = sectors?.find(s => s.id === displaySectorId);
+                          // If selecting the currently effective formula and it's not assigned, assign it explicitly
+                          // This allows users to "lock in" the effective formula as an explicit assignment
                           assignFormulaToSectorMutation.mutate({
                             sectorId: displaySectorId,
-                            formulaId
+                            formulaId: value
                           });
                         }}
                         disabled={assignFormulaToSectorMutation.isPending}
@@ -2031,14 +2037,11 @@ export default function SectorsList() {
                               const assignedFormula = sector?.assignedFormulaId 
                                 ? formulas.find(f => f.id === sector.assignedFormulaId)
                                 : null;
-                              return assignedFormula?.name || "Default (Global)";
+                              return assignedFormula?.name || activeSectorFormula?.name || "No Formula";
                             })()}
                           </SelectValue>
                         </SelectTrigger>
                         <SelectContent>
-                          <SelectItem value="default">
-                            Use Default (Global Formula)
-                          </SelectItem>
                           {formulas.filter(f => f.enabled).map((formula) => (
                             <SelectItem key={formula.id} value={formula.id}>
                               {formula.name} ({formula.signal})

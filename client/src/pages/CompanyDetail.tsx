@@ -1295,10 +1295,14 @@ export default function CompanyDetail() {
                 <div className="flex items-center gap-2">
                   <Calculator className="h-3.5 w-3.5 text-muted-foreground" />
                   <Select
-                    value={signalsData?.assignedFormulaId || "default"}
+                    value={(() => {
+                      // If there's an assigned formula, use it; otherwise use the effective formula's ID (so it matches an item)
+                      return signalsData?.assignedFormulaId || activeFormulaForPage?.id || "";
+                    })()}
                     onValueChange={(value) => {
-                      const formulaId = value === "default" ? null : value;
-                      assignFormulaMutation.mutate(formulaId);
+                      // If selecting the currently effective formula and it's not assigned, assign it explicitly
+                      // This allows users to "lock in" the effective formula as an explicit assignment
+                      assignFormulaMutation.mutate(value);
                     }}
                     disabled={assignFormulaMutation.isPending}
                   >
@@ -1310,7 +1314,7 @@ export default function CompanyDetail() {
                             const assignedFormula = signalsData?.assignedFormulaId 
                               ? formulas?.find(f => f.id === signalsData.assignedFormulaId)
                               : null;
-                            const displayFormulaName = assignedFormula?.name || signalsData?.effectiveFormula?.name || activeFormulaForPage?.name || "Default";
+                            const displayFormulaName = assignedFormula?.name || signalsData?.effectiveFormula?.name || activeFormulaForPage?.name || "No Formula";
                             const displayFormulaSource = assignedFormula ? "company" : (signalsData?.formulaSource || "global");
                             return (
                               <>
@@ -1329,9 +1333,6 @@ export default function CompanyDetail() {
                       </SelectValue>
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="default" className="hidden">
-                          Use Default (Global/Sector)
-                      </SelectItem>
                       {formulas?.filter(f => f.enabled).map((formula) => (
                         <SelectItem key={formula.id} value={formula.id}>
                           {formula.name} ({formula.signal})
