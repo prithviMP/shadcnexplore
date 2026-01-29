@@ -246,12 +246,26 @@ export default function Settings() {
       });
     }
     
-    // Update metric orders
+    // Update metric orders - only if they're different from current local state
+    // This prevents overwriting unsaved drag-and-drop changes
     if (metricsData?.metricsOrder && metricsData.metricsOrder.length > 0) {
-      setLocalMetricsOrder(metricsData.metricsOrder);
+      setLocalMetricsOrder(prev => {
+        // Only update if the order is actually different
+        if (JSON.stringify(prev) !== JSON.stringify(metricsData.metricsOrder)) {
+          return metricsData.metricsOrder;
+        }
+        return prev;
+      });
     }
     if (metricsData?.bankingMetricsOrder && metricsData.bankingMetricsOrder.length > 0) {
-      setLocalBankingMetricsOrder(metricsData.bankingMetricsOrder);
+      setLocalBankingMetricsOrder(prev => {
+        // Only update if the order is actually different
+        // This prevents the order from being reset when metricsData changes due to other updates
+        if (JSON.stringify(prev) !== JSON.stringify(metricsData.bankingMetricsOrder)) {
+          return metricsData.bankingMetricsOrder;
+        }
+        return prev;
+      });
     }
   }, [metricsData, isLoading]);
 
