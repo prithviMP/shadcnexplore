@@ -195,22 +195,20 @@ export class FormulaEvaluator {
       }
     }
 
-    // Priority 3: Fall back to global formulas (use the one with lowest priority number, i.e., highest priority)
+    // Priority 3: Fall back to global formulas (use the one marked as active)
     if (applicableFormulas.length === 0) {
       console.log(`[SIGNAL] No company/sector assignment found, using global formulas`);
       const enabledFormulas = formulas.filter(f => f.enabled);
-      console.log(`[SIGNAL] Enabled formulas: ${enabledFormulas.map(f => `${f.name} (${f.scope}${f.scopeValue ? `:${f.scopeValue}` : ''}, priority:${f.priority})`).join(', ')}`);
+      console.log(`[SIGNAL] Enabled formulas: ${enabledFormulas.map(f => `${f.name} (${f.scope}${f.scopeValue ? `:${f.scopeValue}` : ''}, isActiveGlobal:${f.isActiveGlobal})`).join(', ')}`);
       
-      // Get global formulas only, sorted by priority (lower number = higher priority)
-      const globalFormulas = enabledFormulas
-        .filter(f => f.scope === "global")
-        .sort((a, b) => a.priority - b.priority); // Lower priority number = higher priority
+      // Get the active global formula
+      const activeGlobalFormula = enabledFormulas.find(f => f.scope === "global" && f.isActiveGlobal);
       
-      if (globalFormulas.length > 0) {
-        applicableFormulas = [globalFormulas[0]]; // Use the highest priority global formula (lowest priority number)
-        console.log(`[SIGNAL] Selected global formula: "${applicableFormulas[0].name}" (priority: ${applicableFormulas[0].priority})`);
+      if (activeGlobalFormula) {
+        applicableFormulas = [activeGlobalFormula];
+        console.log(`[SIGNAL] Selected active global formula: "${activeGlobalFormula.name}"`);
       } else {
-        console.log(`[SIGNAL] No enabled global formulas found`);
+        console.log(`[SIGNAL] No active global formula found`);
       }
     }
 

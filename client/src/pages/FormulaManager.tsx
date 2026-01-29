@@ -97,13 +97,9 @@ export default function FormulaManager() {
     return map;
   }, [sectors]);
 
-  // Determine the active global formula (lowest priority number = highest priority)
+  // Determine the active global formula (using isActiveGlobal flag)
   const activeGlobalFormula = useMemo(() => {
-    const globalFormulas = formulas
-      .filter(f => f.scope === "global" && f.enabled)
-      .sort((a, b) => a.priority - b.priority); // Lower priority number = higher priority
-    
-    return globalFormulas.length > 0 ? globalFormulas[0] : null;
+    return formulas.find(f => f.scope === "global" && f.enabled && f.isActiveGlobal) || null;
   }, [formulas]);
 
   // Count companies using each formula

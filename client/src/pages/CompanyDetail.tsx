@@ -213,11 +213,8 @@ export default function CompanyDetail() {
   // Get applicable formula (entity-specific > global)
   const globalFormula = useMemo(() => {
     if (!formulas) return null;
-    // Find enabled global formulas, sorted by priority (lower priority = higher precedence)
-    const globalFormulas = formulas
-      .filter(f => f.enabled && f.scope === "global")
-      .sort((a, b) => a.priority - b.priority);
-    return globalFormulas[0] || null;
+    // Find the active global formula
+    return formulas.find(f => f.enabled && f.scope === "global" && f.isActiveGlobal) || null;
   }, [formulas]);
 
   // Get active formula: entity-specific > global

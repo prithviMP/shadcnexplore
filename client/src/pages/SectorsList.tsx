@@ -139,13 +139,10 @@ export default function SectorsList() {
     queryKey: ["/api/formulas"],
   });
 
-  // Get global formula as fallback
+  // Get active global formula as fallback
   const globalFormula = useMemo(() => {
     if (!formulas) return null;
-    const globalFormulas = formulas
-      .filter(f => f.enabled && f.scope === "global")
-      .sort((a, b) => a.priority - b.priority);
-    return globalFormulas[0] || null;
+    return formulas.find(f => f.enabled && f.scope === "global" && f.isActiveGlobal) || null;
   }, [formulas]);
 
   // If route has sectorId, use it; otherwise check if it's a sector name and find the ID

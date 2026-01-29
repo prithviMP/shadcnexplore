@@ -865,9 +865,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const assignedFormula = await storage.getAssignedFormulaForSector(req.params.id);
 
-      // Get the global/default formula
+      // Get the active global formula
       const allFormulas = await storage.getAllFormulas();
-      const globalFormula = allFormulas.find(f => f.scope === "global" && f.enabled) || null;
+      const globalFormula = allFormulas.find(f => f.scope === "global" && f.enabled && f.isActiveGlobal) || null;
 
       res.json({
         sectorId: sector.id,
@@ -1481,9 +1481,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         sectorFormula = await storage.getAssignedFormulaForSector(company.sectorId);
       }
 
-      // Get the global/default formula (Main Signal Formula)
+      // Get the active global formula (Main Signal Formula)
       const allFormulas = await storage.getAllFormulas();
-      const globalFormula = allFormulas.find(f => f.scope === "global" && f.enabled) || null;
+      const globalFormula = allFormulas.find(f => f.scope === "global" && f.enabled && f.isActiveGlobal) || null;
 
       res.json({
         companyId: company.id,
@@ -1600,8 +1600,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // If still no assignment, get global formula
       if (!effectiveFormula) {
         const allFormulas = await storage.getAllFormulas();
-        effectiveFormula = allFormulas.find(f => f.scope === "global" && f.enabled && f.priority === 0) 
-          || allFormulas.find(f => f.scope === "global" && f.enabled)
+        effectiveFormula = allFormulas.find(f => f.scope === "global" && f.enabled && f.isActiveGlobal) 
           || null;
       }
 
@@ -1860,22 +1859,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const companiesWithThisFormula = allCompanies.filter(c => c.assignedFormulaId === formula.id);
         const assignedCompanyIds = companiesWithThisFormula.map(c => c.id);
         
-        // 2. For global formulas, we'd need to check if this is the highest priority global formula
-        // Since this is complex and global formulas affect many companies, 
-        // we'll recalculate all companies that don't have explicit formula assignments
-        // (those using global formulas) + companies explicitly assigned to this formula
-        const { formulas: formulasTable } = await import("@shared/schema");
-        const allFormulas = await storage.getAllFormulas();
-        const globalFormulas = allFormulas
-          .filter(f => f.enabled && f.scope === "global")
-          .sort((a, b) => a.priority - b.priority);
+        // 2. For global formulas, check if this is the active global formula
+        const isActiveGlobalFormula = formula.scope === "global" && formula.isActiveGlobal;
         
-        const isHighestPriorityGlobal = globalFormulas.length > 0 && globalFormulas[0].id === formula.id;
-        
-        if (isHighestPriorityGlobal || assignedCompanyIds.length > 0) {
-          // If this is the highest priority global formula or has explicit assignments,
+        if (isActiveGlobalFormula || assignedCompanyIds.length > 0) {
+          // If this is the active global formula or has explicit assignments,
           // recalculate all companies (those with assignments + those using global formulas)
-          // For simplicity, recalculate all companies when a global formula changes
+          // For simplicity, recalculate all companies when the active global formula changes
           // Can be optimized later with better tracking
           affectedCompanyIds = allCompanies.map(c => c.id);
         } else {
@@ -3251,7 +3241,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
           if (scoreA !== scoreB) {
             return scoreB - scoreA; // Higher score first
           }
-          // Then by priority (lower number = higher priority)
+          // For global formulas, prioritize the active one
+          if (a.scope === "global" && b.scope === "global") {
+            if (a.isActiveGlobal && !b.isActiveGlobal) return -1;
+            if (!a.isActiveGlobal && b.isActiveGlobal) return 1;
+          }
+          // Then by priority (lower number = higher priority) for non-global or when both have same active status
           return a.priority - b.priority;
         });
 

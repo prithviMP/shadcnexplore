@@ -83,6 +83,7 @@ export const formulas = pgTable("formulas", {
   signal: text("signal").notNull(),
   priority: integer("priority").notNull().default(999),
   enabled: boolean("enabled").notNull().default(true),
+  isActiveGlobal: boolean("is_active_global").notNull().default(false), // Only one global formula can be active at a time
   formulaType: text("formula_type").default("simple"), // 'simple' | 'excel' - Excel formulas use Q12-Q16, P12-P16
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
