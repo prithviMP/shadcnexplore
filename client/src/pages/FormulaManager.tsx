@@ -750,32 +750,35 @@ export default function FormulaManager() {
       </AlertDialog>
 
       {/* Reset All to Global Dialog */}
-      <AlertDialog open={resetToGlobalDialogOpen} onOpenChange={setResetToGlobalDialogOpen}>
+      <AlertDialog open={resetToGlobalDialogOpen} onOpenChange={(open) => {
+        setResetToGlobalDialogOpen(open);
+        // Set default to active global formula when dialog opens
+        if (open && activeGlobalFormula) {
+          setSelectedGlobalFormulaId(activeGlobalFormula.id);
+        } else if (!open) {
+          setSelectedGlobalFormulaId("");
+        }
+      }}>
         <AlertDialogContent className="max-w-md">
           <AlertDialogHeader>
             <AlertDialogTitle>Reset All to Global Formula</AlertDialogTitle>
             <AlertDialogDescription className="space-y-4">
               <p>
-                This will reset all formula assignments for companies and sectors. You can either:
+                This will reset all formula assignments for companies and sectors to use the selected global formula.
               </p>
-              <ul className="list-disc list-inside space-y-1 text-sm">
-                <li>Clear all assignments (use "No Formula" option) - Companies and sectors will use the default global formula based on priority</li>
-                <li>Assign a specific global formula to all companies and sectors</li>
-              </ul>
               <div className="space-y-2 pt-2">
-                <label className="text-sm font-medium">Select global formula (or choose "No Formula" to clear assignments):</label>
+                <label className="text-sm font-medium">Select global formula:</label>
                 <Select
-                  value={selectedGlobalFormulaId || "none"}
-                  onValueChange={(value) => setSelectedGlobalFormulaId(value === "none" ? "" : value)}
+                  value={selectedGlobalFormulaId || ""}
+                  onValueChange={(value) => setSelectedGlobalFormulaId(value)}
                 >
                   <SelectTrigger>
-                    <SelectValue placeholder="No Formula (use default global)" />
+                    <SelectValue placeholder="Select a global formula" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="none">No Formula (use default global)</SelectItem>
                     {formulas?.filter(f => f.scope === "global" && f.enabled).map((formula) => (
                       <SelectItem key={formula.id} value={formula.id}>
-                        {formula.name} (Priority: {formula.priority})
+                        {formula.name} {formula.isActiveGlobal && "(Active Global)"}
                       </SelectItem>
                     ))}
                     {(!formulas || formulas.filter(f => f.scope === "global" && f.enabled).length === 0) && (
@@ -796,11 +799,6 @@ export default function FormulaManager() {
                     return null;
                   })()
                 )}
-                {!selectedGlobalFormulaId && (
-                  <p className="text-sm text-amber-600 dark:text-amber-400 mt-2">
-                    ✓ Will clear all formula assignments. Companies and sectors will use the default global formula based on priority.
-                  </p>
-                )}
               </div>
               <div className="bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800 rounded-md p-3 mt-4">
                 <p className="text-sm text-amber-800 dark:text-amber-200 font-medium">⚠️ Warning</p>
@@ -816,7 +814,7 @@ export default function FormulaManager() {
             </AlertDialogCancel>
             <AlertDialogAction
               onClick={() => resetAllToGlobal.mutate(selectedGlobalFormulaId || null)}
-              disabled={resetAllToGlobal.isPending}
+              disabled={resetAllToGlobal.isPending || !selectedGlobalFormulaId}
               className="bg-orange-600 hover:bg-orange-700"
             >
               {resetAllToGlobal.isPending ? (
