@@ -292,17 +292,30 @@ export default function Settings() {
     },
     onSuccess: (data) => {
       // Update local state with saved metrics to ensure consistency
+      // But preserve the order we just saved (don't overwrite with server response if it's the same)
       if (data.metrics) {
         setLocalMetrics(data.metrics);
       }
       if (data.bankingMetrics) {
         setLocalBankingMetrics(data.bankingMetrics);
       }
+      // Only update order if it's actually different from what we have locally
+      // This prevents the order from being reset when the server response comes back
       if (data.metricsOrder) {
-        setLocalMetricsOrder(data.metricsOrder);
+        setLocalMetricsOrder(prev => {
+          if (JSON.stringify(prev) !== JSON.stringify(data.metricsOrder)) {
+            return data.metricsOrder;
+          }
+          return prev;
+        });
       }
       if (data.bankingMetricsOrder) {
-        setLocalBankingMetricsOrder(data.bankingMetricsOrder);
+        setLocalBankingMetricsOrder(prev => {
+          if (JSON.stringify(prev) !== JSON.stringify(data.bankingMetricsOrder)) {
+            return data.bankingMetricsOrder;
+          }
+          return prev;
+        });
       }
       toast({
         title: "Settings saved",
@@ -335,7 +348,12 @@ export default function Settings() {
     if (activeTab === "default") {
       saveMutation.mutate({ metrics: localMetrics, metricsOrder: localMetricsOrder });
     } else {
-      saveMutation.mutate({ bankingMetrics: localBankingMetrics, bankingMetricsOrder: localBankingMetricsOrder });
+      // Always include the current order when saving banking metrics
+      // This ensures the order is saved even if only metrics visibility changed
+      saveMutation.mutate({ 
+        bankingMetrics: localBankingMetrics, 
+        bankingMetricsOrder: localBankingMetricsOrder 
+      });
     }
   };
 
@@ -348,13 +366,19 @@ export default function Settings() {
         setLocalMetricsOrder((items) => {
           const oldIndex = items.indexOf(active.id as string);
           const newIndex = items.indexOf(over.id as string);
-          return arrayMove(items, oldIndex, newIndex);
+          if (oldIndex === -1 || newIndex === -1) return items; // Safety check
+          const newOrder = arrayMove(items, oldIndex, newIndex);
+          console.log("[Settings] Reordered default metrics:", { from: oldIndex, to: newIndex, metric: active.id, newOrder });
+          return newOrder;
         });
       } else {
         setLocalBankingMetricsOrder((items) => {
           const oldIndex = items.indexOf(active.id as string);
           const newIndex = items.indexOf(over.id as string);
-          return arrayMove(items, oldIndex, newIndex);
+          if (oldIndex === -1 || newIndex === -1) return items; // Safety check
+          const newOrder = arrayMove(items, oldIndex, newIndex);
+          console.log("[Settings] Reordered banking metrics:", { from: oldIndex, to: newIndex, metric: active.id, newOrder });
+          return newOrder;
         });
       }
     }
