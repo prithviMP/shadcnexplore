@@ -349,10 +349,15 @@ export default function Settings() {
       saveMutation.mutate({ metrics: localMetrics, metricsOrder: localMetricsOrder });
     } else {
       // Always include the current order when saving banking metrics
-      // This ensures the order is saved even if only metrics visibility changed
+      // Ensure "Sales" is at the top before saving (backend will also enforce this)
+      const normalizedBankingOrder = (() => {
+        const orderWithoutSales = localBankingMetricsOrder.filter(metric => metric !== "Sales");
+        return ["Sales", ...orderWithoutSales];
+      })();
+      
       saveMutation.mutate({ 
         bankingMetrics: localBankingMetrics, 
-        bankingMetricsOrder: localBankingMetricsOrder 
+        bankingMetricsOrder: normalizedBankingOrder 
       });
     }
   };
@@ -452,16 +457,33 @@ export default function Settings() {
   const currentSearchTerm = activeTab === "default" ? searchTerm : bankingSearchTerm;
   
   // Create ordered list of metrics that includes all metrics
+  // For banking metrics, ensure "Sales" is always at the top
   const orderedMetricsList = useMemo(() => {
-    const metricsInOrder = [...currentOrder];
+    let metricsInOrder = [...currentOrder];
+    
+    // For banking tab, ensure "Sales" is always at the top
+    if (activeTab === "banking") {
+      // Remove "Sales" from its current position (if present)
+      metricsInOrder = metricsInOrder.filter(metric => metric !== "Sales");
+      // Always put "Sales" at the top
+      metricsInOrder = ["Sales", ...metricsInOrder];
+    }
+    
     // Add any metrics not in the order array
     Object.keys(currentMetrics).forEach(metric => {
       if (!metricsInOrder.includes(metric)) {
         metricsInOrder.push(metric);
       }
     });
+    
+    // For banking, ensure "Sales" is still at the top after adding missing metrics
+    if (activeTab === "banking" && metricsInOrder[0] !== "Sales") {
+      metricsInOrder = metricsInOrder.filter(metric => metric !== "Sales");
+      metricsInOrder = ["Sales", ...metricsInOrder];
+    }
+    
     return metricsInOrder;
-  }, [currentOrder, currentMetrics]);
+  }, [currentOrder, currentMetrics, activeTab]);
   
   // Filter metrics based on search term while maintaining order
   const filteredMetrics = useMemo(() => {

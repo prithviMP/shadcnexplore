@@ -347,37 +347,64 @@ export async function saveMetricsOrder(order: string[]): Promise<boolean> {
 
 /**
  * Load banking metrics order from database
+ * Ensures "Sales" is always at the top
  */
 export async function loadBankingMetricsOrder(): Promise<string[]> {
   try {
     const storage = await getDbStorage();
     const setting = await storage.getAppSetting("banking_metrics_order");
     
+    let order: string[] = [];
+    
     if (setting && setting.value && Array.isArray(setting.value)) {
-      const order = setting.value as string[];
-      if (order.length > 0) {
-        return order;
-      }
+      order = setting.value as string[];
     }
     
-    // If not in database, initialize with defaults
-    await saveBankingMetricsOrder(DEFAULT_BANKING_METRICS_ORDER);
-    return DEFAULT_BANKING_METRICS_ORDER;
+    // If no order in database, use defaults
+    if (order.length === 0) {
+      order = [...DEFAULT_BANKING_METRICS_ORDER];
+    }
+    
+    // Ensure "Sales" is always at the top
+    const normalizedOrder = normalizeBankingMetricsOrder(order);
+    
+    // If we had to normalize, save the corrected order
+    if (JSON.stringify(normalizedOrder) !== JSON.stringify(order)) {
+      await saveBankingMetricsOrder(normalizedOrder);
+      return normalizedOrder;
+    }
+    
+    return normalizedOrder;
   } catch (error: any) {
     console.error("Error loading banking metrics order from database:", error);
-    return DEFAULT_BANKING_METRICS_ORDER;
+    return normalizeBankingMetricsOrder(DEFAULT_BANKING_METRICS_ORDER);
   }
 }
 
 /**
+ * Normalize banking metrics order to ensure "Sales" is always at the top
+ */
+function normalizeBankingMetricsOrder(order: string[]): string[] {
+  // Remove "Sales" from its current position (if present)
+  const filteredOrder = order.filter(metric => metric !== "Sales");
+  
+  // Always put "Sales" at the top
+  return ["Sales", ...filteredOrder];
+}
+
+/**
  * Save banking metrics order to database
+ * Ensures "Sales" is always at the top before saving
  */
 export async function saveBankingMetricsOrder(order: string[]): Promise<boolean> {
   try {
+    // Normalize the order to ensure "Sales" is at the top
+    const normalizedOrder = normalizeBankingMetricsOrder(order);
+    
     const storage = await getDbStorage();
     await storage.setAppSetting(
       "banking_metrics_order",
-      order,
+      normalizedOrder,
       "Display order for banking metrics"
     );
     return true;

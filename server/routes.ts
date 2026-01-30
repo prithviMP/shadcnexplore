@@ -4043,6 +4043,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       
       // Save banking metrics order if provided
+      // Note: saveBankingMetricsOrder will automatically ensure "Sales" is at the top
       if (bankingMetricsOrder !== undefined) {
         try {
           const { saveBankingMetricsOrder } = await import("./settingsManager");
