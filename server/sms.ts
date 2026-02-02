@@ -106,7 +106,7 @@ export function getSmsProvider(): SmsProvider {
 
 export async function sendOtpSms(phone: string, code: string): Promise<void> {
   const provider = getSmsProvider();
-  const message = `Your FinAnalytics verification code is: ${code}. Valid for 10 minutes.`;
+  const message = `Your myBiniyog Valora verification code is: ${code}. Valid for 10 minutes.`;
   await provider.sendSms(phone, message);
 }
 

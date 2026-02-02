@@ -1,4 +1,5 @@
-import { LayoutDashboard, Building2, TrendingUp, Table, Search, Users, Settings, Building, Briefcase, LogOut, Clock, Sliders, Shield } from "lucide-react";
+import { LayoutDashboard, Building2, Table, Search, Users, Settings, Building, Briefcase, LogOut, Clock, Sliders, Shield } from "lucide-react";
+import Logo from "@/components/Logo";
 import {
   Sidebar,
   SidebarContent,
@@ -64,11 +65,9 @@ export default function AppSidebar({ userRole = "admin", userName = "Admin User"
     <Sidebar>
       <SidebarHeader className="p-4 border-b">
         <div className="flex items-center gap-2">
-          <div className="h-8 w-8 rounded-md bg-primary flex items-center justify-center">
-            <TrendingUp className="h-5 w-5 text-primary-foreground" />
-          </div>
+          <Logo size="md" className="rounded-md" />
           <div>
-            <h2 className="font-semibold text-sm">FinAnalytics</h2>
+            <h2 className="font-semibold text-sm">myBiniyog Valora</h2>
             <p className="text-xs text-muted-foreground">Financial Screener</p>
           </div>
         </div>

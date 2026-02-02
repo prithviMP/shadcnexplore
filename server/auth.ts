@@ -29,7 +29,7 @@ export function verifyOTP(token: string, secret: string): boolean {
 }
 
 export function generateOTPAuthURL(email: string, secret: string): string {
-  return authenticator.keyuri(email, "FinAnalytics", secret);
+  return authenticator.keyuri(email, "myBiniyog Valora", secret);
 }
 
 export async function createUserSession(userId: string): Promise<string> {

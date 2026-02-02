@@ -138,7 +138,7 @@ export async function sendWelcomeEmail(
     <body>
       <div class="container">
         <div class="header">
-          <h1>Welcome to FinAnalytics</h1>
+          <h1>Welcome to myBiniyog Valora</h1>
         </div>
         <div class="content">
           <p>Hello ${userName},</p>
@@ -176,7 +176,7 @@ export async function sendWelcomeEmail(
   `;
 
   const text = `
-Welcome to FinAnalytics
+Welcome to myBiniyog Valora
 
 Hello ${userName},
 
@@ -195,7 +195,7 @@ If you have any questions, please contact your administrator.
 This is an automated message. Please do not reply to this email.
   `;
 
-  await sendEmail(userEmail, "Welcome to FinAnalytics - Your Account Credentials", html, text);
+  await sendEmail(userEmail, "Welcome to myBiniyog Valora - Your Account Credentials", html, text);
 }
 
 /**
@@ -231,7 +231,7 @@ export async function sendAdminNotificationEmail(
         </div>
         <div class="content">
           <p>Hello Admin,</p>
-          <p>A new user has been added to the FinAnalytics platform:</p>
+          <p>A new user has been added to the myBiniyog Valora platform:</p>
           
           <div class="user-info">
             <div class="info-item">
@@ -255,7 +255,7 @@ export async function sendAdminNotificationEmail(
           <p>The new user has been sent their login credentials via email.</p>
 
           <div class="footer">
-            <p>This is an automated notification from FinAnalytics.</p>
+            <p>This is an automated notification from myBiniyog Valora.</p>
           </div>
         </div>
       </div>
@@ -268,7 +268,7 @@ New User Added
 
 Hello Admin,
 
-A new user has been added to the FinAnalytics platform:
+A new user has been added to the myBiniyog Valora platform:
 
 Name: ${newUserName}
 Email: ${newUserEmail}
@@ -277,10 +277,10 @@ Created By: ${createdBy}
 
 The new user has been sent their login credentials via email.
 
-This is an automated notification from FinAnalytics.
+This is an automated notification from myBiniyog Valora.
   `;
 
-  await sendEmail(adminEmail, "New User Added to FinAnalytics", html, text);
+  await sendEmail(adminEmail, "New User Added to myBiniyog Valora", html, text);
 }
 
 /**
@@ -309,7 +309,7 @@ export async function sendOtpEmail(userEmail: string, code: string): Promise<voi
         </div>
         <div class="content">
           <p>Hello,</p>
-          <p>You requested a login verification code for your FinAnalytics account. Please use the code below to complete your login:</p>
+          <p>You requested a login verification code for your myBiniyog Valora account. Please use the code below to complete your login:</p>
           
           <div class="otp-code">
             <div class="code">${code}</div>
@@ -327,7 +327,7 @@ export async function sendOtpEmail(userEmail: string, code: string): Promise<voi
           <p>If you didn't request this code, you can safely ignore this email.</p>
 
           <div class="footer">
-            <p>This is an automated email from FinAnalytics. Please do not reply to this email.</p>
+            <p>This is an automated email from myBiniyog Valora. Please do not reply to this email.</p>
           </div>
         </div>
       </div>
@@ -340,7 +340,7 @@ Your Login Verification Code
 
 Hello,
 
-You requested a login verification code for your FinAnalytics account. Please use the code below to complete your login:
+You requested a login verification code for your myBiniyog Valora account. Please use the code below to complete your login:
 
 ${code}
 
@@ -351,10 +351,10 @@ ${code}
 
 If you didn't request this code, you can safely ignore this email.
 
-This is an automated email from FinAnalytics. Please do not reply to this email.
+This is an automated email from myBiniyog Valora. Please do not reply to this email.
   `;
 
-  await sendEmail(userEmail, "Your FinAnalytics Login Verification Code", html, text);
+  await sendEmail(userEmail, "Your myBiniyog Valora Login Verification Code", html, text);
 }
 
 /**
@@ -439,7 +439,7 @@ export async function sendSectorUpdateCompleteEmail(
           ` : ''}
 
           <div class="footer">
-            <p>This is an automated notification from FinAnalytics.</p>
+            <p>This is an automated notification from myBiniyog Valora.</p>
             <p>You can view detailed results in the Scheduler page.</p>
           </div>
         </div>
@@ -467,7 +467,7 @@ ${failedSectorDetails.slice(0, 10).map(item => `- ${item.sectorName}: ${item.err
 ${failedSectorDetails.length > 10 ? `... and ${failedSectorDetails.length - 10} more failed sectors` : ''}
 ` : ''}
 
-This is an automated notification from FinAnalytics.
+This is an automated notification from myBiniyog Valora.
 You can view detailed results in the Scheduler page.
   `;
 
@@ -504,7 +504,7 @@ export async function sendPasswordResetEmail(
         </div>
         <div class="content">
           <p>Hello ${userName},</p>
-          <p>You requested to reset your password for your FinAnalytics account. Click the button below to reset your password:</p>
+          <p>You requested to reset your password for your myBiniyog Valora account. Click the button below to reset your password:</p>
           
           <div style="text-align: center;">
             <a href="${resetLink}" class="button">Reset Password</a>
@@ -526,7 +526,7 @@ export async function sendPasswordResetEmail(
           <p>If you didn't request a password reset, you can safely ignore this email.</p>
 
           <div class="footer">
-            <p>This is an automated email from FinAnalytics. Please do not reply to this email.</p>
+            <p>This is an automated email from myBiniyog Valora. Please do not reply to this email.</p>
           </div>
         </div>
       </div>
@@ -539,7 +539,7 @@ Password Reset Request
 
 Hello ${userName},
 
-You requested to reset your password for your FinAnalytics account. Click the link below to reset your password:
+You requested to reset your password for your myBiniyog Valora account. Click the link below to reset your password:
 
 ${resetLink}
 
@@ -551,9 +551,9 @@ ${resetLink}
 
 If you didn't request a password reset, you can safely ignore this email.
 
-This is an automated email from FinAnalytics. Please do not reply to this email.
+This is an automated email from myBiniyog Valora. Please do not reply to this email.
   `;
 
-  await sendEmail(userEmail, "Reset Your FinAnalytics Password", html, text);
+  await sendEmail(userEmail, "Reset Your myBiniyog Valora Password", html, text);
 }
 

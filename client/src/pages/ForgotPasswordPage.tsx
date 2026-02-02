@@ -6,7 +6,8 @@ import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { useToast } from "@/hooks/use-toast";
-import { TrendingUp, AlertCircle, Loader2, ArrowLeft, CheckCircle2 } from "lucide-react";
+import { AlertCircle, Loader2, ArrowLeft, CheckCircle2 } from "lucide-react";
+import Logo from "@/components/Logo";
 import { apiRequest } from "@/lib/queryClient";
 
 export default function ForgotPasswordPage() {
@@ -59,9 +60,7 @@ export default function ForgotPasswordPage() {
         <div className="backdrop-blur-sm bg-white/80 dark:bg-slate-900/80 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xl">
           <CardHeader className="text-center space-y-4 pb-8">
             <div className="flex justify-center">
-              <div className="h-16 w-16 rounded-xl bg-gradient-to-br from-blue-600 to-purple-600 flex items-center justify-center shadow-lg">
-                <TrendingUp className="h-9 w-9 text-white" />
-              </div>
+              <Logo size="lg" />
             </div>
             <div>
               <CardTitle className="text-3xl font-bold bg-gradient-to-r from-slate-900 to-slate-700 dark:from-white dark:to-slate-300 bg-clip-text text-transparent">
