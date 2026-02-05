@@ -2041,8 +2041,13 @@ export default function SectorsList() {
                             })()}
                           </SelectValue>
                         </SelectTrigger>
-                        <SelectContent>
-                          {formulas.filter(f => f.enabled).map((formula) => (
+                        <SelectContent
+                          key={`sector-formula-${displaySectorId}-${(() => {
+                            const sector = sectors?.find(s => s.id === displaySectorId);
+                            return sector?.assignedFormulaId || activeSectorFormula?.id || "";
+                          })()}`}
+                        >
+                          {(formulas ?? []).filter(f => f.enabled).map((formula) => (
                             <SelectItem key={formula.id} value={formula.id}>
                               {formula.name} ({formula.signal})
                             </SelectItem>
@@ -2125,13 +2130,15 @@ export default function SectorsList() {
                         <SelectTrigger className="flex-1">
                           <SelectValue placeholder="Select a formula" />
                         </SelectTrigger>
-                        <SelectContent>
+                        <SelectContent
+                          key={`sector-formula-bar-${displaySectorId}-${selectedFormulaId || (activeSectorFormula ? "sector-default" : "default")}`}
+                        >
                           <SelectItem value={activeSectorFormula ? "sector-default" : "default"}>
                             {activeSectorFormula
                               ? `Default: ${activeSectorFormula.name} (${activeSectorFormula.scope === "sector" ? "Sector" : "Global"})`
                               : "Use Custom Formula"}
                           </SelectItem>
-                          {formulas?.filter(f => f.enabled).map((formula) => (
+                          {(formulas ?? []).filter(f => f.enabled).map((formula) => (
                             <SelectItem key={formula.id} value={formula.id}>
                               {formula.name} ({formula.signal})
                             </SelectItem>

@@ -1332,8 +1332,10 @@ export default function CompanyDetail() {
                         </span>
                       </SelectValue>
                     </SelectTrigger>
-                    <SelectContent>
-                      {formulas?.filter(f => f.enabled).map((formula) => (
+                    <SelectContent
+                      key={`company-formula-${company?.id ?? ticker}-${signalsData?.assignedFormulaId || activeFormulaForPage?.id || ""}`}
+                    >
+                      {(formulas ?? []).filter(f => f.enabled).map((formula) => (
                         <SelectItem key={formula.id} value={formula.id}>
                           {formula.name} ({formula.signal})
                         </SelectItem>
@@ -2001,9 +2003,11 @@ export default function CompanyDetail() {
                               <SelectTrigger className="flex-1">
                                 <SelectValue placeholder="Select a formula" />
                               </SelectTrigger>
-                              <SelectContent>
+                              <SelectContent
+                                key={`company-formula-bar-${company?.id ?? ticker}-${selectedFormulaId || "default"}`}
+                              >
                                 <SelectItem value="default">Use Custom Formula</SelectItem>
-                                {formulas?.filter(f => f.enabled).map((formula) => (
+                                {(formulas ?? []).filter(f => f.enabled).map((formula) => (
                                   <SelectItem key={formula.id} value={formula.id}>
                                     {formula.name} ({formula.signal})
                                   </SelectItem>
