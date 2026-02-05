@@ -847,12 +847,11 @@ export class ExcelFormulaEvaluator {
   }
 
   private getCellValue(metricName: string, quarterIndex: number): number | null {
-    // quarterIndex: 1 = Oldest in selected window, 12 = Newest in selected window
-    // sortedQuarters is sorted Newest -> Oldest (Index 0 = Newest)
-    // So Q12 -> Index 0
-    // Q1 -> Index 11 (if length is 12)
-    // General formula: arrayIndex = sortedQuarters.length - quarterIndex
-    const arrayIndex = this.sortedQuarters.length - quarterIndex;
+    // Q12 = latest quarter, Q11 = second latest, ..., Q1 = 12th-from-latest (oldest in a full 12-quarter window).
+    // sortedQuarters is sorted Newest -> Oldest (index 0 = Newest).
+    // Map by position from newest: Q12 -> index 0, Q11 -> index 1, ..., Q1 -> index 11.
+    // This works for companies with fewer than 12 quarters (e.g. 7 quarters: Q12=latest, Q11=2nd latest, ..., Q6=7th; Q5..Q1 out of range).
+    const arrayIndex = 12 - quarterIndex;
     const metricRef = `${metricName}[Q${quarterIndex}]`;
     let normalized = false;
     let value: number | null = null;
