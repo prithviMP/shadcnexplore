@@ -18,7 +18,7 @@ import { ALL_FUNCTIONS, FunctionCategory } from "@/components/formulaFunctions";
 // Use shared function definitions
 const FUNCTIONS = ALL_FUNCTIONS;
 
-const CATEGORIES = ["All", "Logical", "Math", "Text", "Error Handling", "Conditional Aggregation"] as const;
+const CATEGORIES = ["All", "Logical", "Math", "Text", "Error Handling", "Conditional Aggregation", "Array / Excel 365"] as const;
 
 type FunctionInfo = typeof ALL_FUNCTIONS[0];
 
@@ -145,8 +145,9 @@ export function FormulaHelpPanel({ open, onOpenChange }: FormulaHelpPanelProps) 
             <div className="text-sm space-y-1">
               <p className="font-semibold mb-2">Quick Tips:</p>
               <ul className="list-disc list-inside space-y-1 text-muted-foreground">
-                <li>Use <code className="bg-muted px-1 rounded">MetricName[Q1]</code> to reference quarterly metrics</li>
-                <li>Q1 = Most Recent Quarter, Q2 = Previous Quarter, etc.</li>
+                <li>Use <code className="bg-muted px-1 rounded">MetricName[Q12]</code> for newest quarter, <code className="bg-muted px-1 rounded">[Q11]</code> for previous, … <code className="bg-muted px-1 rounded">[Q1]</code> = oldest (12-quarter window)</li>
+                <li>Array literal: <code className="bg-muted px-1 rounded">{`{ expr1, expr2, ... }`}</code> — use with CHOOSE, MAP, INDEX</li>
+                <li>Use <code className="bg-muted px-1 rounded">LET()</code> for readable formulas with intermediate variables</li>
                 <li>Use parentheses to clarify operator precedence</li>
                 <li>Use <code className="bg-muted px-1 rounded">IFERROR()</code> to handle division by zero</li>
                 <li>For SUMIF/COUNTIF, use criteria like <code className="bg-muted px-1 rounded">"&gt;10"</code>, <code className="bg-muted px-1 rounded">"&lt;5"</code>, <code className="bg-muted px-1 rounded">"=value"</code></li>

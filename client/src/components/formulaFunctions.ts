@@ -1,4 +1,4 @@
-export type FunctionCategory = "Logical" | "Math" | "Text" | "Error Handling" | "Conditional Aggregation";
+export type FunctionCategory = "Logical" | "Math" | "Text" | "Error Handling" | "Conditional Aggregation" | "Array / Excel 365";
 
 export interface FunctionDefinition {
   name: string;
@@ -238,6 +238,63 @@ export const ALL_FUNCTIONS: FunctionDefinition[] = [
     description: "Counts the number of values in range that match the criteria",
     example: 'COUNTIF(Revenue[Q1], ">1000")',
     args: "2",
+  },
+  // Array / Excel 365-style functions
+  {
+    name: "LET",
+    category: "Array / Excel 365",
+    syntax: "LET(name1, value1, name2, value2, ..., result)",
+    description: "Binds names to values and evaluates result. Use for readable formulas with intermediate variables.",
+    example: 'LET(sy, CHOOSE({1,2}, Sales[Q12], Sales[Q11]), t, 1, IF(INDEX(sy,t)>0, "BUY", "No Signal"))',
+    args: "3+",
+  },
+  {
+    name: "CHOOSE",
+    category: "Array / Excel 365",
+    syntax: "CHOOSE(index, value1, value2, ...) or CHOOSE({1,2,...}, v1, v2, ...)",
+    description: "Returns value at 1-based index, or array of values when first arg is array {1,2,...}.",
+    example: "CHOOSE({1, 2}, OPM[Q12], OPM[Q11])",
+    args: "2+",
+  },
+  {
+    name: "SEQUENCE",
+    category: "Array / Excel 365",
+    syntax: "SEQUENCE(rows, cols?, start?, step?)",
+    description: "Returns array of numbers. Default start=1, step=1. E.g. SEQUENCE(11,1,2,1) = [2,3,...,12].",
+    example: "SEQUENCE(11, 1, 2, 1)",
+    args: "1-4",
+  },
+  {
+    name: "MAP",
+    category: "Array / Excel 365",
+    syntax: "MAP(array, LAMBDA(param, expr))",
+    description: "Maps over array: evaluates expr for each element with param bound to that element.",
+    example: "MAP({1, 2, 3}, LAMBDA(x, x * 2))",
+    args: "2",
+  },
+  {
+    name: "LAMBDA",
+    category: "Array / Excel 365",
+    syntax: "LAMBDA(param, expression)",
+    description: "Defines an inline function. Use with MAP. param is a name, expression can reference it.",
+    example: "LAMBDA(t, AND(ISNUMBER(INDEX(sy,t)), ISNUMBER(INDEX(sq,t))))",
+    args: "2",
+  },
+  {
+    name: "INDEX",
+    category: "Array / Excel 365",
+    syntax: "INDEX(array, row)",
+    description: "Returns element at 1-based position from array. row 1 = first element.",
+    example: "INDEX(sy, 2)",
+    args: "2",
+  },
+  {
+    name: "XLOOKUP",
+    category: "Array / Excel 365",
+    syntax: "XLOOKUP(lookup_value, lookup_array, return_array, if_not_found?, match_mode?, search_mode?)",
+    description: "Looks up lookup_value in lookup_array, returns corresponding value from return_array. search_mode -1 = search last to first.",
+    example: "XLOOKUP(1, valid, tlist, 0, 0, -1)",
+    args: "3-6",
   },
 ];
 

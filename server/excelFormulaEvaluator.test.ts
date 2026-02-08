@@ -509,35 +509,31 @@ describe("ExcelFormulaEvaluator - Real-world Formula Examples", () => {
   });
 });
 
-describe("ExcelFormulaEvaluator - Metric References (Q1, Q2, etc.)", () => {
-  it("should access metrics using Q1 (oldest quarter) syntax", () => {
+describe("ExcelFormulaEvaluator - Metric References (Q12, Q11, etc.)", () => {
+  it("should access metrics using Q11 (oldest when 2 quarters) syntax", () => {
     const data = createMockQuarterlyData();
     const evaluator = new ExcelFormulaEvaluator(data);
 
-    // Q1 refers to oldest quarter in the window (2024-Q2 in our test data with 2 quarters)
-    // Sales in Q2 is 40000
-    expect(evaluator.evaluate("Sales[Q1]")).toBeCloseTo(40000);
+    // With 2 quarters: Q12 = newest (2024-Q3), Q11 = oldest (2024-Q2). Sales in Q2 is 40000
+    expect(evaluator.evaluate("Sales[Q11]")).toBeCloseTo(40000);
   });
 
-  it("should access metrics using Q2 (newer quarter) syntax", () => {
+  it("should access metrics using Q12 (newest quarter) syntax", () => {
     const data = createMockQuarterlyData();
     const evaluator = new ExcelFormulaEvaluator(data);
 
-    // Q2 refers to the newer quarter (2024-Q3 in our test data with 2 quarters)
-    // Sales in Q3 is 50000
-    expect(evaluator.evaluate("Sales[Q2]")).toBeCloseTo(50000);
+    // Q12 = newest (2024-Q3). Sales in Q3 is 50000
+    expect(evaluator.evaluate("Sales[Q12]")).toBeCloseTo(50000);
   });
 
   it("should access percentage metrics correctly", () => {
     const data = createMockQuarterlyData();
     const evaluator = new ExcelFormulaEvaluator(data);
 
-    // Test percentage normalization with a direct value comparison
-    // Sales[Q2] = 50000, Sales[Q1] = 40000
-    // Growth = (50000 - 40000) / 40000 = 0.25 = 25%
-    const growth = evaluator.evaluate("(Sales[Q2] - Sales[Q1]) / Sales[Q1]");
+    // Sales[Q12] = 50000, Sales[Q11] = 40000. Growth = (50000 - 40000) / 40000 = 0.25 = 25%
+    const growth = evaluator.evaluate("(Sales[Q12] - Sales[Q11]) / Sales[Q11]");
     expect(growth).toBeCloseTo(0.25);
-    
+
     // Verify percentage literal works
     const percentage = evaluator.evaluate("25%");
     expect(percentage).toBeCloseTo(0.25);
@@ -547,8 +543,8 @@ describe("ExcelFormulaEvaluator - Metric References (Q1, Q2, etc.)", () => {
     const data = createMockQuarterlyData();
     const evaluator = new ExcelFormulaEvaluator(data);
 
-    // Sales[Q2] = 50000, so 50000 >= 40000 should be true
-    const result = evaluator.evaluate('IF(Sales[Q2] >= 40000, "BUY", "SELL")');
+    // Sales[Q12] = 50000, so 50000 >= 40000 should be true
+    const result = evaluator.evaluate('IF(Sales[Q12] >= 40000, "BUY", "SELL")');
     expect(result).toBe("BUY");
   });
 
@@ -556,9 +552,8 @@ describe("ExcelFormulaEvaluator - Metric References (Q1, Q2, etc.)", () => {
     const data = createMockQuarterlyData();
     const evaluator = new ExcelFormulaEvaluator(data);
 
-    // Sales[Q2] = 50000, Sales[Q1] = 40000
-    // 50000 > 40000 should be true
-    const result = evaluator.evaluate('IF(Sales[Q2] > Sales[Q1], "GROWTH", "DECLINE")');
+    // Sales[Q12] = 50000, Sales[Q11] = 40000. 50000 > 40000 should be true
+    const result = evaluator.evaluate('IF(Sales[Q12] > Sales[Q11], "GROWTH", "DECLINE")');
     expect(result).toBe("GROWTH");
   });
 
@@ -566,12 +561,8 @@ describe("ExcelFormulaEvaluator - Metric References (Q1, Q2, etc.)", () => {
     const data = createMockQuarterlyData();
     const evaluator = new ExcelFormulaEvaluator(data);
 
-    // Use Sales comparison which we know works
-    const formula = 'IF(AND(Sales[Q2] >= 40000, Sales[Q1] >= 35000), "BUY", "SELL")';
-    // Sales[Q2] = 50000 >= 40000 = true
-    // Sales[Q1] = 40000 >= 35000 = true
-    // AND(true, true) = true
-    // Result should be "BUY"
+    const formula = 'IF(AND(Sales[Q12] >= 40000, Sales[Q11] >= 35000), "BUY", "SELL")';
+    // Sales[Q12] = 50000 >= 40000 = true, Sales[Q11] = 40000 >= 35000 = true -> BUY
     expect(evaluator.evaluate(formula)).toBe("BUY");
   });
 
@@ -579,11 +570,11 @@ describe("ExcelFormulaEvaluator - Metric References (Q1, Q2, etc.)", () => {
     const data = createMockQuarterlyData();
     const evaluator = new ExcelFormulaEvaluator(data);
 
-    // MIN(Sales[Q1], Sales[Q2]) = MIN(40000, 50000) = 40000
-    expect(evaluator.evaluate("MIN(Sales[Q1], Sales[Q2])")).toBeCloseTo(40000);
-    
-    // MAX(Sales[Q1], Sales[Q2]) = MAX(40000, 50000) = 50000
-    expect(evaluator.evaluate("MAX(Sales[Q1], Sales[Q2])")).toBeCloseTo(50000);
+    // MIN(Sales[Q11], Sales[Q12]) = MIN(40000, 50000) = 40000
+    expect(evaluator.evaluate("MIN(Sales[Q11], Sales[Q12])")).toBeCloseTo(40000);
+
+    // MAX(Sales[Q11], Sales[Q12]) = MAX(40000, 50000) = 50000
+    expect(evaluator.evaluate("MAX(Sales[Q11], Sales[Q12])")).toBeCloseTo(50000);
   });
 });
 
@@ -647,6 +638,17 @@ describe("ExcelFormulaEvaluator - LET, CHOOSE, SEQUENCE, MAP, LAMBDA, INDEX, XLO
     const evaluator = new ExcelFormulaEvaluator(data);
     const t = evaluator.evaluate("IFERROR(XLOOKUP(1, {1, 0}, {10, 20}, 0, 0, -1), 0)");
     expect(t).toBe(10);
+  });
+
+  it("should treat TRUE/FALSE as boolean literals so XLOOKUP(TRUE, valid, tlist) works", () => {
+    const data = createMockQuarterlyData();
+    const evaluator = new ExcelFormulaEvaluator(data);
+    // valid = {FALSE, TRUE, TRUE} -> last TRUE at index 2 -> tlist[2] = 3
+    const t = evaluator.evaluate("XLOOKUP(TRUE, {FALSE, TRUE, TRUE}, {1, 2, 3}, 0, 0, -1)");
+    expect(t).toBe(3);
+    // IF(TRUE, \"yes\", \"no\") -> "yes"
+    expect(evaluator.evaluate("IF(TRUE, \"yes\", \"no\")")).toBe("yes");
+    expect(evaluator.evaluate("IF(FALSE, \"yes\", \"no\")")).toBe("no");
   });
 
   it("should evaluate minimal LET+CHOOSE+INDEX formula (pattern from user formula)", () => {

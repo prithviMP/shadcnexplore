@@ -461,6 +461,16 @@ export class ExcelFormulaEvaluator {
 
     if (token.type === TokenType.IDENTIFIER) {
       const identValue = token.value;
+      const upper = identValue.toUpperCase();
+      // Excel boolean literals (so XLOOKUP(TRUE, ...) works)
+      if (upper === "TRUE") {
+        this.consume();
+        return true;
+      }
+      if (upper === "FALSE") {
+        this.consume();
+        return false;
+      }
       this.consume();
       // Look ahead for [
       if (this.match(TokenType.LBRACKET)) {

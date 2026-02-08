@@ -83,7 +83,7 @@ export function FormulaEditor({
         return acc;
     }, {} as Record<FunctionCategory, typeof ALL_FUNCTIONS>);
 
-    const categories: FunctionCategory[] = ["Logical", "Math", "Text", "Error Handling", "Conditional Aggregation"];
+    const categories: FunctionCategory[] = ["Logical", "Math", "Text", "Error Handling", "Conditional Aggregation", "Array / Excel 365"];
 
     return (
         <div className={cn("flex flex-col gap-2 rounded-md border p-1 bg-background", className)}>
