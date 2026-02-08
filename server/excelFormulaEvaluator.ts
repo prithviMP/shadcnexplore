@@ -3,21 +3,30 @@
  * Supports Excel-style formulas with IF, AND, OR, NOT, ISNUMBER, MIN, MAX, ABS, etc.
  * Supports arithmetic operations (+, -, *, /) and nested expressions.
  * Supports dynamic metric referencing using MetricName[Qn] syntax.
- * Q1 = Most Recent Quarter, Q2 = Previous Quarter, etc.
+ * Q12 = newest quarter, Q11 = second newest, ..., Q1 = oldest (in 12-quarter window).
  * Normalizes percentage values to decimals (e.g. 20% -> 0.2).
- * 
+ *
  * Supported Functions:
  * - Logical: IF, AND, OR, NOT, ISNUMBER, ISBLANK
  * - Math: MIN, MAX, ABS, SUM, AVERAGE, COUNT, ROUND, ROUNDUP, ROUNDDOWN, SQRT, POWER, LOG, CEILING, FLOOR
  * - Text: TRIM, CONCAT, CONCATENATE
  * - Error Handling: IFERROR, NOTNULL, COALESCE
  * - Conditional: SUMIF, COUNTIF
+ * - Array / Excel 365-style: LET, CHOOSE, SEQUENCE, MAP, LAMBDA, INDEX, XLOOKUP
+ * - Array literal: { expr, expr, ... }
  */
 
 import type { QuarterlyData } from "@shared/schema";
 import { storage } from "./storage";
 
-type FormulaResult = string | number | boolean | null;
+// Scalar, array, or lambda (internal) result
+export type FormulaResult = string | number | boolean | null | FormulaResult[] | LambdaValue;
+export interface LambdaValue {
+  __lambda: true;
+  paramName: string;
+  bodyStartTokenIndex: number;
+  bodyEndTokenIndex: number;
+}
 
 // Map of Quarter Name -> Metric Name -> Value
 type QuarterlyDataMap = Map<string, Map<string, number | null>>;
@@ -152,6 +161,8 @@ enum TokenType {
   RPAREN,
   LBRACKET, // [
   RBRACKET, // ]
+  LBRACE,   // {
+  RBRACE,   // }
   COMMA,
   EOF
 }
@@ -176,6 +187,8 @@ export class ExcelFormulaEvaluator {
   private traceSteps: EvaluationStep[] = [];
   private metricSubstitutions: Map<string, MetricSubstitution> = new Map();
   private originalFormula: string = '';
+  /** Scope stack for LET bindings and LAMBDA parameter. Top map has current bindings. */
+  private scopeStack: Map<string, FormulaResult>[] = [];
 
   constructor(quarterlyData: QuarterlyData[], selectedQuarters?: string[], verboseLogging: boolean = false, collectTrace: boolean = false) {
     const extracted = extractQuarterlyMetrics(quarterlyData, selectedQuarters);
@@ -279,6 +292,12 @@ export class ExcelFormulaEvaluator {
       } else if (char === ',') {
         this.tokens.push({ type: TokenType.COMMA, value: ',', position: i });
         i++;
+      } else if (char === '{') {
+        this.tokens.push({ type: TokenType.LBRACE, value: '{', position: i });
+        i++;
+      } else if (char === '}') {
+        this.tokens.push({ type: TokenType.RBRACE, value: '}', position: i });
+        i++;
       } else if (['+', '-', '*', '/', '%'].includes(char)) {
         this.tokens.push({ type: TokenType.OPERATOR, value: char, position: i });
         i++;
@@ -325,7 +344,8 @@ export class ExcelFormulaEvaluator {
           'SQRT', 'POWER', 'LOG', 'CEILING', 'FLOOR',
           'TRIM', 'CONCAT', 'CONCATENATE',
           'IFERROR', 'NOTNULL', 'COALESCE',
-          'SUMIF', 'COUNTIF'
+          'SUMIF', 'COUNTIF',
+          'LET', 'CHOOSE', 'SEQUENCE', 'MAP', 'LAMBDA', 'INDEX', 'XLOOKUP'
         ];
         if (knownFunctions.includes(upperIdent)) {
           this.tokens.push({ type: TokenType.FUNCTION, value: upperIdent, position: i });
@@ -434,7 +454,13 @@ export class ExcelFormulaEvaluator {
       return token.value;
     }
 
+    // Array literal { expr, expr, ... }
+    if (token.type === TokenType.LBRACE) {
+      return this.parseArrayLiteral();
+    }
+
     if (token.type === TokenType.IDENTIFIER) {
+      const identValue = token.value;
       this.consume();
       // Look ahead for [
       if (this.match(TokenType.LBRACKET)) {
@@ -465,20 +491,25 @@ export class ExcelFormulaEvaluator {
           throw new Error("Expected ]");
         }
 
-        return this.getCellValue(token.value, quarterIndex);
+        return this.getCellValue(identValue, quarterIndex);
       } else {
-        // Identifier without brackets? Maybe a named constant or error?
-        // For now, assume it's a metric for Q1 (Current Quarter) if no bracket
-        // Or maybe throw error? Let's default to Q1 for backward compatibility if needed, 
-        // but strict syntax is better.
-        // Let's try to resolve it as Q1
-        return this.getCellValue(token.value, 1);
+        // No bracket: check LET/LAMBDA scope first, else treat as metric for Q1
+        if (this.scopeStack.length > 0) {
+          const top = this.scopeStack[this.scopeStack.length - 1];
+          if (top.has(identValue)) {
+            return top.get(identValue)!;
+          }
+        }
+        return this.getCellValue(identValue, 1);
       }
     }
 
     if (token.type === TokenType.FUNCTION) {
+      const funcName = token.value;
       this.consume();
-      return this.parseFunctionCall(token.value);
+      if (funcName === 'LET') return this.parseLet();
+      if (funcName === 'LAMBDA') return this.parseLambda();
+      return this.parseFunctionCall(funcName);
     }
 
     if (this.match(TokenType.LPAREN)) {
@@ -491,6 +522,71 @@ export class ExcelFormulaEvaluator {
 
     // Error or end
     return null;
+  }
+
+  /** Parse array literal { expr, expr, ... } */
+  private parseArrayLiteral(): FormulaResult {
+    if (!this.match(TokenType.LBRACE)) throw new Error("Expected {");
+    const arr: FormulaResult[] = [];
+    if (this.peek().type !== TokenType.RBRACE) {
+      do {
+        arr.push(this.parseExpression());
+      } while (this.match(TokenType.COMMA));
+    }
+    if (!this.match(TokenType.RBRACE)) throw new Error("Expected }");
+    return arr;
+  }
+
+  /** Parse LET(name1, value1, name2, value2, ..., body). Pushes scope, evaluates body, pops. */
+  private parseLet(): FormulaResult {
+    if (!this.match(TokenType.LPAREN)) throw new Error("Expected ( after LET");
+    this.scopeStack.push(new Map());
+    try {
+      while (this.peek().type === TokenType.IDENTIFIER) {
+        const savedIndex = this.currentTokenIndex;
+        const name = this.consume().value;
+        if (!this.match(TokenType.COMMA)) {
+          // Not a (name, value) pair — identifier is start of body; rewind and parse body
+          this.currentTokenIndex = savedIndex;
+          break;
+        }
+        const value = this.parseExpression();
+        this.scopeStack[this.scopeStack.length - 1].set(name, value);
+        if (this.peek().type === TokenType.RPAREN) break;
+        if (!this.match(TokenType.COMMA)) break;
+      }
+      const body = this.parseExpression();
+      if (!this.match(TokenType.RPAREN)) throw new Error("Expected ) to close LET");
+      return body;
+    } finally {
+      this.scopeStack.pop();
+    }
+  }
+
+  /** Parse LAMBDA(param, body). Returns LambdaValue (body is re-parsed when lambda is invoked). */
+  private parseLambda(): FormulaResult {
+    if (!this.match(TokenType.LPAREN)) throw new Error("Expected ( after LAMBDA");
+    if (this.peek().type !== TokenType.IDENTIFIER) throw new Error("LAMBDA requires parameter name");
+    const paramName = this.consume().value;
+    if (!this.match(TokenType.COMMA)) throw new Error("Expected comma in LAMBDA");
+    const bodyStartTokenIndex = this.currentTokenIndex;
+    this.parseExpression(); // consume body (do not use result)
+    const bodyEndTokenIndex = this.currentTokenIndex;
+    if (!this.match(TokenType.RPAREN)) throw new Error("Expected ) to close LAMBDA");
+    return { __lambda: true, paramName, bodyStartTokenIndex, bodyEndTokenIndex };
+  }
+
+  /** Evaluate a lambda with one argument. Saves/restores token index and pushes/pops scope. */
+  private evaluateLambda(lambda: LambdaValue, arg: FormulaResult): FormulaResult {
+    const savedIndex = this.currentTokenIndex;
+    this.scopeStack.push(new Map([[lambda.paramName, arg]]));
+    try {
+      this.currentTokenIndex = lambda.bodyStartTokenIndex;
+      return this.parseExpression();
+    } finally {
+      this.scopeStack.pop();
+      this.currentTokenIndex = savedIndex;
+    }
   }
 
   private parseFunctionCall(funcName: string): FormulaResult {
@@ -656,10 +752,89 @@ export class ExcelFormulaEvaluator {
         if (args.length !== 2) throw new Error("COUNTIF requires 2 arguments");
         return this.evaluateCOUNTIF(args);
 
+      // Array / Excel 365-style functions
+      case 'CHOOSE': {
+        if (args.length < 2) throw new Error("CHOOSE requires at least 2 arguments");
+        const indexArg = args[0];
+        if (Array.isArray(indexArg)) {
+          // CHOOSE({1,2,3,...}, v1, v2, v3, ...) -> [v1, v2, v3, ...]
+          return indexArg.map((_, i) => args[i + 1] ?? null);
+        }
+        const idx = typeof indexArg === 'number' ? Math.round(indexArg) : 0;
+        return args[idx] ?? null;
+      }
+      case 'SEQUENCE': {
+        const rows = Math.max(0, Math.floor(Number(args[0]) || 0));
+        const cols = args.length >= 2 ? Math.max(0, Math.floor(Number(args[1]) || 0)) : 1;
+        const start = args.length >= 3 ? Number(args[2]) || 1 : 1;
+        const step = args.length >= 4 ? Number(args[3]) || 1 : 1;
+        const arr: FormulaResult[] = [];
+        for (let r = 0; r < rows; r++) {
+          for (let c = 0; c < cols; c++) {
+            arr.push(start + (r * cols + c) * step);
+          }
+        }
+        return cols === 1 ? arr : arr; // return 1D array (rows*cols)
+      }
+      case 'MAP': {
+        if (args.length !== 2) throw new Error("MAP requires 2 arguments (array, lambda)");
+        const arr = Array.isArray(args[0]) ? args[0] : [args[0]];
+        const lambda = args[1];
+        if (typeof lambda !== 'object' || !lambda || !('__lambda' in lambda)) {
+          throw new Error("MAP second argument must be a LAMBDA");
+        }
+        const out: FormulaResult[] = [];
+        for (let i = 0; i < arr.length; i++) {
+          out.push(this.evaluateLambda(lambda as LambdaValue, arr[i]));
+        }
+        return out;
+      }
+      case 'INDEX': {
+        if (args.length < 2) throw new Error("INDEX requires at least 2 arguments");
+        const arr = Array.isArray(args[0]) ? args[0] : null;
+        if (arr === null) return null;
+        const row = typeof args[1] === 'number' ? Math.round(args[1]) : 0;
+        const oneBased = Math.max(1, row);
+        const idx = oneBased - 1;
+        if (idx < 0 || idx >= arr.length) return null;
+        return arr[idx];
+      }
+      case 'XLOOKUP': {
+        if (args.length < 3) throw new Error("XLOOKUP requires at least 3 arguments");
+        const lookupValue = args[0];
+        const lookupArray = Array.isArray(args[1]) ? args[1] : [args[1]];
+        const returnArray = Array.isArray(args[2]) ? args[2] : [args[2]];
+        const ifNotFound = args.length >= 4 ? args[3] : null;
+        const searchMode = args.length >= 6 ? Number(args[5]) : 0;
+        let foundIndex = -1;
+        if (searchMode === -1) {
+          for (let i = lookupArray.length - 1; i >= 0; i--) {
+            if (this.xlookupMatch(lookupValue, lookupArray[i])) {
+              foundIndex = i;
+              break;
+            }
+          }
+        } else {
+          for (let i = 0; i < lookupArray.length; i++) {
+            if (this.xlookupMatch(lookupValue, lookupArray[i])) {
+              foundIndex = i;
+              break;
+            }
+          }
+        }
+        if (foundIndex < 0) return ifNotFound;
+        return returnArray[foundIndex] ?? ifNotFound;
+      }
+
       default:
         console.warn(`Unknown function: ${name}`);
         return null;
     }
+  }
+
+  private xlookupMatch(a: FormulaResult, b: FormulaResult): boolean {
+    if (typeof a === 'number' && typeof b === 'number') return Math.abs(a - b) < 1e-10;
+    return a === b;
   }
 
   /**
@@ -958,9 +1133,12 @@ export class ExcelFormulaEvaluator {
   }
 
   private toBoolean(value: FormulaResult): boolean {
+    if (value === null || value === undefined) return false;
     if (typeof value === 'boolean') return value;
     if (typeof value === 'number') return value !== 0 && !isNaN(value);
     if (typeof value === 'string') return value.toLowerCase() !== 'false' && value.length > 0;
+    if (Array.isArray(value)) return value.length > 0;
+    if (typeof value === 'object' && value !== null && '__lambda' in value) return true;
     return false;
   }
 

@@ -587,6 +587,80 @@ describe("ExcelFormulaEvaluator - Metric References (Q1, Q2, etc.)", () => {
   });
 });
 
+describe("ExcelFormulaEvaluator - LET, CHOOSE, SEQUENCE, MAP, LAMBDA, INDEX, XLOOKUP", () => {
+  it("should evaluate LET with variables", () => {
+    const data = createMockQuarterlyData();
+    const evaluator = new ExcelFormulaEvaluator(data);
+    expect(evaluator.evaluate("LET(x, 10, y, 20, x + y)")).toBe(30);
+    expect(evaluator.evaluate("LET(a, 1, b, 2, c, 3, a + b + c)")).toBe(6);
+  });
+
+  it("should evaluate array literal and CHOOSE", () => {
+    const data = createMockQuarterlyData();
+    const evaluator = new ExcelFormulaEvaluator(data);
+    const arr = evaluator.evaluate("{1, 2, 3}");
+    expect(Array.isArray(arr)).toBe(true);
+    expect((arr as number[]).length).toBe(3);
+    expect((arr as number[])[0]).toBe(1);
+    expect((arr as number[])[1]).toBe(2);
+    expect((arr as number[])[2]).toBe(3);
+    // CHOOSE with array: {1,2,3}, a, b, c -> [a, b, c]
+    const chosen = evaluator.evaluate("CHOOSE({1, 2, 3}, 10, 20, 30)");
+    expect(Array.isArray(chosen)).toBe(true);
+    expect((chosen as number[])).toEqual([10, 20, 30]);
+  });
+
+  it("should evaluate SEQUENCE", () => {
+    const data = createMockQuarterlyData();
+    const evaluator = new ExcelFormulaEvaluator(data);
+    const seq = evaluator.evaluate("SEQUENCE(5, 1, 2, 1)");
+    expect(Array.isArray(seq)).toBe(true);
+    expect((seq as number[])).toEqual([2, 3, 4, 5, 6]);
+  });
+
+  it("should evaluate MAP and LAMBDA", () => {
+    const data = createMockQuarterlyData();
+    const evaluator = new ExcelFormulaEvaluator(data);
+    const doubled = evaluator.evaluate("MAP({1, 2, 3}, LAMBDA(x, x * 2))");
+    expect(Array.isArray(doubled)).toBe(true);
+    expect((doubled as number[])).toEqual([2, 4, 6]);
+  });
+
+  it("should evaluate INDEX (1-based)", () => {
+    const data = createMockQuarterlyData();
+    const evaluator = new ExcelFormulaEvaluator(data);
+    expect(evaluator.evaluate("INDEX({10, 20, 30}, 1)")).toBe(10);
+    expect(evaluator.evaluate("INDEX({10, 20, 30}, 2)")).toBe(20);
+    expect(evaluator.evaluate("INDEX({10, 20, 30}, 3)")).toBe(30);
+  });
+
+  it("should evaluate XLOOKUP with search_mode -1 (last match)", () => {
+    const data = createMockQuarterlyData();
+    const evaluator = new ExcelFormulaEvaluator(data);
+    // XLOOKUP(1, {0, 1, 1}, {1, 2, 3}, 0, 0, -1) -> last 1 is at index 2 -> 3
+    const r = evaluator.evaluate("XLOOKUP(1, {0, 1, 1}, {1, 2, 3}, 0, 0, -1)");
+    expect(r).toBe(3);
+  });
+
+  it("should evaluate IFERROR(XLOOKUP(...), 0) pattern", () => {
+    const data = createMockQuarterlyData();
+    const evaluator = new ExcelFormulaEvaluator(data);
+    const t = evaluator.evaluate("IFERROR(XLOOKUP(1, {1, 0}, {10, 20}, 0, 0, -1), 0)");
+    expect(t).toBe(10);
+  });
+
+  it("should evaluate minimal LET+CHOOSE+INDEX formula (pattern from user formula)", () => {
+    const data = createMockQuarterlyData();
+    const evaluator = new ExcelFormulaEvaluator(data);
+    // LET(sy = [Sales[Q12], Sales[Q11]], t = 1, IF(INDEX(sy,t)>0, "BUY", "No Signal"))
+    // With 2 quarters: Q12=newest=50000, Q11=40000. INDEX(sy,1)=50000 -> BUY
+    const result = evaluator.evaluate(
+      "LET(sy, CHOOSE({1, 2}, Sales[Q12], Sales[Q11]), t, 1, IF(INDEX(sy, t) > 0, \"BUY\", \"No Signal\"))"
+    );
+    expect(result).toBe("BUY");
+  });
+});
+
 describe("ExcelFormulaEvaluator - Edge Cases", () => {
   it("should handle empty formulas", () => {
     const data = createMockQuarterlyData();
