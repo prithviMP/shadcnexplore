@@ -193,10 +193,10 @@ export default function CompanyDetail() {
     );
   }, [signals]);
 
-  // Fetch formulas for analysis
-  const { data: formulas } = useQuery<Formula[]>({
+  // Fetch formulas for analysis (enable when we have any route match so dropdown works after refresh on both /company/:ticker and /company/id/:id)
+  const { data: formulas, isLoading: formulasLoading } = useQuery<Formula[]>({
     queryKey: ["/api/formulas"],
-    enabled: !!ticker
+    enabled: !!(ticker || companyId || match)
   });
 
   // Fetch entity-specific formula (company-specific > sector-specific > global)
@@ -1304,42 +1304,49 @@ export default function CompanyDetail() {
                       // This allows users to "lock in" the effective formula as an explicit assignment
                       assignFormulaMutation.mutate(value);
                     }}
-                    disabled={assignFormulaMutation.isPending}
+                    disabled={assignFormulaMutation.isPending || formulasLoading}
                   >
                     <SelectTrigger className="h-7 w-auto min-w-[160px] text-xs border-dashed">
                       <SelectValue>
                         <span className="flex items-center gap-1.5">
-                          {(() => {
-                            // Get the assigned formula name from formulas list if assignedFormulaId exists
-                            const assignedFormula = signalsData?.assignedFormulaId 
-                              ? formulas?.find(f => f.id === signalsData.assignedFormulaId)
-                              : null;
-                            const displayFormulaName = assignedFormula?.name || signalsData?.effectiveFormula?.name || activeFormulaForPage?.name || "No Formula";
-                            const displayFormulaSource = assignedFormula ? "company" : (signalsData?.formulaSource || "global");
-                            return (
-                              <>
-                                {displayFormulaName}
-                          <Badge variant="outline" className="text-[10px] px-1 py-0 ml-1">
-                                  {displayFormulaSource === "company" 
-                              ? "Company" 
-                                    : displayFormulaSource === "sector" 
-                                ? "Sector" 
-                                : "Global"}
-                          </Badge>
-                              </>
-                            );
-                          })()}
+                          {formulasLoading ? (
+                            "Loading…"
+                          ) : (
+                            (() => {
+                              const assignedFormula = signalsData?.assignedFormulaId 
+                                ? formulas?.find(f => f.id === signalsData.assignedFormulaId)
+                                : null;
+                              const displayFormulaName = assignedFormula?.name || signalsData?.effectiveFormula?.name || activeFormulaForPage?.name || "No Formula";
+                              const displayFormulaSource = assignedFormula ? "company" : (signalsData?.formulaSource || "global");
+                              return (
+                                <>
+                                  {displayFormulaName}
+                                  <Badge variant="outline" className="text-[10px] px-1 py-0 ml-1">
+                                    {displayFormulaSource === "company" 
+                                      ? "Company" 
+                                      : displayFormulaSource === "sector" 
+                                        ? "Sector" 
+                                        : "Global"}
+                                  </Badge>
+                                </>
+                              );
+                            })()
+                          )}
                         </span>
                       </SelectValue>
                     </SelectTrigger>
                     <SelectContent
                       key={`company-formula-${company?.id ?? ticker}-${signalsData?.assignedFormulaId || activeFormulaForPage?.id || ""}`}
                     >
-                      {(formulas ?? []).filter(f => f.enabled).map((formula) => (
-                        <SelectItem key={formula.id} value={formula.id}>
-                          {formula.name} ({formula.signal})
-                        </SelectItem>
-                      ))}
+                      {formulasLoading ? (
+                        <SelectItem value="__loading__" disabled>Loading formulas…</SelectItem>
+                      ) : (
+                        (formulas ?? []).filter(f => f.enabled).map((formula) => (
+                          <SelectItem key={formula.id} value={formula.id}>
+                            {formula.name} ({formula.signal})
+                          </SelectItem>
+                        ))
+                      )}
                     </SelectContent>
                   </Select>
                   {assignFormulaMutation.isPending && (
@@ -2007,11 +2014,15 @@ export default function CompanyDetail() {
                                 key={`company-formula-bar-${company?.id ?? ticker}-${selectedFormulaId || "default"}`}
                               >
                                 <SelectItem value="default">Use Custom Formula</SelectItem>
-                                {(formulas ?? []).filter(f => f.enabled).map((formula) => (
-                                  <SelectItem key={formula.id} value={formula.id}>
-                                    {formula.name} ({formula.signal})
-                                  </SelectItem>
-                                ))}
+                                {formulasLoading ? (
+                                  <SelectItem value="__loading__" disabled>Loading formulas…</SelectItem>
+                                ) : (
+                                  (formulas ?? []).filter(f => f.enabled).map((formula) => (
+                                    <SelectItem key={formula.id} value={formula.id}>
+                                      {formula.name} ({formula.signal})
+                                    </SelectItem>
+                                  ))
+                                )}
                               </SelectContent>
                             </Select>
                             <Button
