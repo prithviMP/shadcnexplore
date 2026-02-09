@@ -50,6 +50,7 @@ export default function Dashboard() {
 
   const { data: allSignals, isLoading: signalsLoading } = useQuery<Signal[]>({
     queryKey: ["/api/signals"],
+    refetchInterval: 30000, // Refetch every 30s so list stays in sync with distribution after formula/refresh
   });
 
   // Fetch signal status
@@ -115,7 +116,10 @@ export default function Dashboard() {
         title: "Signal refresh started",
         description: `Job ${data.jobId} has been queued. Signals will be updated in the background.`,
       });
-      // Refetch signal status after a short delay
+      // Invalidate so list and graphs refetch when job completes (and status poll updates)
+      queryClient.invalidateQueries({ queryKey: ["/api/v1/signals/status"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/signals"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/v1/signals/distribution"] });
       setTimeout(() => {
         queryClient.invalidateQueries({ queryKey: ["/api/v1/signals/status"] });
       }, 2000);
@@ -435,15 +439,19 @@ export default function Dashboard() {
     }).join(", ");
   };
 
-  // Get latest signal for each company
+  // Get latest signal for each company (use updatedAt to match distribution / recalculated signals)
   const companiesWithSignals = useMemo(() => {
     if (!companies || !allSignals) return [];
 
-    // Create a map of company ID to latest signal
+    // Create a map of company ID to latest signal (by updatedAt so list matches graph and recalculations)
     const signalsByCompany = new Map<string, Signal>();
     allSignals.forEach(signal => {
       const existing = signalsByCompany.get(signal.companyId);
-      if (!existing || new Date(signal.createdAt) > new Date(existing.createdAt)) {
+      const signalUpdated = signal.updatedAt ? new Date(signal.updatedAt) : new Date(signal.createdAt);
+      const existingUpdated = existing
+        ? (existing.updatedAt ? new Date(existing.updatedAt) : new Date(existing.createdAt))
+        : new Date(0);
+      if (!existing || signalUpdated > existingUpdated) {
         signalsByCompany.set(signal.companyId, signal);
       }
     });

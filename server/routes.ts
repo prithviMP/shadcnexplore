@@ -2138,8 +2138,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         signals = signals.filter(s => staleCompanyIds.has(s.companyId));
       }
 
-      // Add caching headers (5 minutes TTL for signal data)
-      res.setHeader("Cache-Control", "public, max-age=300");
+      // Short cache so dashboard list and distribution stay in sync after formula/refresh (refetch every 30s)
+      res.setHeader("Cache-Control", "public, max-age=30");
       res.setHeader("ETag", `"${Date.now()}"`);
 
       res.json(signals);
