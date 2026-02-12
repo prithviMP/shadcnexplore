@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -13,7 +13,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { Plus, Pencil, Trash2, X, Link as LinkIcon } from "lucide-react";
+import { Plus, Pencil, Trash2, X, Link as LinkIcon, ArrowUp, ArrowDown, ArrowUpDown } from "lucide-react";
 import type { Sector, InsertSector } from "@shared/schema";
 
 const sectorFormSchema = z.object({
@@ -37,6 +37,9 @@ export default function SectorManager() {
   const [deleteSector, setDeleteSector] = useState<Sector | null>(null);
   const [selectedSectorForMapping, setSelectedSectorForMapping] = useState<Sector | null>(null);
   const [newScreenerSector, setNewScreenerSector] = useState("");
+  const [sectorSearchTerm, setSectorSearchTerm] = useState("");
+  const [sectorSortField, setSectorSortField] = useState<"name" | "description" | "companies">("name");
+  const [sectorSortDirection, setSectorSortDirection] = useState<"asc" | "desc">("asc");
 
   const { data: sectors, isLoading } = useQuery<Sector[]>({
     queryKey: ["/api/sectors"]
@@ -150,6 +153,71 @@ export default function SectorManager() {
     return companies?.filter(c => c.sectorId === sectorId).length || 0;
   };
 
+  // Filter sectors by search term (name or description)
+  const filteredSectors = useMemo(() => {
+    if (!sectors) return [];
+    const term = sectorSearchTerm.trim().toLowerCase();
+    if (!term) return sectors;
+    return sectors.filter(s =>
+      s.name.toLowerCase().includes(term) ||
+      (s.description ?? "").toLowerCase().includes(term)
+    );
+  }, [sectors, sectorSearchTerm]);
+
+  // Sort sectors by selected column
+  const sortedSectors = useMemo(() => {
+    const base = filteredSectors || [];
+    const sorted = [...base];
+
+    sorted.sort((a, b) => {
+      let aValue: any;
+      let bValue: any;
+
+      switch (sectorSortField) {
+        case "name":
+          aValue = a.name.toLowerCase();
+          bValue = b.name.toLowerCase();
+          break;
+        case "description":
+          aValue = (a.description ?? "").toLowerCase();
+          bValue = (b.description ?? "").toLowerCase();
+          break;
+        case "companies":
+          aValue = getCompanyCount(a.id);
+          bValue = getCompanyCount(b.id);
+          break;
+        default:
+          return 0;
+      }
+
+      if (aValue < bValue) return sectorSortDirection === "asc" ? -1 : 1;
+      if (aValue > bValue) return sectorSortDirection === "asc" ? 1 : -1;
+      return 0;
+    });
+
+    return sorted;
+  }, [filteredSectors, sectorSortField, sectorSortDirection, companies]);
+
+  const handleSectorSort = (field: "name" | "description" | "companies") => {
+    if (sectorSortField === field) {
+      setSectorSortDirection(sectorSortDirection === "asc" ? "desc" : "asc");
+    } else {
+      setSectorSortField(field);
+      setSectorSortDirection("asc");
+    }
+  };
+
+  const SortIcon = ({ field }: { field: "name" | "description" | "companies" }) => {
+    if (sectorSortField !== field) {
+      return <ArrowUpDown className="ml-1 h-3 w-3 opacity-50" />;
+    }
+    return sectorSortDirection === "asc" ? (
+      <ArrowUp className="ml-1 h-3 w-3" />
+    ) : (
+      <ArrowDown className="ml-1 h-3 w-3" />
+    );
+  };
+
   const handleCreateSubmit = (data: SectorFormData) => {
     createMutation.mutate(data);
   };
@@ -252,47 +320,86 @@ export default function SectorManager() {
           ) : !sectors || sectors.length === 0 ? (
             <div className="text-center py-8 text-muted-foreground">No sectors found. Create one to get started.</div>
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Name</TableHead>
-                  <TableHead>Description</TableHead>
-                  <TableHead className="text-right">Companies</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {sectors.map((sector) => (
-                  <TableRow key={sector.id} data-testid={`row-sector-${sector.id}`}>
-                    <TableCell className="font-medium">{sector.name}</TableCell>
-                    <TableCell className="text-muted-foreground">{sector.description || "—"}</TableCell>
-                    <TableCell className="text-right" data-testid={`text-sector-count-${sector.id}`}>
-                      {getCompanyCount(sector.id)}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <div className="flex justify-end gap-2">
-                        <Button
-                          size="icon"
-                          variant="ghost"
-                          onClick={() => handleEdit(sector)}
-                          data-testid={`button-edit-${sector.id}`}
-                        >
-                          <Pencil className="h-4 w-4" />
-                        </Button>
-                        <Button
-                          size="icon"
-                          variant="ghost"
-                          onClick={() => setDeleteSector(sector)}
-                          data-testid={`button-delete-${sector.id}`}
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    </TableCell>
+            <>
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-4">
+                <div className="text-sm text-muted-foreground">
+                  {filteredSectors.length} sector{filteredSectors.length === 1 ? "" : "s"} shown
+                </div>
+                <div className="w-full sm:w-auto">
+                  <Input
+                    placeholder="Search sectors..."
+                    value={sectorSearchTerm}
+                    onChange={(e) => setSectorSearchTerm(e.target.value)}
+                    className="w-full sm:w-[260px]"
+                  />
+                </div>
+              </div>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead
+                      className="cursor-pointer select-none"
+                      onClick={() => handleSectorSort("name")}
+                    >
+                      <span className="inline-flex items-center">
+                        Name
+                        <SortIcon field="name" />
+                      </span>
+                    </TableHead>
+                    <TableHead
+                      className="cursor-pointer select-none"
+                      onClick={() => handleSectorSort("description")}
+                    >
+                      <span className="inline-flex items-center">
+                        Description
+                        <SortIcon field="description" />
+                      </span>
+                    </TableHead>
+                    <TableHead
+                      className="text-right cursor-pointer select-none"
+                      onClick={() => handleSectorSort("companies")}
+                    >
+                      <span className="inline-flex items-center justify-end w-full">
+                        Companies
+                        <SortIcon field="companies" />
+                      </span>
+                    </TableHead>
+                    <TableHead className="text-right">Actions</TableHead>
                   </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+                </TableHeader>
+                <TableBody>
+                  {sortedSectors.map((sector) => (
+                    <TableRow key={sector.id} data-testid={`row-sector-${sector.id}`}>
+                      <TableCell className="font-medium">{sector.name}</TableCell>
+                      <TableCell className="text-muted-foreground">{sector.description || "—"}</TableCell>
+                      <TableCell className="text-right" data-testid={`text-sector-count-${sector.id}`}>
+                        {getCompanyCount(sector.id)}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <div className="flex justify-end gap-2">
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            onClick={() => handleEdit(sector)}
+                            data-testid={`button-edit-${sector.id}`}
+                          >
+                            <Pencil className="h-4 w-4" />
+                          </Button>
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            onClick={() => setDeleteSector(sector)}
+                            data-testid={`button-delete-${sector.id}`}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </>
           )}
         </CardContent>
       </Card>
