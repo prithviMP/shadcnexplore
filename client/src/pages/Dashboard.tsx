@@ -407,14 +407,78 @@ export default function Dashboard() {
     return isNaN(numValue) ? null : numValue;
   };
 
-  // Helper function to format quarters for display (e.g., "DEC '25, Sept '25")
-  const formatQuarters = (quarters: string[] | null | undefined): string => {
+  // Helper to derive which quarters were actually used by the Excel formula
+  // based on Q indices in the condition (Q12 newest, Q11 second newest, etc.).
+  const getDisplayQuartersFromFormula = (
+    quarters: string[],
+    formulaCondition?: string
+  ): string[] => {
+    if (!formulaCondition) {
+      // Fallback: just take up to the 3 most recent quarters
+      return quarters.slice(0, Math.min(3, quarters.length));
+    }
+
+    const allUsedQuarters = quarters;
+    const quarterIndices = new Set<number>();
+
+    const matches = formulaCondition.match(/\[Q(\d+)\]/gi);
+    if (matches) {
+      matches.forEach(match => {
+        const indexMatch = match.match(/\d+/);
+        if (indexMatch) {
+          const quarterIndex = parseInt(indexMatch[0], 10);
+          if (!isNaN(quarterIndex)) {
+            quarterIndices.add(quarterIndex);
+          }
+        }
+      });
+    }
+
+    // If we couldn't detect any Q indices, fallback to newest 3
+    if (quarterIndices.size === 0) {
+      return allUsedQuarters.slice(0, Math.min(3, allUsedQuarters.length));
+    }
+
+    // Map Qn -> array index using the same 12-slot mapping as the evaluator:
+    // Q12 -> 0 (newest), Q11 -> 1, ..., Q1 -> 11.
+    const mapped = Array.from(quarterIndices)
+      .map(qIndex => {
+        const arrayIndex = 12 - qIndex;
+        if (arrayIndex >= 0 && arrayIndex < allUsedQuarters.length) {
+          return allUsedQuarters[arrayIndex];
+        }
+        return null;
+      })
+      .filter((q): q is string => !!q);
+
+    if (mapped.length === 0) {
+      return allUsedQuarters.slice(0, Math.min(3, allUsedQuarters.length));
+    }
+
+    // Deduplicate and sort newest-first by date/name
+    const unique = Array.from(new Set(mapped));
+    return unique
+      .sort((a, b) => {
+        const dateA = new Date(a);
+        const dateB = new Date(b);
+        if (!isNaN(dateA.getTime()) && !isNaN(dateB.getTime())) {
+          return dateB.getTime() - dateA.getTime();
+        }
+        return b.localeCompare(a);
+      })
+      .slice(0, 3);
+  };
+
+  // Helper function to format quarters for display (e.g., "DEC '25, SEP '25, JUN '25")
+  const formatQuarters = (
+    quarters: string[] | null | undefined,
+    formulaCondition?: string
+  ): string => {
     if (!quarters || quarters.length === 0) return "—";
-    
-    // Take the last 2 quarters (most recent)
-    const recentQuarters = quarters.slice(0, 2);
-    
-    return recentQuarters.map(quarter => {
+
+    const displayQuarters = getDisplayQuartersFromFormula(quarters, formulaCondition);
+
+    return displayQuarters.map(quarter => {
       // Parse quarter string (e.g., "2025-12-31" or "Dec 2025" or "Q3 2025")
       try {
         // Try parsing as date first
@@ -458,14 +522,16 @@ export default function Dashboard() {
 
     return companies.map(company => {
       const signal = signalsByCompany.get(company.id);
-      const metadata = signal?.metadata as { usedQuarters?: string[] } | null | undefined;
+      const metadata = signal?.metadata as { usedQuarters?: string[]; condition?: string } | null | undefined;
       const usedQuarters = metadata?.usedQuarters;
+      const formulaCondition = metadata?.condition;
       
       return {
         ...company,
         latestSignal: signal?.signal as string | undefined,
         signalId: signal?.id,
-        usedQuarters: usedQuarters || null,
+          usedQuarters: usedQuarters || null,
+          formulaCondition: formulaCondition || null,
       };
     });
   }, [companies, allSignals]);
@@ -1373,7 +1439,7 @@ export default function Dashboard() {
                           )}
                         </TableCell>
                         <TableCell className="text-right text-xs text-muted-foreground">
-                          {company.usedQuarters ? formatQuarters(company.usedQuarters) : "—"}
+                          {company.usedQuarters ? formatQuarters(company.usedQuarters, (company as any).formulaCondition) : "—"}
                         </TableCell>
                       </TableRow>
                     ))}
@@ -1412,7 +1478,7 @@ export default function Dashboard() {
                         </div>
                         {company.usedQuarters && (
                           <div className="col-span-2 mt-1">
-                            <span className="text-muted-foreground">Quarters:</span> {formatQuarters(company.usedQuarters)}
+                            <span className="text-muted-foreground">Quarters:</span> {formatQuarters(company.usedQuarters, (company as any).formulaCondition)}
                           </div>
                         )}
                         <div>

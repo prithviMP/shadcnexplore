@@ -1554,15 +1554,17 @@ export default function CompanyDetail() {
                                   ));
                                 }
                                 
-                                // usedQuarters is sorted newest first (Q12 = index 0, Q11 = index 1, Q1 = index 11)
-                                // So to get Q12, we use index 0; to get Q11, we use index 1, etc.
-                                // General: Qn is at array index (totalQuarters - n)
+                                // usedQuarters is sorted newest first and evaluator uses a fixed 12-slot window:
+                                // Q12 -> newest (array index 0), Q11 -> index 1, ..., Q1 -> index 11.
+                                // This mapping is independent of how many quarters are actually available
+                                // (for companies with < 12 quarters, only the indices that fall within
+                                // 0..usedQuarters.length-1 are valid).
                                 const filteredQuarters = Array.from(quarterIndices)
                                   .map(qIndex => {
-                                    // Q12 (when totalQuarters=12) -> index 12-12 = 0 (newest)
-                                    // Q11 (when totalQuarters=12) -> index 12-11 = 1 (second newest)
-                                    // Q1 (when totalQuarters=12) -> index 12-1 = 11 (oldest)
-                                    const arrayIndex = allUsedQuarters.length - qIndex;
+                                    // Q12 -> index 12-12 = 0 (newest)
+                                    // Q11 -> index 12-11 = 1 (second newest)
+                                    // Q1  -> index 12-1  = 11 (oldest in a full 12-quarter window)
+                                    const arrayIndex = 12 - qIndex;
                                     if (arrayIndex >= 0 && arrayIndex < allUsedQuarters.length) {
                                       return allUsedQuarters[arrayIndex];
                                     }
