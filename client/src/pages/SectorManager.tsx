@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -14,6 +14,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { Plus, Pencil, Trash2, X, Link as LinkIcon, ArrowUp, ArrowDown, ArrowUpDown } from "lucide-react";
+import { Pagination, PaginationContent, PaginationEllipsis, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious } from "@/components/ui/pagination";
 import type { Sector, InsertSector } from "@shared/schema";
 
 const sectorFormSchema = z.object({
@@ -40,6 +41,8 @@ export default function SectorManager() {
   const [sectorSearchTerm, setSectorSearchTerm] = useState("");
   const [sectorSortField, setSectorSortField] = useState<"name" | "description" | "companies">("name");
   const [sectorSortDirection, setSectorSortDirection] = useState<"asc" | "desc">("asc");
+  const [sectorCurrentPage, setSectorCurrentPage] = useState<number>(1);
+  const sectorItemsPerPage = 20;
 
   const { data: sectors, isLoading } = useQuery<Sector[]>({
     queryKey: ["/api/sectors"]
@@ -218,6 +221,16 @@ export default function SectorManager() {
     );
   };
 
+  // Reset to first page when filters/sort change
+  useEffect(() => {
+    setSectorCurrentPage(1);
+  }, [sectorSearchTerm, sectorSortField, sectorSortDirection]);
+
+  const sectorTotalPages = Math.max(1, Math.ceil(sortedSectors.length / sectorItemsPerPage));
+  const sectorStartIndex = (sectorCurrentPage - 1) * sectorItemsPerPage;
+  const sectorEndIndex = sectorStartIndex + sectorItemsPerPage;
+  const paginatedSectors = sortedSectors.slice(sectorStartIndex, sectorEndIndex);
+
   const handleCreateSubmit = (data: SectorFormData) => {
     createMutation.mutate(data);
   };
@@ -368,7 +381,7 @@ export default function SectorManager() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {sortedSectors.map((sector) => (
+                  {paginatedSectors.map((sector) => (
                     <TableRow key={sector.id} data-testid={`row-sector-${sector.id}`}>
                       <TableCell className="font-medium">{sector.name}</TableCell>
                       <TableCell className="text-muted-foreground">{sector.description || "—"}</TableCell>
@@ -399,6 +412,51 @@ export default function SectorManager() {
                   ))}
                 </TableBody>
               </Table>
+
+              {sectorTotalPages > 1 && (
+                <div className="mt-4 flex justify-center">
+                  <Pagination>
+                    <PaginationContent>
+                      <PaginationItem>
+                        <PaginationPrevious
+                          href="#"
+                          onClick={(e) => {
+                            e.preventDefault();
+                            setSectorCurrentPage((prev) => Math.max(1, prev - 1));
+                          }}
+                        />
+                      </PaginationItem>
+                      {Array.from({ length: sectorTotalPages }).map((_, index) => {
+                        const page = index + 1;
+                        // For many pages we could add ellipsis logic later; for now render all
+                        return (
+                          <PaginationItem key={page}>
+                            <PaginationLink
+                              href="#"
+                              isActive={page === sectorCurrentPage}
+                              onClick={(e) => {
+                                e.preventDefault();
+                                setSectorCurrentPage(page);
+                              }}
+                            >
+                              {page}
+                            </PaginationLink>
+                          </PaginationItem>
+                        );
+                      })}
+                      <PaginationItem>
+                        <PaginationNext
+                          href="#"
+                          onClick={(e) => {
+                            e.preventDefault();
+                            setSectorCurrentPage((prev) => Math.min(sectorTotalPages, prev + 1));
+                          }}
+                        />
+                      </PaginationItem>
+                    </PaginationContent>
+                  </Pagination>
+                </div>
+              )}
             </>
           )}
         </CardContent>
