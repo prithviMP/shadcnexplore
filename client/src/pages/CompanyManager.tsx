@@ -13,11 +13,13 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { useToast } from "@/hooks/use-toast";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { Plus, Pencil, Trash2, Upload, ExternalLink, Search, CheckCircle2, FileText, Loader2, AlertCircle, MoreVertical, Filter, ChevronDown, ArrowUp, ArrowDown, ArrowUpDown, Download } from "lucide-react";
+import { Plus, Pencil, Trash2, Upload, ExternalLink, Search, CheckCircle2, FileText, Loader2, AlertCircle, MoreVertical, Filter, ChevronDown, ArrowUp, ArrowDown, ArrowUpDown, Download, ChevronsUpDown, Check } from "lucide-react";
 import { Link } from "wouter";
 import type { Company, Sector, InsertCompany } from "@shared/schema";
 import { formatDistanceToNow } from "date-fns";
@@ -26,6 +28,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel,
 import { Pagination, PaginationContent, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious, PaginationEllipsis } from "@/components/ui/pagination";
 import MetricFilter from "@/components/MetricFilter";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { cn } from "@/lib/utils";
 
 // Schema without strict validation - we'll validate in submit handler
 const companyFormSchema = z.object({
@@ -1187,26 +1190,58 @@ export default function CompanyManager() {
                         <FormField
                           control={createForm.control}
                           name="sectorId"
-                          render={({ field }) => (
-                            <FormItem>
-                              <FormLabel>Sector</FormLabel>
-                              <Select onValueChange={field.onChange} value={field.value}>
-                                <FormControl>
-                                  <SelectTrigger data-testid="select-sector">
-                                    <SelectValue placeholder="Select sector" />
-                                  </SelectTrigger>
-                                </FormControl>
-                                <SelectContent>
-                                  {sectors?.map((sector) => (
-                                    <SelectItem key={sector.id} value={sector.id}>
-                                      {sector.name}
-                                    </SelectItem>
-                                  ))}
-                                </SelectContent>
-                              </Select>
-                              <FormMessage />
-                            </FormItem>
-                          )}
+                          render={({ field }) => {
+                            const selectedSector = sectors?.find(s => s.id === field.value);
+                            return (
+                              <FormItem>
+                                <FormLabel>Sector</FormLabel>
+                                <Popover>
+                                  <PopoverTrigger asChild>
+                                    <FormControl>
+                                      <Button
+                                        type="button"
+                                        variant="outline"
+                                        role="combobox"
+                                        className={cn("w-full justify-between", !field.value && "text-muted-foreground")}
+                                        data-testid="select-sector"
+                                      >
+                                        {selectedSector ? selectedSector.name : "Select sector"}
+                                        <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                                      </Button>
+                                    </FormControl>
+                                  </PopoverTrigger>
+                                  <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0" align="start">
+                                    <Command>
+                                      <CommandInput placeholder="Search sectors..." />
+                                      <CommandList>
+                                        <CommandEmpty>No sector found.</CommandEmpty>
+                                        <CommandGroup>
+                                          {sectors?.map((sector) => (
+                                            <CommandItem
+                                              key={sector.id}
+                                              value={sector.name}
+                                              onSelect={() => {
+                                                field.onChange(sector.id);
+                                              }}
+                                            >
+                                              <Check
+                                                className={cn(
+                                                  "mr-2 h-4 w-4",
+                                                  field.value === sector.id ? "opacity-100" : "opacity-0"
+                                                )}
+                                              />
+                                              {sector.name}
+                                            </CommandItem>
+                                          ))}
+                                        </CommandGroup>
+                                      </CommandList>
+                                    </Command>
+                                  </PopoverContent>
+                                </Popover>
+                                <FormMessage />
+                              </FormItem>
+                            );
+                          }}
                         />
                       </div>
                       <FormField
@@ -1361,20 +1396,53 @@ export default function CompanyManager() {
                         render={({ field }) => (
                           <FormItem>
                             <FormLabel>Sector</FormLabel>
-                            <Select onValueChange={field.onChange} value={field.value} disabled={useDetectedSector && !!detectedMetadata}>
-                              <FormControl>
-                                <SelectTrigger data-testid="select-sector-autodetect">
-                                  <SelectValue placeholder="Select sector" />
-                                </SelectTrigger>
-                              </FormControl>
-                              <SelectContent>
-                                {sectors?.map((sector) => (
-                                  <SelectItem key={sector.id} value={sector.id}>
-                                    {sector.name}
-                                  </SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
+                            <Popover>
+                              <PopoverTrigger asChild>
+                                <FormControl>
+                                  <Button
+                                    type="button"
+                                    variant="outline"
+                                    role="combobox"
+                                    className={cn("w-full justify-between", !field.value && "text-muted-foreground")}
+                                    data-testid="select-sector-autodetect"
+                                    disabled={useDetectedSector && !!detectedMetadata}
+                                  >
+                                    {(() => {
+                                      const selectedSector = sectors?.find(s => s.id === field.value);
+                                      return selectedSector ? selectedSector.name : "Select sector";
+                                    })()}
+                                    <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                                  </Button>
+                                </FormControl>
+                              </PopoverTrigger>
+                              <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0" align="start">
+                                <Command>
+                                  <CommandInput placeholder="Search sectors..." />
+                                  <CommandList>
+                                    <CommandEmpty>No sector found.</CommandEmpty>
+                                    <CommandGroup>
+                                      {sectors?.map((sector) => (
+                                        <CommandItem
+                                          key={sector.id}
+                                          value={sector.name}
+                                          onSelect={() => {
+                                            field.onChange(sector.id);
+                                          }}
+                                        >
+                                          <Check
+                                            className={cn(
+                                              "mr-2 h-4 w-4",
+                                              field.value === sector.id ? "opacity-100" : "opacity-0"
+                                            )}
+                                          />
+                                          {sector.name}
+                                        </CommandItem>
+                                      ))}
+                                    </CommandGroup>
+                                  </CommandList>
+                                </Command>
+                              </PopoverContent>
+                            </Popover>
                             <FormMessage />
                           </FormItem>
                         )}
