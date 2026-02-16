@@ -2,7 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Building2, TrendingUp, Layers, Clock, Filter, Search, List, Grid3x3, ExternalLink, ChevronDown, ArrowUp, ArrowDown, ArrowUpDown, RefreshCw, AlertCircle, CheckCircle2 } from "lucide-react";
+import { Building2, TrendingUp, Layers, Clock, Filter, Search, List, Grid3x3, ExternalLink, ChevronDown, ArrowUp, ArrowDown, ArrowUpDown, RefreshCw } from "lucide-react";
 import SignalBadge from "@/components/SignalBadge";
 import { Link, useLocation } from "wouter";
 import type { Company, Sector, Signal } from "@shared/schema";
@@ -56,7 +56,6 @@ export default function Dashboard() {
   // Fetch signal status
   const { data: signalStatus, isLoading: signalStatusLoading } = useQuery<{
     totalSignals: number;
-    staleSignals: number;
     lastCalculationTime: string | null;
     signalsByType: { signal: string; count: number }[];
     queue: {
@@ -162,7 +161,6 @@ export default function Dashboard() {
     lastSignalCalculation: signalStatus?.lastCalculationTime
       ? formatDistanceToNow(new Date(signalStatus.lastCalculationTime), { addSuffix: true })
       : "Never",
-    staleSignals: signalStatus?.staleSignals || 0,
   };
 
   // Get sector overview with signal counts (supports custom signals)
@@ -865,25 +863,10 @@ export default function Dashboard() {
             <p className="text-sm sm:text-base text-muted-foreground mt-1">Real-time overview of your financial screening data</p>
           </div>
           <div className="flex items-center gap-2">
-            {signalStatus && (
-              <div className="flex items-center gap-2 text-sm">
-                {signalStatus.staleSignals > 0 ? (
-                  <div className="flex items-center gap-1 text-amber-600 dark:text-amber-500">
-                    <AlertCircle className="h-4 w-4" />
-                    <span>{signalStatus.staleSignals} stale</span>
-                  </div>
-                ) : (
-                  <div className="flex items-center gap-1 text-green-600 dark:text-green-500">
-                    <CheckCircle2 className="h-4 w-4" />
-                    <span>Up to date</span>
-                  </div>
-                )}
-                {signalStatus.lastCalculationTime && (
-                  <span className="text-muted-foreground">
-                    • {formatDistanceToNow(new Date(signalStatus.lastCalculationTime), { addSuffix: true })}
-                  </span>
-                )}
-              </div>
+            {signalStatus?.lastCalculationTime && (
+              <span className="text-sm text-muted-foreground">
+                Last calculated {formatDistanceToNow(new Date(signalStatus.lastCalculationTime), { addSuffix: true })}
+              </span>
             )}
             <Button
               variant="outline"
