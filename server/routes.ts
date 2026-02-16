@@ -77,7 +77,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post("/api/auth/login", async (req, res) => {
     try {
-      const { email, password, otpToken } = req.body;
+      const { email, password } = req.body;
 
       const user = await storage.getUserByEmail(email);
       if (!user) {
@@ -94,14 +94,39 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(401).json({ error: "Invalid credentials" });
       }
 
-      if (user.otpEnabled) {
-        if (!otpToken) {
-          return res.json({ requiresOTP: true });
-        }
+      // Two-step verification: send OTP to email and require it before creating session
+      await createAndSendOtp(user.email);
+      return res.json({ requiresEmailOTP: true, message: "OTP sent to your email. Please enter it to complete login." });
+    } catch (error: any) {
+      res.status(400).json({ error: error.message });
+    }
+  });
 
-        if (!user.otpSecret || !verifyOTP(otpToken, user.otpSecret)) {
-          return res.status(401).json({ error: "Invalid OTP token" });
-        }
+  app.post("/api/auth/login/verify-email-otp", async (req, res) => {
+    try {
+      const { email, password, otp } = req.body;
+
+      if (!email || !password || !otp) {
+        return res.status(400).json({ error: "Email, password and OTP are required" });
+      }
+
+      const user = await storage.getUserByEmail(email);
+      if (!user) {
+        return res.status(401).json({ error: "Invalid credentials" });
+      }
+
+      if (user.enabled === false) {
+        return res.status(403).json({ error: "Account is disabled. Please contact an administrator." });
+      }
+
+      const validPassword = await verifyPassword(password, user.password);
+      if (!validPassword) {
+        return res.status(401).json({ error: "Invalid credentials" });
+      }
+
+      const validOtp = await verifyOtpCode(email, String(otp).trim());
+      if (!validOtp) {
+        return res.status(401).json({ error: "Invalid or expired OTP. Please try logging in again." });
       }
 
       const token = await createUserSession(user.id);

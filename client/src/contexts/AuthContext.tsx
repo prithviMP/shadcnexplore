@@ -6,7 +6,10 @@ import type { User } from "@shared/schema";
 interface AuthContextType {
   user: User | null;
   loading: boolean;
-  login: (email: string, password: string) => Promise<void>;
+  /** Returns { requiresEmailOTP: true } when OTP was sent to email; otherwise completes login and redirects. */
+  login: (email: string, password: string) => Promise<{ requiresEmailOTP?: boolean }>;
+  /** Complete login after entering the OTP sent to email (two-step verification). */
+  verifyEmailOTP: (email: string, password: string, otp: string) => Promise<void>;
   loginWithOTP: (email: string, otp: string) => Promise<void>;
   requestOTP: (email: string) => Promise<void>;
   logout: () => Promise<void>;
@@ -51,7 +54,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }
 
-  async function login(email: string, password: string) {
+  async function login(email: string, password: string): Promise<{ requiresEmailOTP?: boolean }> {
     try {
       const response = await apiRequest("POST", "/api/auth/login", {
         email,
@@ -59,16 +62,39 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       });
 
       const data = await response.json();
-      
-      // Store token if provided
+
+      if (data.requiresEmailOTP) {
+        return { requiresEmailOTP: true };
+      }
+
       if (data.token) {
         localStorage.setItem(AUTH_TOKEN_KEY, data.token);
       }
+      setUser(data.user);
+      setLocation("/");
+      return {};
+    } catch (error: any) {
+      throw new Error(error.message || "Login failed");
+    }
+  }
 
+  async function verifyEmailOTP(email: string, password: string, otp: string) {
+    try {
+      const response = await apiRequest("POST", "/api/auth/login/verify-email-otp", {
+        email,
+        password,
+        otp,
+      });
+
+      const data = await response.json();
+
+      if (data.token) {
+        localStorage.setItem(AUTH_TOKEN_KEY, data.token);
+      }
       setUser(data.user);
       setLocation("/");
     } catch (error: any) {
-      throw new Error(error.message || "Login failed");
+      throw new Error(error.message || "OTP verification failed");
     }
   }
 
@@ -154,6 +180,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         user,
         loading,
         login,
+        verifyEmailOTP,
         register,
         loginWithOTP,
         requestOTP,

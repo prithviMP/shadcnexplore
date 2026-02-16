@@ -21,7 +21,10 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
   const [isSignup, setIsSignup] = useState(false);
   const [name, setName] = useState("");
-  const { login, register, loginWithOTP, requestOTP } = useAuth();
+  /** When true, email/password were accepted and we are waiting for email OTP (two-step verification). */
+  const [emailOtpStep, setEmailOtpStep] = useState(false);
+  const [emailVerificationOtp, setEmailVerificationOtp] = useState("");
+  const { login, verifyEmailOTP, register, loginWithOTP, requestOTP } = useAuth();
   const { toast } = useToast();
   const [, setLocation] = useLocation();
 
@@ -31,7 +34,16 @@ export default function LoginPage() {
     setLoading(true);
 
     try {
-      await login(email, password);
+      const result = await login(email, password);
+      if (result?.requiresEmailOTP) {
+        setEmailOtpStep(true);
+        setEmailVerificationOtp("");
+        toast({
+          title: "Check your email",
+          description: "Enter the code we sent to your email to complete sign in.",
+        });
+        return;
+      }
       toast({
         title: "Welcome back!",
         description: "You have been successfully logged in.",
@@ -41,6 +53,29 @@ export default function LoginPage() {
       toast({
         title: "Login failed",
         description: err.message || "Please check your credentials.",
+        variant: "destructive",
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleVerifyEmailOtp = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError("");
+    setLoading(true);
+
+    try {
+      await verifyEmailOTP(email, password, emailVerificationOtp);
+      toast({
+        title: "Welcome back!",
+        description: "You have been successfully logged in.",
+      });
+    } catch (err: any) {
+      setError(err.message || "Invalid or expired code. Please try again.");
+      toast({
+        title: "Verification failed",
+        description: err.message || "Invalid or expired code. Please try again.",
         variant: "destructive",
       });
     } finally {
@@ -127,7 +162,79 @@ export default function LoginPage() {
                 <TabsTrigger value="otp" data-testid="tab-otp-login">Email OTP</TabsTrigger>
               </TabsList>
               <TabsContent value="email" className="space-y-4">
-                {!isSignup ? (
+                {emailOtpStep ? (
+                  <form onSubmit={handleVerifyEmailOtp} className="space-y-4">
+                    <p className="text-sm text-muted-foreground text-center">
+                      We sent a 6-digit code to <strong>{email}</strong>. Enter it below to complete sign in.
+                    </p>
+                    <div className="space-y-2">
+                      <Label htmlFor="email-verification-otp" className="text-sm font-medium">Verification code</Label>
+                      <Input
+                        id="email-verification-otp"
+                        type="text"
+                        inputMode="numeric"
+                        autoComplete="one-time-code"
+                        placeholder="000000"
+                        maxLength={6}
+                        value={emailVerificationOtp}
+                        onChange={(e) => setEmailVerificationOtp(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                        className="h-11 text-center tracking-widest text-lg"
+                        data-testid="input-email-verification-otp"
+                      />
+                    </div>
+                    <Button
+                      type="submit"
+                      className="w-full h-11 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white font-medium shadow-lg"
+                      data-testid="button-verify-email-otp"
+                      disabled={loading || emailVerificationOtp.length !== 6}
+                    >
+                      {loading ? (
+                        <>
+                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                          Verifying...
+                        </>
+                      ) : (
+                        "Verify and sign in"
+                      )}
+                    </Button>
+                    <div className="flex flex-col gap-2">
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        className="w-full"
+                        disabled={loading}
+                        onClick={async () => {
+                          setError("");
+                          setLoading(true);
+                          try {
+                            await login(email, password);
+                            setEmailVerificationOtp("");
+                            toast({ title: "New code sent", description: "Check your email for the latest code." });
+                          } catch (err: any) {
+                            setError(err.message || "Failed to resend code.");
+                          } finally {
+                            setLoading(false);
+                          }
+                        }}
+                      >
+                        Resend code
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="w-full"
+                        disabled={loading}
+                        onClick={() => {
+                          setEmailOtpStep(false);
+                          setEmailVerificationOtp("");
+                          setError("");
+                        }}
+                      >
+                        Back to email & password
+                      </Button>
+                    </div>
+                  </form>
+                ) : !isSignup ? (
                 <form onSubmit={handleEmailLogin} className="space-y-4">
                   <div className="space-y-2">
                     <Label htmlFor="email" className="text-sm font-medium">Email Address</Label>
