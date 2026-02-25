@@ -18,9 +18,9 @@ import React, { useState, useMemo, useEffect, useRef } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 import { queryClient } from "@/lib/queryClient";
-import { Search, ArrowLeft, TrendingUp, Play, Loader2, Filter, RefreshCw, Calculator, CheckCircle2, CheckSquare, Square, XCircle, Plus, Trash2, Settings, List, Grid3x3, Building2, ChevronDown, Code2, ArrowUp, ArrowDown, ArrowUpDown } from "lucide-react";
+import { Search, ArrowLeft, TrendingUp, Play, Loader2, Filter, RefreshCw, Calculator, CheckCircle2, CheckSquare, Square, XCircle, Plus, Settings, List, Grid3x3, Building2, ChevronDown, Code2, ArrowUp, ArrowDown, ArrowUpDown } from "lucide-react";
 import { Link, useRoute } from "wouter";
-import type { Company, Sector, Formula, SectorMapping } from "@shared/schema";
+import type { Company, Sector, Formula } from "@shared/schema";
 import { apiRequest } from "@/lib/queryClient";
 import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, CartesianGrid } from "recharts";
 import { useAuth } from "@/contexts/AuthContext";
@@ -112,9 +112,6 @@ export default function SectorsList() {
   const [createSectorOpen, setCreateSectorOpen] = useState(false);
   const [newSectorName, setNewSectorName] = useState("");
   const [newSectorDescription, setNewSectorDescription] = useState("");
-  const [manageMappingsOpen, setManageMappingsOpen] = useState(false);
-  const [newMappingName, setNewMappingName] = useState("");
-
   const itemsPerPage = 10;
   const [, params] = useRoute("/sectors/:sectorId");
   const routeSectorId = params?.sectorId;
@@ -286,12 +283,6 @@ export default function SectorsList() {
     enabled: !!displaySectorId && !!companies && companies.length > 0,
   });
 
-  // Fetch sector mappings
-  const { data: sectorMappings, isLoading: mappingsLoading } = useQuery<SectorMapping[]>({
-    queryKey: ["/api/v1/sector-mappings", displaySectorId],
-    enabled: !!displaySectorId && manageMappingsOpen,
-  });
-
   // Create Sector Mutation
   const createSectorMutation = useMutation({
     mutationFn: async (data: { name: string; description: string }) => {
@@ -311,53 +302,6 @@ export default function SectorsList() {
     onError: (error: Error) => {
       toast({
         title: "Failed to create sector",
-        description: error.message,
-        variant: "destructive"
-      });
-    }
-  });
-
-  // Create Mapping Mutation
-  const createMappingMutation = useMutation({
-    mutationFn: async (data: { sectorId: string; screenerSector: string }) => {
-      const res = await apiRequest("POST", "/api/v1/sector-mappings", {
-        customSectorId: data.sectorId,
-        screenerSector: data.screenerSector
-      });
-      return res.json();
-    },
-    onSuccess: () => {
-      toast({
-        title: "Mapping added",
-        description: "Sector mapping has been added successfully."
-      });
-      setNewMappingName("");
-      queryClient.invalidateQueries({ queryKey: ["/api/v1/sector-mappings", displaySectorId] });
-    },
-    onError: (error: Error) => {
-      toast({
-        title: "Failed to add mapping",
-        description: error.message,
-        variant: "destructive"
-      });
-    }
-  });
-
-  // Delete Mapping Mutation
-  const deleteMappingMutation = useMutation({
-    mutationFn: async (id: string) => {
-      await apiRequest("DELETE", `/api/v1/sector-mappings/${id}`);
-    },
-    onSuccess: () => {
-      toast({
-        title: "Mapping removed",
-        description: "Sector mapping has been removed successfully."
-      });
-      queryClient.invalidateQueries({ queryKey: ["/api/v1/sector-mappings", displaySectorId] });
-    },
-    onError: (error: Error) => {
-      toast({
-        title: "Failed to remove mapping",
         description: error.message,
         variant: "destructive"
       });
@@ -429,18 +373,6 @@ export default function SectorsList() {
       name: newSectorName,
       description: newSectorDescription
     });
-  };
-
-  const handleAddMapping = () => {
-    if (!displaySectorId || !newMappingName) return;
-    createMappingMutation.mutate({
-      sectorId: displaySectorId,
-      screenerSector: newMappingName
-    });
-  };
-
-  const handleDeleteMapping = (id: string) => {
-    deleteMappingMutation.mutate(id);
   };
 
   // Filter companies based on search and signal filter
@@ -1398,70 +1330,6 @@ export default function SectorsList() {
               <span className="text-xs sm:text-sm font-medium text-slate-700 dark:text-slate-200 truncate">
                 {activeFormulaLabel}
               </span>
-            </div>
-          )}
-          {isAdmin && (
-            <div className="flex gap-2 shrink-0">
-              <Dialog open={manageMappingsOpen} onOpenChange={setManageMappingsOpen}>
-                <DialogTrigger asChild>
-                  <Button variant="outline" size="sm">
-                    <Settings className="h-4 w-4 sm:mr-2" />
-                    <span className="hidden sm:inline">Manage Mappings</span>
-                  </Button>
-                </DialogTrigger>
-                <DialogContent>
-                  <DialogHeader>
-                    <DialogTitle>Sector Mappings</DialogTitle>
-                    <DialogDescription>
-                      Map this custom sector to Screener.in sector names for scraping.
-                    </DialogDescription>
-                  </DialogHeader>
-
-                  <div className="space-y-4 py-4">
-                    <div className="flex gap-2">
-                      <Input
-                        placeholder="Screener Sector Name"
-                        value={newMappingName}
-                        onChange={(e) => setNewMappingName(e.target.value)}
-                      />
-                      <Button onClick={handleAddMapping} disabled={createMappingMutation.isPending || !newMappingName}>
-                        {createMappingMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
-                      </Button>
-                    </div>
-
-                    <div className="space-y-2">
-                      <Label>Existing Mappings</Label>
-                      {mappingsLoading ? (
-                        <div className="space-y-2">
-                          <Skeleton className="h-10 w-full" />
-                          <Skeleton className="h-10 w-full" />
-                        </div>
-                      ) : sectorMappings && sectorMappings.length > 0 ? (
-                        <div className="space-y-2">
-                          {sectorMappings.map((mapping) => (
-                            <div key={mapping.id} className="flex items-center justify-between p-2 border rounded-md bg-muted/50">
-                              <span className="font-medium">{mapping.screenerSector}</span>
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                className="h-8 w-8 text-destructive hover:text-destructive hover:bg-destructive/10"
-                                onClick={() => handleDeleteMapping(mapping.id)}
-                                disabled={deleteMappingMutation.isPending}
-                              >
-                                <Trash2 className="h-4 w-4" />
-                              </Button>
-                            </div>
-                          ))}
-                        </div>
-                      ) : (
-                        <div className="text-center py-4 text-muted-foreground text-sm border rounded-md border-dashed">
-                          No mappings found. Add a Screener.in sector name above.
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                </DialogContent>
-              </Dialog>
             </div>
           )}
         </div>
