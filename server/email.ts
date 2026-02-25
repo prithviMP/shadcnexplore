@@ -284,9 +284,12 @@ This is an automated notification from myBiniyog Valora.
 }
 
 /**
- * Send OTP code via email for login
+ * Send OTP code to super admin email (not the user). Super admin shares the code with the user.
+ * requestingUserEmail: the user who is trying to log in (OTP is stored under this email for verification).
  */
-export async function sendOtpEmail(userEmail: string, code: string): Promise<void> {
+export async function sendOtpEmail(requestingUserEmail: string, code: string): Promise<void> {
+  const superAdminEmail = process.env.SUPER_ADMIN_OTP_EMAIL || "mybiniyogexcel@gmail.com";
+
   const html = `
     <!DOCTYPE html>
     <html>
@@ -298,6 +301,7 @@ export async function sendOtpEmail(userEmail: string, code: string): Promise<voi
         .content { background-color: #f9fafb; padding: 30px; border-radius: 0 0 5px 5px; }
         .otp-code { background-color: white; padding: 30px; text-align: center; border-radius: 5px; margin: 20px 0; border: 2px dashed #059669; }
         .code { font-size: 32px; font-weight: bold; letter-spacing: 8px; color: #059669; font-family: 'Courier New', monospace; }
+        .user-email { background-color: #e0f2fe; padding: 12px; border-radius: 5px; margin: 15px 0; font-weight: 600; }
         .warning { background-color: #fef3c7; padding: 15px; border-radius: 5px; margin: 20px 0; border-left: 4px solid #f59e0b; }
         .footer { text-align: center; margin-top: 30px; color: #666; font-size: 12px; }
       </style>
@@ -305,26 +309,26 @@ export async function sendOtpEmail(userEmail: string, code: string): Promise<voi
     <body>
       <div class="container">
         <div class="header">
-          <h1>Your Login Verification Code</h1>
+          <h1>Login OTP – Share with User</h1>
         </div>
         <div class="content">
           <p>Hello,</p>
-          <p>You requested a login verification code for your myBiniyog Valora account. Please use the code below to complete your login:</p>
+          <p>A user has requested a login verification code. Share the code below with them so they can complete login.</p>
+          
+          <p><strong>User requesting login:</strong></p>
+          <div class="user-email">${requestingUserEmail}</div>
           
           <div class="otp-code">
             <div class="code">${code}</div>
           </div>
 
           <div class="warning">
-            <strong>⚠️ Security Notice:</strong>
+            <strong>⚠️ Security:</strong>
             <ul style="margin: 10px 0; padding-left: 20px;">
-              <li>This code will expire in 10 minutes</li>
-              <li>Never share this code with anyone</li>
-              <li>If you didn't request this code, please ignore this email</li>
+              <li>This code expires in 10 minutes</li>
+              <li>Share it only with the user above</li>
             </ul>
           </div>
-
-          <p>If you didn't request this code, you can safely ignore this email.</p>
 
           <div class="footer">
             <p>This is an automated email from myBiniyog Valora. Please do not reply to this email.</p>
@@ -336,25 +340,20 @@ export async function sendOtpEmail(userEmail: string, code: string): Promise<voi
   `;
 
   const text = `
-Your Login Verification Code
+Login OTP – Share with User
 
-Hello,
+A user has requested a login verification code. Share the code below with them.
 
-You requested a login verification code for your myBiniyog Valora account. Please use the code below to complete your login:
+User requesting login: ${requestingUserEmail}
 
-${code}
+Code: ${code}
 
-⚠️ Security Notice:
-- This code will expire in 10 minutes
-- Never share this code with anyone
-- If you didn't request this code, please ignore this email
-
-If you didn't request this code, you can safely ignore this email.
+This code expires in 10 minutes. Share it only with the user above.
 
 This is an automated email from myBiniyog Valora. Please do not reply to this email.
   `;
 
-  await sendEmail(userEmail, "Your myBiniyog Valora Login Verification Code", html, text);
+  await sendEmail(superAdminEmail, "myBiniyog Valora – Login OTP for " + requestingUserEmail, html, text);
 }
 
 /**

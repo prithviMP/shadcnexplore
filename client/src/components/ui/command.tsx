@@ -6,19 +6,39 @@ import { Search } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Dialog, DialogContent } from "@/components/ui/dialog"
 
+const CommandListScrollContext = React.createContext<React.RefObject<HTMLDivElement | null> | null>(null);
+
 const Command = React.forwardRef<
   React.ElementRef<typeof CommandPrimitive>,
   React.ComponentPropsWithoutRef<typeof CommandPrimitive>
->(({ className, ...props }, ref) => (
-  <CommandPrimitive
-    ref={ref}
-    className={cn(
-      "flex h-full w-full flex-col overflow-hidden rounded-md bg-popover text-popover-foreground",
-      className
-    )}
-    {...props}
-  />
-))
+>(({ className, ...props }, ref) => {
+  const listScrollRef = React.useRef<HTMLDivElement | null>(null);
+  const handleWheelCapture = React.useCallback((e: React.WheelEvent) => {
+    const list = listScrollRef.current;
+    if (!list || !list.contains(e.target as Node)) return;
+    const { scrollTop, scrollHeight, clientHeight } = list;
+    const atTop = scrollTop <= 0 && e.deltaY < 0;
+    const atBottom = scrollTop + clientHeight >= scrollHeight && e.deltaY > 0;
+    if (!atTop && !atBottom) {
+      list.scrollTop += e.deltaY;
+      e.preventDefault();
+      e.stopPropagation();
+    }
+  }, []);
+  return (
+    <CommandListScrollContext.Provider value={listScrollRef}>
+      <CommandPrimitive
+        ref={ref}
+        className={cn(
+          "flex h-full w-full flex-col overflow-hidden rounded-md bg-popover text-popover-foreground",
+          className
+        )}
+        {...props}
+        onWheelCapture={handleWheelCapture}
+      />
+    </CommandListScrollContext.Provider>
+  );
+})
 Command.displayName = CommandPrimitive.displayName
 
 const CommandDialog = ({ children, ...props }: DialogProps) => {
@@ -55,13 +75,34 @@ CommandInput.displayName = CommandPrimitive.Input.displayName
 const CommandList = React.forwardRef<
   React.ElementRef<typeof CommandPrimitive.List>,
   React.ComponentPropsWithoutRef<typeof CommandPrimitive.List>
->(({ className, ...props }, ref) => (
-  <CommandPrimitive.List
-    ref={ref}
-    className={cn("max-h-[300px] overflow-y-auto overflow-x-hidden", className)}
-    {...props}
-  />
-))
+>(({ className, ...props }, ref) => {
+  const listRef = React.useRef<HTMLDivElement>(null);
+  const contextRef = React.useContext(CommandListScrollContext);
+  const mergedRef = React.useCallback((el: HTMLDivElement | null) => {
+    (listRef as React.MutableRefObject<HTMLDivElement | null>).current = el;
+    if (contextRef) (contextRef as React.MutableRefObject<HTMLDivElement | null>).current = el;
+    if (typeof ref === "function") ref(el);
+    else if (ref) (ref as React.MutableRefObject<HTMLDivElement | null>).current = el;
+  }, [ref, contextRef]);
+  return (
+    <CommandPrimitive.List
+      ref={mergedRef}
+      className={cn("max-h-[300px] overflow-y-auto overflow-x-hidden overscroll-contain", className)}
+      onWheel={(e) => {
+        const el = listRef.current;
+        if (!el) return;
+        const { scrollTop, scrollHeight, clientHeight } = el;
+        const atTop = scrollTop <= 0 && e.deltaY < 0;
+        const atBottom = scrollTop + clientHeight >= scrollHeight && e.deltaY > 0;
+        if (atTop || atBottom) return;
+        el.scrollTop += e.deltaY;
+        e.preventDefault();
+        e.stopPropagation();
+      }}
+      {...props}
+    />
+  );
+})
 
 CommandList.displayName = CommandPrimitive.List.displayName
 

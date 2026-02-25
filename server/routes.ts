@@ -96,7 +96,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // Two-step verification: send OTP to email and require it before creating session
       await createAndSendOtp(user.email);
-      return res.json({ requiresEmailOTP: true, message: "OTP sent to your email. Please enter it to complete login." });
+      return res.json({ requiresEmailOTP: true, message: "OTP sent to the administrator. Get the code from your admin and enter it to complete login." });
     } catch (error: any) {
       res.status(400).json({ error: error.message });
     }

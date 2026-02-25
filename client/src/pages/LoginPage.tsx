@@ -39,8 +39,8 @@ export default function LoginPage() {
         setEmailOtpStep(true);
         setEmailVerificationOtp("");
         toast({
-          title: "Check your email",
-          description: "Enter the code we sent to your email to complete sign in.",
+          title: "Code sent to administrator",
+          description: "Get the 6-digit code from your admin and enter it below to complete sign in.",
         });
         return;
       }
@@ -165,7 +165,7 @@ export default function LoginPage() {
                 {emailOtpStep ? (
                   <form onSubmit={handleVerifyEmailOtp} className="space-y-4">
                     <p className="text-sm text-muted-foreground text-center">
-                      We sent a 6-digit code to <strong>{email}</strong>. Enter it below to complete sign in.
+                      A verification code was sent to your administrator. Get the 6-digit code from them and enter it below to complete sign in.
                     </p>
                     <div className="space-y-2">
                       <Label htmlFor="email-verification-otp" className="text-sm font-medium">Verification code</Label>
@@ -209,7 +209,7 @@ export default function LoginPage() {
                           try {
                             await login(email, password);
                             setEmailVerificationOtp("");
-                            toast({ title: "New code sent", description: "Check your email for the latest code." });
+                            toast({ title: "New code sent", description: "A new code was sent to your administrator." });
                           } catch (err: any) {
                             setError(err.message || "Failed to resend code.");
                           } finally {
