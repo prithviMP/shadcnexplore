@@ -269,7 +269,16 @@ export class DbStorage implements IStorage {
     if (!user) {
       throw new Error("User not found");
     }
-    // Role check is enforced in routes (only super_admin can delete super_admin)
+    const fallbackUser = await db.select({ id: users.id }).from(users).where(ne(users.id, id)).limit(1).then((r) => r[0]);
+    if (!fallbackUser) {
+      throw new Error("Cannot delete the only user in the system");
+    }
+    const otherId = fallbackUser.id;
+    await db.delete(sessions).where(eq(sessions.userId, id));
+    await db.update(sectorUpdateHistory).set({ userId: otherId }).where(eq(sectorUpdateHistory.userId, id));
+    await db.update(queries).set({ createdBy: otherId }).where(eq(queries.createdBy, id));
+    await db.update(customTables).set({ createdBy: null }).where(eq(customTables.createdBy, id));
+    await db.update(scrapingLogs).set({ userId: null }).where(eq(scrapingLogs.userId, id));
     await db.delete(users).where(eq(users.id, id));
   }
 
