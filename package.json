@@ -20,6 +20,7 @@
     "db:create-scheduler-settings": "tsx server/migrations/createSchedulerSettingsTable.ts",
     "db:add-otp-codes-email": "tsx server/migrations/addOtpCodesEmail.ts",
     "db:otp-codes-phone-nullable": "tsx server/migrations/makeOtpCodesPhoneNullable.ts",
+    "db:add-last-login-at": "tsx server/migrations/addLastLoginAt.ts",
     "db:update-permissions": "tsx server/updatePermissions.ts",
     "update-csv-tickers": "tsx scripts/update_csv_tickers.ts",
     "test": "playwright test",

@@ -33,6 +33,7 @@ export function generateOTPAuthURL(email: string, secret: string): string {
 }
 
 export async function createUserSession(userId: string): Promise<string> {
+  await storage.deleteSessionsByUserId(userId);
   const session = await storage.createSession(userId);
   return session.token;
 }

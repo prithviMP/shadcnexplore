@@ -22,6 +22,7 @@ export const users = pgTable("users", {
   otpSecret: text("otp_secret").default(sql`NULL`),
   otpEnabled: boolean("otp_enabled").notNull().default(false),
   enabled: boolean("enabled").notNull().default(true),
+  lastLoginAt: timestamp("last_login_at"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 

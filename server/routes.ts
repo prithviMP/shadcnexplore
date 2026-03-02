@@ -45,8 +45,8 @@ import { ALL_PERMISSIONS } from "./permissions";
 import { insertRoleSchema } from "@shared/schema";
 
 export async function registerRoutes(app: Express): Promise<Server> {
-  // Authentication routes
-  app.post("/api/auth/register", async (req, res) => {
+  // Authentication routes – register only for admin/super_admin (sign up removed from UI)
+  app.post("/api/auth/register", requireAuth, requireRole("admin", "super_admin"), async (req, res) => {
     try {
       const data = insertUserSchema.parse(req.body);
 
@@ -84,7 +84,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(401).json({ error: "Invalid credentials" });
       }
 
-      // Check if user is enabled
       if (user.enabled === false) {
         return res.status(403).json({ error: "Account is disabled. Please contact an administrator." });
       }
@@ -94,9 +93,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(401).json({ error: "Invalid credentials" });
       }
 
-      // Two-step verification: send OTP to email and require it before creating session
-      await createAndSendOtp(user.email);
-      return res.json({ requiresEmailOTP: true, message: "OTP sent to the administrator. Get the code from your admin and enter it to complete login." });
+      const sevenDaysMs = 7 * 24 * 60 * 60 * 1000;
+      const lastLoginAt = user.lastLoginAt ? new Date(user.lastLoginAt).getTime() : 0;
+      const requiresOtp = !lastLoginAt || (Date.now() - lastLoginAt > sevenDaysMs);
+
+      if (requiresOtp) {
+        await createAndSendOtp(user.email);
+        return res.json({ requiresEmailOTP: true, message: "OTP sent to the administrator. Get the code from your admin and enter it to complete login." });
+      }
+
+      const token = await createUserSession(user.id);
+      await storage.updateUser(user.id, { lastLoginAt: new Date() });
+      res.cookie("auth_token", token, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === "production",
+        sameSite: "lax",
+        maxAge: 7 * 24 * 60 * 60 * 1000
+      });
+      res.json({ user: sanitizeUser(user), token });
     } catch (error: any) {
       res.status(400).json({ error: error.message });
     }
@@ -130,6 +144,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const token = await createUserSession(user.id);
+      await storage.updateUser(user.id, { lastLoginAt: new Date() });
       res.cookie("auth_token", token, {
         httpOnly: true,
         secure: process.env.NODE_ENV === "production",
@@ -591,15 +606,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.delete("/api/users/:id", requireAuth, requireRole("admin"), async (req, res) => {
+  app.delete("/api/users/:id", requireAuth, requireRole("admin", "super_admin"), async (req: AuthRequest, res) => {
     try {
-      // Check if user exists and prevent deletion of super admin users
       const user = await storage.getUser(req.params.id);
       if (!user) {
         return res.status(404).json({ error: "User not found" });
       }
       if (user.role === "super_admin") {
-        return res.status(400).json({ error: "Cannot delete super admin user" });
+        return res.status(400).json({ error: "Super admin users cannot be deleted" });
       }
       await storage.deleteUser(req.params.id);
       res.json({ success: true });

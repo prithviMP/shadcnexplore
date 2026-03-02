@@ -80,6 +80,7 @@ export interface IStorage {
   createSession(userId: string): Promise<Session>;
   getSession(token: string): Promise<Session | undefined>;
   deleteSession(token: string): Promise<void>;
+  deleteSessionsByUserId(userId: string): Promise<void>;
 
   // OTP operations
   createOtpCode(otp: InsertOtpCode): Promise<OtpCode>;
@@ -264,14 +265,11 @@ export class DbStorage implements IStorage {
   }
 
   async deleteUser(id: string): Promise<void> {
-    // Prevent deletion of super admin users
     const user = await this.getUser(id);
     if (!user) {
       throw new Error("User not found");
     }
-    if (user.role === "super_admin") {
-      throw new Error("Cannot delete super admin user");
-    }
+    // Role check is enforced in routes (only super_admin can delete super_admin)
     await db.delete(users).where(eq(users.id, id));
   }
 
@@ -290,6 +288,10 @@ export class DbStorage implements IStorage {
 
   async deleteSession(token: string): Promise<void> {
     await db.delete(sessions).where(eq(sessions.token, token));
+  }
+
+  async deleteSessionsByUserId(userId: string): Promise<void> {
+    await db.delete(sessions).where(eq(sessions.userId, userId));
   }
 
   // Sector operations

@@ -19,12 +19,10 @@ export default function LoginPage() {
   const [otpSent, setOtpSent] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
-  const [isSignup, setIsSignup] = useState(false);
-  const [name, setName] = useState("");
   /** When true, email/password were accepted and we are waiting for email OTP (two-step verification). */
   const [emailOtpStep, setEmailOtpStep] = useState(false);
   const [emailVerificationOtp, setEmailVerificationOtp] = useState("");
-  const { login, verifyEmailOTP, register, loginWithOTP, requestOTP } = useAuth();
+  const { login, verifyEmailOTP, loginWithOTP, requestOTP } = useAuth();
   const { toast } = useToast();
   const [, setLocation] = useLocation();
 
@@ -234,7 +232,7 @@ export default function LoginPage() {
                       </Button>
                     </div>
                   </form>
-                ) : !isSignup ? (
+                ) : (
                 <form onSubmit={handleEmailLogin} className="space-y-4">
                   <div className="space-y-2">
                     <Label htmlFor="email" className="text-sm font-medium">Email Address</Label>
@@ -276,116 +274,17 @@ export default function LoginPage() {
                       )}
                     </Button>
                   </form>
-                ) : (
-                  <form onSubmit={async (e) => {
-                    e.preventDefault();
-                    setError("");
-                    setLoading(true);
-                    try {
-                      await register(email, password, name, "viewer");
-                      toast({
-                        title: "Account created!",
-                        description: "You have been successfully registered.",
-                      });
-                    } catch (err: any) {
-                      setError(err.message || "Registration failed. Please try again.");
-                      toast({
-                        title: "Registration failed",
-                        description: err.message || "Please try again.",
-                        variant: "destructive",
-                      });
-                    } finally {
-                      setLoading(false);
-                    }
-                  }} className="space-y-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="signup-name" className="text-sm font-medium">Full Name</Label>
-                      <Input
-                        id="signup-name"
-                        type="text"
-                        placeholder="John Doe"
-                        value={name}
-                        onChange={(e) => setName(e.target.value)}
-                        className="h-11"
-                        required
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="signup-email" className="text-sm font-medium">Email Address</Label>
-                      <Input
-                        id="signup-email"
-                        type="email"
-                        placeholder="you@company.com"
-                        value={email}
-                        onChange={(e) => setEmail(e.target.value)}
-                        className="h-11"
-                        required
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="signup-password" className="text-sm font-medium">Password</Label>
-                      <Input
-                        id="signup-password"
-                        type="password"
-                        placeholder="••••••••"
-                        value={password}
-                        onChange={(e) => setPassword(e.target.value)}
-                        className="h-11"
-                        required
-                        minLength={6}
-                      />
-                    </div>
-                    <Button 
-                      type="submit" 
-                      className="w-full h-11 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white font-medium shadow-lg" 
-                      disabled={loading}
-                    >
-                      {loading ? (
-                        <>
-                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                          Creating account...
-                        </>
-                      ) : (
-                        "Create Account"
-                      )}
-                  </Button>
-                </form>
                 )}
                 <div className="text-center space-y-2">
-                  {!isSignup ? (
-                    <>
-                      <div className="text-sm text-muted-foreground">
-                        <button
-                          type="button"
-                          onClick={() => setLocation("/forgot-password")}
-                          className="text-muted-foreground hover:text-foreground transition-colors"
-                        >
-                    Forgot password?
-                        </button>
-                      </div>
-                      <div className="text-sm text-muted-foreground">
-                        Don't have an account?{" "}
-                        <button
-                          type="button"
-                          onClick={() => setIsSignup(true)}
-                          className="text-blue-600 dark:text-blue-400 hover:underline font-medium"
-                        >
-                          Sign up
-                        </button>
-                      </div>
-                    </>
-                  ) : (
-                    <div className="text-sm text-muted-foreground">
-                      Already have an account?{" "}
-                      <button
-                        type="button"
-                        onClick={() => setIsSignup(false)}
-                        className="text-blue-600 dark:text-blue-400 hover:underline font-medium"
-                      >
-                        Sign in
-                      </button>
-                    </div>
-                  )}
+                  <div className="text-sm text-muted-foreground">
+                    <button
+                      type="button"
+                      onClick={() => setLocation("/forgot-password")}
+                      className="text-muted-foreground hover:text-foreground transition-colors"
+                    >
+                      Forgot password?
+                    </button>
+                  </div>
                 </div>
               </TabsContent>
               <TabsContent value="otp" className="space-y-4">
