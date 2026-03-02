@@ -48,12 +48,14 @@ export default function UserManagement() {
 
   const updateRoleMutation = useMutation({
     mutationFn: async ({ userId, role }: { userId: string; role: string }) => {
-      await apiRequest("PATCH", `/api/users/${userId}/role`, { role });
+      const res = await apiRequest("PATCH", `/api/users/${userId}/role`, { role });
+      return res.json() as Promise<User>;
     },
-    onSuccess: async () => {
-      // Invalidate and refetch to ensure UI updates
-      await queryClient.invalidateQueries({ queryKey: ["/api/users"] });
-      await queryClient.refetchQueries({ queryKey: ["/api/users"] });
+    onSuccess: (updatedUser) => {
+      queryClient.setQueryData<User[]>(["/api/users"], (prev) =>
+        prev?.map((u) => (u.id === updatedUser.id ? { ...u, ...updatedUser } : u)) ?? prev
+      );
+      queryClient.invalidateQueries({ queryKey: ["/api/users"] });
       toast({
         title: "Success",
         description: "User role updated successfully",
